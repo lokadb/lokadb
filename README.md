@@ -52,7 +52,7 @@ Each moved organization has a **routing profile**:
 
 ## Try it
 
-**In the browser.** [the online demo](https://PLAYGROUND-ADDRESS-NOT-SET.invalid) runs a demo stand: a cloud database, organizations in their own databases, a demo application, and the compatibility report — nothing to install.
+**In the browser.** [the online demo](https://play.lokadb.com) runs a demo stand: a cloud database, organizations in their own databases, a demo application, and the compatibility report — nothing to install.
 
 **Locally, with Docker.** One command starts a cloud Postgres, one organization's Postgres behind the relay and the agent, the proxy, and a small application that keeps writing for two organizations; it then runs `check`, `enable` and `move-org` and shows where each organization's rows ended up ([docs/quickstart.md](docs/quickstart.md)). Run it from the root of this repository:
 
