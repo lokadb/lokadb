@@ -38,6 +38,24 @@ func checkSplitYields(e *env) (bool, string, error) {
 		return false, "", err
 	}
 	defer holder.Close(e.ctx)
+	// The gate: a session holds every user FOR UPDATE, so the split's last transaction (it locks
+	// the users its rows reference FOR KEY SHARE before it touches DEFAULT) waits at its first
+	// statement. The split is quick now (it copies before it pauses the organization: 8 ms from
+	// the CHECK on DEFAULT to the ATTACH), and the holder below could not be sure to be in before
+	// it. The gate opens once the holder has DEFAULT.
+	gate, err := pgx.Connect(e.ctx, e.cloud())
+	if err != nil {
+		return false, "", err
+	}
+	defer gate.Close(e.ctx)
+	gtx, err := gate.Begin(e.ctx)
+	if err != nil {
+		return false, "", err
+	}
+	defer gtx.Rollback(e.ctx)
+	if _, err := gtx.Exec(e.ctx, "SELECT id FROM users FOR UPDATE"); err != nil {
+		return false, "", err
+	}
 	var once sync.Once
 	var txErr error
 	var waited, took time.Duration
@@ -64,6 +82,9 @@ func checkSplitYields(e *env) (bool, string, error) {
 				return
 			}
 			held = "yes"
+			if txErr = gtx.Commit(e.ctx); txErr != nil { // the gate opens: the split's last transaction goes on
+				return
+			}
 			// the split waits for the parent (its partitions: DEFAULT, which this holds)
 			w0 := time.Now()
 			for i := 0; i < 1500; i++ {
@@ -108,7 +129,9 @@ func checkSplitYields(e *env) (bool, string, error) {
 	}
 	mv := "done"
 	if moveErr != nil {
-		mv = "failed: " + lastErr(out)
+		// the end of its log too: what happened to the connection before the error is there
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		mv = "failed: " + lastErr(out) + " | log: " + strings.Join(strings.Fields(strings.Join(lines[max(0, len(lines)-14):], " / ")), " ")
 	}
 	retries := strings.Count(out, "the last transaction of the split again") + strings.Count(out, "table busy, retrying")
 	user, _ := one(e.ctx, e.cloud(), "SELECT count(*) FROM users WHERE id = 1")

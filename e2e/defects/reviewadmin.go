@@ -4,8 +4,10 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -26,6 +28,17 @@ func checkCountsBeforeSwitch(e *env) (bool, string, error) {
 	if err := e.enable(); err != nil {
 		return false, "", err
 	}
+	// The move reaches the customer database through a proxy that holds every answer 50 ms: a move of
+	// 100 rows takes some 100 ms from "initial copy done" to the switch, and the row below, written
+	// when that line has been read, was written after the switch on a loaded machine (the line is
+	// read by another goroutine): then the table was already renamed and the write failed.
+	addr, stop, err := delayProxy(e.ctx, "customer:5432", 50*time.Millisecond)
+	if err != nil {
+		return false, "", err
+	}
+	defer stop()
+	host, port, _ := net.SplitHostPort(addr)
+	far := fmt.Sprintf("host=%s port=%s dbname=%s user=postgres password=pw sslmode=disable", host, port, e.db)
 	var once sync.Once
 	var werr error
 	out, _, merr := e.moveLines(1, func(l string) {
@@ -36,9 +49,13 @@ func checkCountsBeforeSwitch(e *env) (bool, string, error) {
 					"INSERT INTO documents__o1 (id, organization_id, user_id, title) VALUES (900001, 1, 2, 'past the cloud')")
 			})
 		}
-	}, "-mode", "trigger")
+	}, "-mode", "trigger", "-customer", far)
 	if werr != nil {
-		return false, "the extra row could not be written: " + firstErrLine(werr), nil
+		// what the customer database held when the line came, and the end of the move's log
+		have, _ := one(e.ctx, e.customer(), "SELECT coalesce(string_agg(schemaname || '.' || tablename, ', '), 'nothing') FROM pg_tables WHERE tablename LIKE 'documents%' OR tablename LIKE 'lokadb%'")
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		return false, "the extra row could not be written: " + firstErrLine(werr) + "; tables now at the customer: " + have +
+			"; move-org: " + errOr(merr, true) + " | log: " + strings.Join(strings.Fields(strings.Join(lines[max(0, len(lines)-16):], " / ")), " "), nil
 	}
 	moved, err := one(e.ctx, e.cloud(), "SELECT count(*) FROM lokadb.orgs WHERE org = 1")
 	if err != nil {

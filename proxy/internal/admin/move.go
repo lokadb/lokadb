@@ -1151,8 +1151,11 @@ func describe(ctx context.Context, cloud *pgx.Conn, spec Spec, ten Tenant) ([]mo
 	for _, st := range spec.Tables {
 		t := st.Name
 		tc, err := rowsOf(ctx, cloud, `SELECT tenant_column, key_column FROM lokadb.tables WHERE table_name = $1`, t)
-		if err != nil || len(tc) == 0 {
-			return nil, nil, fmt.Errorf("%s is not enabled (run enable first): %v", t, err)
+		if err != nil { // a failed read is not "not enabled" (a closed connection said so once)
+			return nil, nil, fmt.Errorf("reading lokadb.tables for %s: %w", t, err)
+		}
+		if len(tc) == 0 {
+			return nil, nil, fmt.Errorf("%s is not enabled (run enable first)", t)
 		}
 		cols, err := tableColumns(ctx, cloud, t)
 		if err != nil {

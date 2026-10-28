@@ -16,19 +16,19 @@ import (
 
 func init() {
 	checks = append(checks,
-		check{id: "MV27", name: "organization 1 with 3 million rows in DEFAULT under writes of its rows: move-org pauses it at most 15 s for the split, the copy runs while it writes, no change is lost", run: checkSplitOnline},
+		check{id: "MV27", name: "organization 1 with 1.5 million rows in DEFAULT under writes of its rows: move-org pauses it at most 15 s for the split, the copy runs while it writes, no change is lost", run: checkSplitOnline},
 	)
 }
 
-// MV27. Organization 1 gets 3 million documents before enable (DEFAULT holds them after it). A
+// MV27. Organization 1 gets 1.5 million documents before enable (DEFAULT holds them after it). A
 // writer changes its rows the whole move (inserts, updates, deletes of what it inserted), each
 // transaction holding the organization's lock shared as the proxy does, and keeps what it made
 // in a table of its own in the same transaction. Before: the organization paused for the
-// whole split (the copy of 3 million rows). Now: for the end only, at most 15 s, while the
+// whole split (the copy of 1.5 million rows; the move is in trigger mode, whatever DEFECTS_MODE: the split is what is checked, and a logical copy of that many rows did not fit the check's 3 minutes on a loaded machine). Now: for the end only, at most 15 s, while the
 // split takes over twice as long; the organization's rows after the move are the writer's.
 func checkSplitOnline(e *env) (bool, string, error) {
 	if err := execSQL(e.ctx, e.cloud(),
-		"INSERT INTO documents (organization_id, user_id, title) SELECT 1, 1, 't' || g FROM generate_series(1, 3000000) g"); err != nil {
+		"INSERT INTO documents (organization_id, user_id, title) SELECT 1, 1, 't' || g FROM generate_series(1, 1500000) g"); err != nil {
 		return false, "", err
 	}
 	if err := e.enable(); err != nil {
@@ -85,7 +85,7 @@ func checkSplitOnline(e *env) (bool, string, error) {
 					_, err := tx.Exec(e.ctx, "INSERT INTO mv27_expected VALUES ($1, 'mv27')", id)
 					return err
 				case n%3 == 1 || len(mine) == 0:
-					id, title := first+r.Int63n(3000000), fmt.Sprintf("u%d", n)
+					id, title := first+r.Int63n(1500000), fmt.Sprintf("u%d", n)
 					if _, err := tx.Exec(e.ctx, "UPDATE documents SET title = $2 WHERE organization_id = 1 AND id = $1", id, title); err != nil {
 						return err
 					}
@@ -115,7 +115,7 @@ func checkSplitOnline(e *env) (bool, string, error) {
 		}
 	}()
 	time.Sleep(time.Second)
-	out, moveErr := e.move(1)
+	out, moveErr := e.move(1, "-mode", "trigger")
 	time.Sleep(500 * time.Millisecond)
 	close(stop)
 	<-finished

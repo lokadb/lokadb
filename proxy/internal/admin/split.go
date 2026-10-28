@@ -113,8 +113,11 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 	for _, st := range todo {
 		t := st.Name
 		tc, err := rowsOf(ctx, cloud, `SELECT tenant_column FROM lokadb.tables WHERE table_name = $1`, t)
-		if err != nil || len(tc) == 0 {
-			return fmt.Errorf("%s is not enabled (run enable first): %v", t, err)
+		if err != nil {
+			return fmt.Errorf("reading lokadb.tables for %s: %w", t, err)
+		}
+		if len(tc) == 0 {
+			return fmt.Errorf("%s is not enabled (run enable first)", t)
 		}
 		if err := ensureKeyIndex(ctx, cloud, t, o.org().Key(tc[0][0]), log); err != nil {
 			return err
@@ -196,7 +199,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 	so.replica = &replicaRight{} // the log is applied in the cloud, not in the organization's database
 	hbCtx, stopBeat := context.WithCancel(ctx)
 	defer stopBeat()
-	defer dropSplitCapture(cloud, o, tables, log)
+	defer dropSplitCapture(o, tables, log)
 	if err := installSplitCapture(ctx, cloud, o, tables); err != nil {
 		return err
 	}
@@ -296,8 +299,11 @@ func splitMoveTables(ctx context.Context, cloud *pgx.Conn, todo []SpecTable, o M
 	var out []moveTable
 	for _, st := range todo {
 		tc, err := rowsOf(ctx, cloud, `SELECT tenant_column, coalesce(to_jsonb(b) ->> 'key_column', 'id') FROM lokadb.tables b WHERE table_name = $1`, st.Name)
-		if err != nil || len(tc) == 0 {
-			return nil, fmt.Errorf("%s is not enabled (run enable first): %v", st.Name, err)
+		if err != nil {
+			return nil, fmt.Errorf("reading lokadb.tables for %s: %w", st.Name, err)
+		}
+		if len(tc) == 0 {
+			return nil, fmt.Errorf("%s is not enabled (run enable first)", st.Name)
 		}
 		cols, err := tableColumns(ctx, cloud, st.Name)
 		if err != nil {
@@ -352,20 +358,31 @@ END $$`, captureFunc(o.Org, out), o.Org, lit(t.name), keyText(t, "OLD")))
 	return lockedDDL(ctx, conn, o, stmts) // CREATE TRIGGER takes SHARE ROW EXCLUSIVE on DEFAULT
 }
 
-// dropSplitCapture removes the split's triggers and its log, on its own context (the split may
-// be failing because its context was cancelled). After the ATTACH they log nothing: the
-// organization's rows are in its partition.
-func dropSplitCapture(conn *pgx.Conn, o MoveOptions, tables []moveTable, log *slog.Logger) {
+// dropSplitCapture removes what is left of the split's change capture and its log: the triggers
+// of a split that failed (a successful one dropped them in its last transaction, splitTable), on a
+// connection and a context of their own. The split may be failing because its context was
+// cancelled; and a wait for DEFAULT here must never end by cancelling the move's own connection
+// (the deadline of a statement closes a pgx connection: the next query of the move said "conn
+// closed", reported as "not enabled", MV17). Only the triggers that exist are touched: DROP
+// TRIGGER IF EXISTS takes the table's ACCESS EXCLUSIVE lock whether the trigger is there or not.
+func dropSplitCapture(o MoveOptions, tables []moveTable, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	var stmts []string
-	for _, t := range tables {
-		def := hn(t.name, "__cloud")
-		for _, k := range []string{"i", "u", "x", "d"} {
-			stmts = append(stmts, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", q(splitTrigger(o.Org, k)), qr(def)))
-		}
+	conn, err := connect(ctx, o.CloudDSN)
+	if err != nil {
+		log.Warn("the split's change capture on DEFAULT may be left: no connection to remove it (it stops logging after the heartbeat's time); move-cleanup removes it", "err", err)
+		return
 	}
-	err := lockedDDL(ctx, conn, o, stmts)
+	defer conn.Close(context.Background())
+	left, err := rowsOf(ctx, conn, `SELECT quote_ident(t.tgname) || ' ON ' || t.tgrelid::regclass::text FROM pg_trigger t
+		WHERE NOT t.tgisinternal AND t.tgname LIKE $1 ORDER BY 1`, strings.ReplaceAll(captureTrigger(o.Org), "_", `\_`)+`\_split\_%`)
+	if err == nil {
+		var stmts []string
+		for _, l := range left {
+			stmts = append(stmts, "DROP TRIGGER IF EXISTS "+l[0])
+		}
+		err = lockedDDL(ctx, conn, o, stmts)
+	}
 	if err == nil {
 		var tail []string
 		for _, t := range tables {
@@ -381,6 +398,18 @@ func dropSplitCapture(conn *pgx.Conn, o MoveOptions, tables []moveTable, log *sl
 	if err != nil {
 		log.Warn("the split's change capture on DEFAULT is left (it stops logging after the heartbeat's time); move-cleanup removes it", "err", err)
 	}
+}
+
+// splitCaptureDrops: the statements that remove the split's capture from table t's DEFAULT, for
+// its last transaction (the organization is paused and the table held there anyway: no extra wait
+// for DEFAULT later, when other organizations write to it).
+func splitCaptureDrops(o MoveOptions, t string) []string {
+	def := hn(t, "__cloud")
+	var out []string
+	for _, k := range []string{"i", "u", "x", "d"} {
+		out = append(out, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", q(splitTrigger(o.Org, k)), qr(def)))
+	}
+	return append(out, "DROP FUNCTION IF EXISTS "+captureFunc(o.Org, def)+"()", "DROP FUNCTION IF EXISTS "+captureFunc(o.Org, def+" out")+"()")
 }
 
 // pauseOrg holds the organization's org_lock and the one of statements not confined to one
@@ -531,8 +560,11 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 	deadline := pausedAt.Add(limit)
 	// the key (block 4: lokadb.tables.key_column; id where the column is not there yet)
 	kr, err := rowsOf(ctx, cloud, `SELECT coalesce(to_jsonb(b) ->> 'key_column', 'id') FROM lokadb.tables b WHERE b.table_name = $1`, t)
-	if err != nil || len(kr) == 0 {
-		return fmt.Errorf("%s is not enabled: %v", t, err)
+	if err != nil {
+		return fmt.Errorf("reading lokadb.tables for %s: %w", t, err)
+	}
+	if len(kr) == 0 {
+		return fmt.Errorf("%s is not enabled", t)
 	}
 	kcols := KeyCols(kr[0][0]) // a composite key: its columns (compkey.go)
 	// Under the CHECK on DEFAULT: the rows referenced by the organization's rows are locked
@@ -649,9 +681,9 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 			}
 			// An INSERT routed before the ATTACH (it takes only SHARE UPDATE EXCLUSIVE on the
 			// parent) would go to DEFAULT: writers wait instead. EXCLUSIVE lets reads through.
-			return locked(tx,
+			return locked(tx, append([]string{
 				fmt.Sprintf("LOCK TABLE %s IN EXCLUSIVE MODE", qr(t)),
-				fmt.Sprintf("ALTER TABLE %s ATTACH PARTITION %s FOR VALUES IN (%s)", qr(t), qr(part), val))
+				fmt.Sprintf("ALTER TABLE %s ATTACH PARTITION %s FOR VALUES IN (%s)", qr(t), qr(part), val)}, splitCaptureDrops(o, t)...)...)
 		})
 		var pgErr *pgconn.PgError
 		busy := errors.As(err, &pgErr) && (pgErr.Code == "55P03" || pgErr.Code == "40P01")
