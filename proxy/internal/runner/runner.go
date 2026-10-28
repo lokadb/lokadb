@@ -247,6 +247,7 @@ func (r *Runner) sendInventory(ctx context.Context, inv *cloudproto.Inventory) {
 
 func (r *Runner) pollLoop(ctx context.Context) error {
 	backoff := time.Second
+	told := "" // the newer release already logged
 	for ctx.Err() == nil {
 		r.mu.Lock()
 		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}}
@@ -280,8 +281,14 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 			r.interval = time.Duration(res.StatusIntervalS) * time.Second
 			r.mu.Unlock()
 		}
-		if res.MinVersion != "" && res.LatestVersion != "" && res.LatestVersion != r.Version {
-			r.Log.Info("a newer runner is out", "latest", res.LatestVersion)
+		// once per release: the version and, when the service names it, the image to pull
+		if res.LatestVersion != "" && res.LatestVersion != r.Version && res.LatestVersion != told {
+			told = res.LatestVersion
+			if res.RunnerImage != "" {
+				r.Log.Info("a newer runner is out", "latest", res.LatestVersion, "pull", res.RunnerImage)
+			} else {
+				r.Log.Info("a newer runner is out", "latest", res.LatestVersion)
+			}
 		}
 		for _, id := range res.Cancel {
 			r.mu.Lock()

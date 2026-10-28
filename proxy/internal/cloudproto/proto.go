@@ -71,6 +71,7 @@ type PollResponse struct {
 	StatusIntervalS int      `json:"status_interval_s"`
 	LatestVersion   string   `json:"latest_version,omitempty"`
 	MinVersion      string   `json:"min_version,omitempty"`
+	RunnerImage     string   `json:"runner_image,omitempty"` // the latest release's image, tag included
 }
 
 type Job struct {

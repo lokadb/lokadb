@@ -31,11 +31,13 @@ The cloud network and the customer network share nothing: the cloud containers c
 ```text
 1. lokadb token -org 1                     one-time enrolment token, handed to the agent
 2. wait until cust_demo answers through relay:15001
-3. lokadb check  -spec spec.json -customer … -customer-app … -org 1
-4. lokadb enable -spec spec.json -owner app        documents and document_versions become partitioned (no row copy)
+3. lokadb check  -db … -spec /quickstart/spec.json -customer … -customer-app … -org 1
+4. lokadb enable -db … -spec /quickstart/spec.json -owner app        documents and document_versions become partitioned (no row copy)
 5. lokadb move-org -org 1 -customer … -customer-app … -proxy-config lokadb.json -direct-role lokadb_dml
 6. counts: organization 1's rows in the cloud (0) and in its database; organization 2's in the cloud
 ```
+
+`/quickstart/spec.json` is the stand's spec (the file [`quickstart/spec.json`](../quickstart/spec.json) of this repository): which tables move with an organization and how each finds it. For your own database you do not write it by hand: `lokadb check -org-table TABLE -write-spec spec.json` makes it, see [Install on your database](install.md#3-write-the-spec) and [the spec file](configuration.md#the-spec-file).
 
 What you will see while it runs, none of it a failure:
 
