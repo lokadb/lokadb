@@ -872,7 +872,12 @@ func readSpec(path, patchPath string) (admin.Spec, error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage:
+	fmt.Fprintln(os.Stderr, `LokaDB: a Postgres proxy that keeps each organization's rows in the cloud database or in its own database, as you choose.
+
+Start:  lokadb check -db DSN -org-candidates     (which table is the organizations table; then -org-table TABLE)
+Docs:   https://docs.lokadb.com   (install on your database: https://docs.lokadb.com/getting-started/install/)
+
+usage:
   lokadb proxy -config lokadb.json [-record workload.json]
   lokadb check -db DSN (-spec spec.json | -org-table TABLE [-write-spec F] | -tenant-column COL [-write-spec F]) [-workload F[,F]] [-app-role R[,R]] [-proxy-config F]
               [-customer DSN [-customer-app DSN] [-customer-schema S] [-org N]] [-direct-forms forms.sql]
