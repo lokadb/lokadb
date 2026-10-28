@@ -102,7 +102,7 @@ The spec names the tables whose rows move with an organization, and how each tab
 | `renew_expired` | `24h` | still renew a certificate that expired at most this long ago (`"0"` disables) |
 | `control_plane` | — | the registry database: tokens, certificates, revocations, endpoints, cloud windows |
 | `orgs` | — | organization → listen address inside the cloud. More can be added at run time with `lokadb org-endpoint` |
-| `org_allow` | **required** | addresses allowed to connect to organization endpoints: the proxy, the cloud Postgres (`postgres_fdw`), the machines that run `check` and `move-org` |
+| `org_allow` | **required** | addresses allowed to connect to organization endpoints: the proxy, the cloud Postgres (`postgres_fdw`), the machines that run `check` and `move-org`. Each entry is an IP address, a CIDR range or a host name (looked up again every 30 s) |
 | `org_tls` | off | `require`: refuse organization connections that do not start TLS |
 | `cloud`, `cloud_access` | —, `window` | where the agent's connection to the cloud goes (the subscription during a logical move), and when it is allowed (`window`: only while `move-org` opens it; `always`: any connected agent, at any time) |
 | `registry_grace` | off | admit an agent whose certificate the registry confirmed within this period while the registry is down (a certificate revoked in that period also gets in) |

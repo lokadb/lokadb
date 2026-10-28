@@ -2,9 +2,9 @@
 
 What LokaDB does not do yet, and what we plan. Items are grouped by area, not by date; priorities follow what pilots need. The current limitations are listed in detail in [Limits and isolation](docs/limits.md).
 
-## Before the first release
+## Released
 
-- The first tagged release: the `lokadb` binary and the container image ([Install on your database](docs/install.md) builds from source until then).
+- 0.1.0: the `lokadb` binary (Linux amd64 and arm64) and the container image `ghcr.io/lokadb/lokadb:0.1.0` ([Install on your database](docs/install.md)).
 
 ## Schemas
 

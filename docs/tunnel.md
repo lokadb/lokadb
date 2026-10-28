@@ -7,7 +7,22 @@ The cloud never connects into the customer's network. An **agent** inside that n
 | `lokadb agent` | in the organization's network, next to its Postgres | Creates its own key, enrols with a one-time token, renews its certificate. Opens an **outbound** TLS connection to the relay and keeps it (keepalive, reconnect). Forwards streams from the tunnel **only** to the address in `-db`. Publishes no ports. |
 | `lokadb relay` | in the cloud network | Issues and renews agent certificates. Admits only certificates issued by enrolment and not revoked. Knows the organization from the certificate (`CN=org-<N>`). For each organization, listens on a port inside the cloud; a connection to it becomes a stream to that organization's agent. Only addresses in `org_allow` may connect. |
 | `lokadb token` / `revoke` / `agents` / `org-endpoint` | cloud administrator | Issue a one-time token, revoke an organization's certificates, list issued certificates, manage the organization's port on the relay. Stored in the registry (the control-plane database). |
-| `lokadb certs` | once | Creates a demo CA and relay certificate (does not overwrite an existing CA without `-force`). |
+| `lokadb certs` | once | Creates a demo CA and relay certificate in `-dir`: `ca.crt` (public: the file agents and the runner get), `ca.key` (secret), `relay.crt`, `relay.key`. Does not overwrite an existing CA without `-force`. |
+
+## Ports
+
+Everything the tunnel listens on, in one place. The relay's ports are the only ones of yours that the outside must reach.
+
+| Port | Where | Who connects | Open to |
+|---|---|---|---|
+| `7443` (`listen`) | relay | agents: the tunnel, mutual TLS | the organizations' networks (the internet, or their VPNs) |
+| `7444` (`enroll_listen`) | relay | agents: enrolment with a token, and certificate renewal | the same |
+| `15001`, `15002`, … (`orgs`; the runner picks from `relay.port_min`…`relay.port_max`, 15000–15999) | relay | your proxy, your Postgres (`postgres_fdw`), the machines that run `check` and `move-org`; each port is one organization's database | only the addresses in `org_allow`, never the internet |
+| `7446` (`health_listen`, off unless set) | relay | your load balancer or monitoring: `/healthz`, `/sessions`, `/status` | inside your network only |
+| `7445` (`listen` of `issuer.json`) | issuer | the relays, when the CA key is in a [separate issuing service](#ca-key-in-a-separate-issuing-service) | the relays only |
+| `-status-listen` (off unless set) | agent | monitoring of the agent: `/status` | inside the organization's network only |
+
+The agent opens no port. Where these ports are named in a command (`docker run -p`, a firewall), the port numbers above are the defaults of the examples; they are whatever your `relay.json` says. [Install on your database](install.md#8-the-tunnel-the-relay-and-the-agent) and [the runner](https://docs.lokadb.com/cloud/runner/) link here.
 
 Inside the tunnel the Postgres protocol passes unchanged: the organization's database checks the password itself. If the agent is not connected, the relay answers with a real Postgres error; if the agent cannot reach the database, the agent does. The application sees the reason:
 
@@ -107,7 +122,7 @@ Between the application and the proxy, turn on `tls` in `lokadb.json`: the proxy
 
 Above a limit the connection is refused with `08006` and the setting named in the log. A negative value removes a limit.
 
-The `org_allow` list is required: without it the relay does not start. List the cloud addresses that reach organizations — the proxy, the cloud Postgres, the machines that run `check` and `move-org`. Otherwise anyone who can reach an organization port on the relay would get a connection to that organization's database through its agent.
+The `org_allow` list is required: without it the relay does not start. List the cloud addresses that reach organizations — the proxy, the cloud Postgres, the machines that run `check` and `move-org`. Each entry is an IP address, a CIDR range or a host name; a host name is looked up again every 30 seconds, so it follows a container whose address changes. Otherwise anyone who can reach an organization port on the relay would get a connection to that organization's database through its agent.
 
 ## Troubleshooting
 

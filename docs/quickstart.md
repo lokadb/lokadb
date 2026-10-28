@@ -50,6 +50,8 @@ It worked when the `init` log ends with `Done.` and shows `rows of organization 
 
 ## Things to try
 
+The passwords on this page (`app`, `pw`) belong to the demo stand: they are fixed in its compose file and protect nothing. For a real database, never write a password on a command line: pass the DSN as `env:NAME` ([install](install.md#the-names-used-on-this-page)).
+
 ```bash
 psql "host=localhost port=6432 dbname=demo user=app password=app"
 # no psql on the host? the same, from inside the stand:
