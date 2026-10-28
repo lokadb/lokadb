@@ -62,7 +62,7 @@ For every part of a statement (`SELECT`, subquery, CTE, `UPDATE`, `DELETE`, `INS
 |---|---|---|
 | `no_condition` | the table has no conditions at all | `SELECT * FROM documents` |
 | `unknown_column` | a condition on a column with no organization lookup | `WHERE slug = $1`; `WHERE conversation_id = $1` without a foreign key |
-| `unsupported_form` | a form the analyzer does not read | `id <> ANY($1)`, `id = 1 OR id = 2`, `INSERT … SELECT` without the organization, a view or function over LokaDB tables, a `DO` block |
+| `unsupported_form` | a form the analyzer does not read | `id <> ANY($1)`, `id = 1 OR id = 2`, `INSERT … SELECT` without the organization, a view or function the analyzer cannot read through (the known cases are listed above), a `DO` block |
 | `unreadable_value` | the lookup column is compared with an expression, not a value | `organization_id = lower($1)::bigint` |
 
 A statement the proxy's parser (PostgreSQL 17 grammar) cannot parse, and whose text names a LokaDB table, view or function, is a statement without an organization: the policy decides.
@@ -102,7 +102,12 @@ For queries by a column unique across the table (`WHERE slug = $1`, `WHERE publi
 "routing": {"keys": [{"table": "documents", "column": "slug"}]}
 ```
 
-A unique column that the application looks up without the organization (a webhook token, an order number, an external id) is the usual case for this declaration: `check` offers it first, with the fragment to paste, for every single-column unique index (`unique_not_tenant_scoped`), and `-suggest` proposes it for unique columns named like a token, a number or an external id. A composite unique key (`provider, provider_payment_id`) cannot be a key yet; if one of its columns is unique on the data (provider ids usually are), `check` says so: add a unique index on that column and declare it. LokaDB checks that values do not repeat, creates a mapping table `lokadb.<table>__key__<column>` (value → organization) kept by a trigger, and the proxy looks up the organization by value like by key. The mapping's primary key keeps the value unique across all organizations — which an index on a table with foreign partitions cannot do; a duplicate is refused by `check`, by `enable` and on insert. `enable -prepare` fills the mapping in advance, while the application writes.
+- **When.** A unique column that the application looks up without the organization (a webhook token, an order number, an external id) is the usual case.
+- **Who proposes it.** `check` offers it first, with the fragment to paste, for every single-column unique index (`unique_not_tenant_scoped`), and `-suggest` proposes it for unique columns named like a token, a number or an external id.
+- **Composite keys.** A composite unique key (`provider, provider_payment_id`) cannot be a key yet. If one of its columns is unique on the data (provider ids usually are), `check` says so: add a unique index on that column and declare it.
+- **How it works.** LokaDB checks that the values do not repeat, creates a mapping table `lokadb.<table>__key__<column>` (value → organization) kept by a trigger, and the proxy looks up the organization by value like by key.
+- **Uniqueness.** The mapping's primary key keeps the value unique across all organizations, which an index on a table with foreign partitions cannot do; a duplicate is refused by `check`, by `enable` and on insert.
+- **Large tables.** `enable -prepare` fills the mapping in advance, while the application writes.
 
 ### Foreign keys to cloud tables after the move
 

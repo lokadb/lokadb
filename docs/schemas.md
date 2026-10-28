@@ -35,4 +35,10 @@ Rails, Django and Laravel applications with UUID keys often have a `uuid` organi
 - the **value** — what is in the tenant column. It is the organization for everything that sees rows: partitions are split by value (`FOR VALUES IN ('…')`), the proxy puts it in `lokadb.org`, the application names the organization by it (`WHERE account_id = $1`, `SET LOCAL lokadb.tenant = '<uuid>'`);
 - the **number** `N` — an integer LokaDB uses for names and settings: partitions `<t>__o<N>` and `<t>__org<N>`, the FDW server, the tunnel and tokens (`-org N`), the proxy config (`customers`, `customers_app`).
 
-For an integer column they coincide. For `uuid`, `lokadb org-add -db … -tenant <uuid> [-org N]` assigns a number; the other commands take `-org N` or `-tenant <uuid>`. Rows without an organization live under the nil UUID, so an organization with the nil UUID is impossible (`check` reports such rows as a blocker). All LokaDB tables of one database must use the same kind of tenant column. Everything works for UUID organizations: `check`, `enable`, routing, cooperative mode, both move modes, `repoint`, `move-back`, `disable`, reconciliation and the direct path. Text organization identifiers are not supported yet.
+For an integer column they coincide. For `uuid`, give each organization its number once, after `enable` and before anything that names the organization (`lokadb token`, the relay's `orgs` entry, `org-credentials`, `move-org`):
+
+```bash
+lokadb org-add -db "$CLOUD_DSN" -tenant 0f8fad5b-d9cb-469f-a165-70867728950e [-org N]      # prints: organization 7: 0f8fad5b-…
+```
+
+Without `-org N` it takes the next free number. After that, `check`, `enable`/`move-org`, `move-back`, `repoint`, `org-profile` and `org-credentials` take either `-org N` or `-tenant <uuid>`; every other command (`token`, `revoke`, `org-endpoint`, `schema-diff`, `refs-diff`, …) takes the number only. Rows without an organization live under the nil UUID, so an organization with the nil UUID is impossible (`check` reports such rows as a blocker). All LokaDB tables of one database must use the same kind of tenant column. Everything works for UUID organizations: `check`, `enable`, routing, cooperative mode, both move modes, `repoint`, `move-back`, `disable`, reconciliation and the direct path. Text organization identifiers are not supported yet.

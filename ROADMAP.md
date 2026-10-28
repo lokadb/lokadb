@@ -1,13 +1,10 @@
 # Roadmap
 
-What LokaDB does not do yet, and what we plan. Items are grouped by area, not by date; priorities follow what pilots need. The current limitations are listed in detail in [docs/limits.md](docs/limits.md).
+What LokaDB does not do yet, and what we plan. Items are grouped by area, not by date; priorities follow what pilots need. The current limitations are listed in detail in [Limits and isolation](docs/limits.md).
 
 ## Before the first release
 
-- Publish the measurements on real networks: the cost of the proxy for organizations that stay in the cloud, `fdw` against `fdw+direct` for remote organizations, switch-over pauses under load, ceilings for each workload, with methodology and raw results.
-- A one-command local quickstart ([docs/quickstart.md](docs/quickstart.md)).
-- CI on GitHub Actions (`go vet`, `go test`, `-race`; the end-to-end stand on demand).
-- `SECURITY.md`, `CONTRIBUTING.md`, issue templates.
+- The first tagged release: the `lokadb` binary and the container image ([Install on your database](docs/install.md) builds from source until then).
 
 ## Schemas
 
@@ -49,4 +46,4 @@ What LokaDB does not do yet, and what we plan. Items are grouped by area, not by
 
 ## Hosted service
 
-[lokadb.com](https://lokadb.com) will offer, on top of the open-source check: reports on an uploaded schema and workload, the latency forecast for remote organizations and N+1 detection, an interface with fixes and patches, an AI advisor over the findings, and report comparison.
+The open-source `lokadb check` is complete: it already includes the latency forecast for remote organizations (`-rtt`) and N+1 detection. [lokadb.com](https://lokadb.com) will offer, as a service on top of it: reports on an uploaded schema and workload, an interface with fixes and ready-to-apply patches, an AI advisor over the findings, and report comparison over time.

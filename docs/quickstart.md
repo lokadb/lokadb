@@ -39,14 +39,14 @@ The cloud network and the customer network share nothing: the cloud containers c
 
 `/quickstart/spec.json` is the stand's spec (the file [`quickstart/spec.json`](../quickstart/spec.json) of this repository): which tables move with an organization and how each finds it. For your own database you do not write it by hand: `lokadb check -org-table TABLE -write-spec spec.json` makes it, see [Install on your database](install.md#3-write-the-spec) and [the spec file](configuration.md#the-spec-file).
 
-What you will see while it runs, none of it a failure:
+It worked when the `init` log ends with `Done.` and shows `rows of organization 1 stored in the cloud = 0` (the organization's rows are in its own database now), while `demo` keeps writing for both organizations. What you will see on the way, none of it a failure:
 
 - `check` ends with the verdict `NEEDS REVIEW` and a few warnings: the demo application does not declare every relation, and the report says so. It is not `BLOCKED`, which is what would stop the move.
-- Every `lokadb` command prints `warning: -db holds a password on the command line` (and the same for `-customer` and `-customer-app`). The demo does it for brevity; [configuration.md](configuration.md#passwords-on-the-command-line) shows how to keep passwords out of arguments.
+- Every `lokadb` command prints `warning: -db holds a password on the command line` (and the same for `-customer` and `-customer-app`). The demo does it for brevity; [Configuration](configuration.md#passwords-on-the-command-line) shows how to keep passwords out of arguments.
 - The cloud and customer database logs show `WARNING: subscription was created, but is not connected` (the permission probe of `check` creates and drops a throwaway subscription), and the cloud log also shows `ERROR: relation "lokadb.orgs" does not exist` (LokaDB's metadata is looked up before `enable` creates it).
 - Counts are not round: the demo application is already writing, so organization 1 has about 1000 rows when it moves, not exactly its 1000 seed documents.
 
-`move-org` runs in trigger mode (no logical replication) and sets organization 1 to the `fdw+direct` profile, because the proxy config has its direct-path credentials. `demo` keeps writing for both organizations the whole time. If a write that was waiting for `enable` gets the transient error "the row reached the table without its organization … retry the statement", `demo` retries it once, as an application would; write errors otherwise appear only while the agent is stopped. See [limits](limits.md#known-limitations).
+`move-org` runs in trigger mode (no logical replication) and sets organization 1 to the `fdw+direct` profile, because the proxy config has its direct-path credentials. `demo` keeps writing for both organizations the whole time. If a write that was waiting for `enable` gets the transient error "the row reached the table without its organization … retry the statement", `demo` retries it once, as an application would; write errors otherwise appear only while the agent is stopped. See [Limits and isolation](limits.md#known-limitations).
 
 ## Things to try
 
@@ -70,7 +70,7 @@ docker compose -f quickstart/compose.yml exec customer psql -U postgres cust_dem
 
 To move the organization back and undo everything:
 
-`init` is the stand's one-shot service that has the `lokadb` binary and `psql`; the commands below borrow it. `--no-deps` matters: without it Compose rebuilds and recreates the certificate, relay and proxy services first, the agent loses its tunnel for a few seconds, and the command fails with "the agent of organization 1 is not connected". Each of the two commands also waits about a minute on purpose (the `-bridge` and `-grace` flags, 60 s each by default, see [rollback.md](rollback.md): proxies with old metadata drain before anything is dropped), so a quiet minute is not a hang.
+`init` is the stand's one-shot service that has the `lokadb` binary and `psql`; the commands below borrow it. `--no-deps` matters: without it Compose rebuilds and recreates the certificate, relay and proxy services first, the agent loses its tunnel for a few seconds, and the command fails with "the agent of organization 1 is not connected". Each of the two commands also waits about a minute on purpose (the `-bridge` and `-grace` flags, 60 s each by default, see [The way back](rollback.md): proxies with old metadata drain before anything is dropped), so a quiet minute is not a hang.
 
 ```bash
 docker compose -f quickstart/compose.yml run --rm --no-deps --entrypoint lokadb init move-back \
@@ -80,7 +80,7 @@ docker compose -f quickstart/compose.yml run --rm --no-deps --entrypoint lokadb 
   -db "host=cloud dbname=demo user=postgres password=pw sslmode=disable" -spec /quickstart/spec.json
 ```
 
-After `move-back` the customer database `cust_demo` still has the tables, marked "returned to the cloud by LokaDB"; LokaDB never drops a customer's tables, and the log prints the `DROP TABLE` command for the customer to run when ready ([rollback.md](rollback.md)).
+After `move-back` the customer database `cust_demo` still has the tables, marked "returned to the cloud by LokaDB"; LokaDB never drops a customer's tables, and the log prints the `DROP TABLE` command for the customer to run when ready ([The way back](rollback.md)).
 
 Clean up with `docker compose -f quickstart/compose.yml down -v`. It removes the containers, networks and data volumes. The image built from source, `lokadb-quickstart` (about 1 GB), stays so that the next run starts fast; remove it with `docker rmi lokadb-quickstart`. If you set `COMPOSE_PROJECT_NAME`, set it for every command of this page (the stand names its own project `lokadb-quickstart`).
 
@@ -88,15 +88,15 @@ Clean up with `docker compose -f quickstart/compose.yml down -v`. It removes the
 
 | Word | Meaning |
 |---|---|
-| `-customer` and `-customer-app` | two connections to the customer database: an administrator that prepares it, and a plain role that will **own** the moved tables and is what the cloud uses afterwards. See [moving.md](moving.md) |
+| `-customer` and `-customer-app` | two connections to the customer database: an administrator that prepares it, and a plain role that will **own** the moved tables and is what the cloud uses afterwards. See [Moving organizations](moving.md) |
 | `-owner app` | the role that owns the application's tables in the cloud database |
-| `-proxy-config lokadb.json`, `-direct-role lokadb_dml` | the proxy's config and the role it uses for the direct path (profile `fdw+direct`), see [profiles-and-cooperative-mode.md](profiles-and-cooperative-mode.md) |
-| trigger mode | the move copies rows and captures changes with triggers instead of logical replication, see [moving.md](moving.md) |
-| `fanout` policy `reject` | a statement that names no organization is refused instead of being sent to every database, see [routing.md](routing.md) |
-| `org_allow` | which addresses may use an organization's endpoint on the relay, see [tunnel.md](tunnel.md) |
+| `-proxy-config lokadb.json`, `-direct-role lokadb_dml` | the proxy's config and the role it uses for the direct path (profile `fdw+direct`), see [Profiles and cooperative mode](profiles-and-cooperative-mode.md) |
+| trigger mode | the move copies rows and captures changes with triggers instead of logical replication, see [Moving organizations](moving.md) |
+| `fanout` policy `reject` | a statement that names no organization is refused instead of being sent to every database, see [Routing](routing.md) |
+| `org_allow` | which addresses may use an organization's endpoint on the relay, see [The tunnel](tunnel.md) |
 | `controlplane` | the relay's registry database (enrolled agents, certificates); in the stand it lives in the same Postgres as the cloud database |
 | `certs` | one-shot service that builds the image and makes a demo certificate authority |
-| `sslmode=disable` | the demo has no TLS between its containers; a real setup does, see [tunnel.md](tunnel.md) |
+| `sslmode=disable` | the demo has no TLS between its containers; a real setup does, see [The tunnel](tunnel.md) |
 
 ## Files
 
@@ -109,4 +109,4 @@ Clean up with `docker compose -f quickstart/compose.yml down -v`. It removes the
 | `quickstart/relay.json` | the relay: certificates, registry, organization 1's endpoint, `org_allow` (the cloud network) |
 | `quickstart/init.sh`, `demo.sh` | the steps above and the writing application |
 
-Passwords and addresses in these files are for the demo only. For a real setup see [configuration.md](configuration.md), [tunnel.md](tunnel.md) and [limits.md](limits.md#installation-direct-access-to-the-cloud-database-is-closed).
+Passwords and addresses in these files are for the demo only. For a real setup see [Install on your database](install.md), [Configuration](configuration.md), [The tunnel](tunnel.md) and [Limits and isolation](limits.md#installation-direct-access-to-the-cloud-database-is-closed).

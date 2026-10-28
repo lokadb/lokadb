@@ -42,7 +42,7 @@ flowchart LR
     G --> D
 ```
 
-Each moved organization has a **routing profile**:
+Each moved organization has a **routing profile**. It matters only after an organization has moved, and `move-org` picks `fdw+direct` for you; skip this table on a first read.
 
 | Profile | Path | Use when |
 |---|---|---|
@@ -54,27 +54,29 @@ Each moved organization has a **routing profile**:
 
 **In the browser.** [the online demo](https://play.lokadb.com) runs a demo stand: a cloud database, organizations in their own databases, a demo application, and the compatibility report — nothing to install.
 
-**Locally, with Docker.** One command starts a cloud Postgres, one organization's Postgres behind the relay and the agent, the proxy, and a small application that keeps writing for two organizations; it then runs `check`, `enable` and `move-org` and shows where each organization's rows ended up ([docs/quickstart.md](docs/quickstart.md)). Run it from the root of this repository:
+**Locally, with Docker.** One command starts a cloud Postgres, one organization's Postgres behind the relay and the agent, the proxy, and a small application that keeps writing for two organizations; it then runs `check`, `enable` and `move-org` and shows where each organization's rows ended up ([Quickstart](docs/quickstart.md)). It is a demo on throwaway databases; to put LokaDB in front of your own, see [Install on your database](docs/install.md). Run it from the root of this repository:
 
 ```bash
+git clone https://github.com/lokadb/lokadb && cd lokadb
 docker compose -f quickstart/compose.yml up --build
 ```
 
-The full test stand — three applications and several hundred end-to-end and defect checks — is `bash e2e/run.sh` (see [docs/testing.md](docs/testing.md)).
+The full test stand — three applications and several hundred end-to-end and defect checks — is `bash e2e/run.sh` (see [Testing](docs/testing.md)).
 
 ## Adoption path
 
-Each step is one command; every step can be stopped and undone.
+The main steps, each of which can be stopped and undone. [Install on your database](docs/install.md) has every command in full, and says which machine runs it.
 
-| Step | Command | What it does |
+| Step | Command (abridged) | What it does |
 |---|---|---|
-| 1. Check | `lokadb check -db … -spec spec.json -workload workload.json` | Reads the schema, the recorded workload and both databases, and reports what blocks the move, what LokaDB does not support yet, and what will behave differently. Changes nothing. |
-| 2. Enable | `lokadb enable -db … -spec spec.json` | Converts the chosen tables to partitioned tables in place (online preparation with `enable -prepare` for large tables). All organizations stay in the cloud. |
-| 3. Move | `lokadb move-org -db … -org 1 -customer … -customer-app …` | Moves one organization to its own database while the application keeps writing; writes of the organization pause for the switch-over — seconds for an organization tens of milliseconds away (see [Performance](docs/performance.md#moving-an-organization-under-writes)). |
-| 4. Profile | `lokadb org-profile -db … -org 1 fdw+direct` | Chooses how the proxy reaches that organization. |
-| 5. Back | `lokadb move-back -db … -org 1 -customer …` | Returns the organization to the cloud; `lokadb disable` then undoes `enable`. |
+| 1. Check | `lokadb check -db DSN -org-table TABLE -write-spec spec.json -workload workload.json` | Reads the schema, the workload the proxy recorded (`lokadb proxy -record`, see the install page) and, later, the organization's database, and reports what blocks the move, what LokaDB does not support yet, and what will behave differently. Changes nothing. |
+| 2. Enable | `lokadb enable -db DSN -spec spec.json -owner ROLE` | Converts the chosen tables to partitioned tables in place (online preparation with `enable -prepare` for large tables). All organizations stay in the cloud. |
+| 3. Connect | `lokadb relay -config relay.json`; `lokadb token -cp DSN -org 1`, then `lokadb agent …` in the organization's network | A relay in your network and an agent in the organization's: the agent opens the only connection, outbound, with a one-time token. |
+| 4. Move | `lokadb move-org -db DSN -spec spec.json -owner ROLE -org 1 -customer DSN -customer-app DSN -proxy-config lokadb.json -direct-role ROLE` | Moves one organization to its own database while the application keeps writing. At the switch-over the reads and writes of **all** organizations on the moved tables pause — seconds for an organization tens of milliseconds away (see [Performance](docs/performance.md#moving-an-organization-under-writes)). |
+| 5. Profile | `lokadb org-profile -db DSN -org 1 fdw+direct` | Chooses how the proxy reaches that organization. `move-org` already picks `fdw+direct` when the proxy has the direct path's credentials; this switches later. |
+| 6. Back | `lokadb move-back -db DSN -spec spec.json -org 1 -customer DSN` | Returns the organization to the cloud; `lokadb disable` then undoes `enable`. |
 
-The application only changes its connection string to point at the proxy (`host`, `port`). Relations your schema does not declare as foreign keys (common in Rails and Laravel), cross-organization reports and background jobs need a decision from you: `lokadb check` lists every such query with the reason no organization was found, and you declare the missing relations in the spec (`routing.relations`) or allow the reviewed reports. See [docs/check.md](docs/check.md) and [docs/routing.md](docs/routing.md).
+The application only changes its connection string to point at the proxy (`host`, `port`). Relations your schema does not declare as foreign keys (common in Rails and Laravel), cross-organization reports and background jobs need a decision from you: `lokadb check` lists every such query with the reason no organization was found, and you declare the missing relations in the spec (`routing.relations`) or allow the reviewed reports. See [Compatibility check](docs/check.md) and [Routing](docs/routing.md).
 
 ## What's supported
 
@@ -86,7 +88,7 @@ The application only changes its connection string to point at the proxy (`host`
 - **Moving:** online move without logical replication (trigger-based capture, works on managed Postgres) or with it; move back; change of the customer database (`repoint`); `disable`.
 - **Tunnel:** one-time enrolment tokens, automatic certificate renewal, revocation in two seconds, several relays and several agents per organization, CA key in a separate issuing service, end-to-end TLS to the customer database.
 
-**Scale:** one partition per organization. Up to about 100 organizations there is no noticeable price; at 1000 throughput is lower (reads and updates by a third to a half, inserts by about a third) and at 3000 inserts fall to about 1,400 ops/s, so we do not recommend mixed writes at that scale yet. Details and the mechanism in [docs/limits.md](docs/limits.md#how-many-organizations-one-cloud-database-can-hold).
+**Scale:** one partition per organization. Up to about 100 organizations there is no noticeable price; at 1000 throughput is lower (reads and updates by a third to a half, inserts by about a third) and at 3000 inserts fall to about 1,400 ops/s, so we do not recommend mixed writes at that scale yet. Details and the mechanism in [Limits and isolation](docs/limits.md#how-many-organizations-one-cloud-database-can-hold).
 
 ### Not yet
 
@@ -99,11 +101,11 @@ The application only changes its connection string to point at the proxy (`host`
 - Automatic provisioning of the customer database: the customer provides it.
 - A connection pooler in `transaction` mode **between** the proxy and Postgres (a pooler in front of the proxy is fine).
 
-The full list, and what is planned, is in [ROADMAP.md](ROADMAP.md) and [docs/limits.md](docs/limits.md).
+The full list, and what is planned, is in [Roadmap](ROADMAP.md) and [Limits and isolation](docs/limits.md).
 
 ## Performance
 
-Measured on eight separate servers, not in Docker on one machine: a cloud database (8 cores, 32 GB), the proxy together with the relay (4 cores, 16 GB), a load generator (4 cores, 16 GB), and the databases of four organizations (2 cores, 4–8 GB each) at 0.19, 9.4, 38.7 and 43.3 ms round-trip time from the cloud. Postgres 18, `fsync` on, one scenario at a time; every point is 60 s after 15 s of warm-up, two repeats, the median. All figures are **for this workload** — access by primary key and by an `(organization_id, id)` index; another workload gives other numbers. Method, scenarios and raw results are in `research/bench/`; the numbers behind every chart are in [charts-data.md](research/bench/charts-data.md).
+Measured on seven separate servers, not in Docker on one machine: a cloud database (8 cores, 32 GB), the proxy together with the relay (4 cores, 16 GB), a load generator (4 cores, 16 GB), and the databases of four organizations (2 cores, 4–8 GB each) at 0.19, 9.4, 38.7 and 43.3 ms round-trip time from the cloud. Postgres 18, `fsync` on, one scenario at a time; every point is 60 s after 15 s of warm-up, two repeats, the median. All figures are **for this workload** — access by primary key and by an `(organization_id, id)` index; another workload gives other numbers. Method, scenarios and raw results are in `research/bench/`; the numbers behind every chart are in [charts-data.md](research/bench/charts-data.md).
 
 **Organizations that stay in the cloud.** A statement costs 0.2–1 ms more through the proxy; with 32 clients the throughput is 36–80 % of a direct connection (read 66,500 → 29,800 ops/s, update 57,200 → 33,900, feed 35,500 → 28,400, insert 23,700 → 8,600). A whole Django application with 16 clients was 5–10 % slower through LokaDB than without it. That makes the cloud path suitable for a limited pilot on a compatible application — a conclusion about this workload, not a guarantee.
 
@@ -119,7 +121,7 @@ Measured on eight separate servers, not in Docker on one machine: a cloud databa
   <img alt="Requests per second with a new connection for every request" src="docs/img/bench/new-connection-light.svg">
 </picture></p>
 
-**A moved organization** pays for distance: its latency is almost linear in the round-trip time. At 43 ms a read through `fdw` takes 352 ms and through `fdw+direct` 133 ms; an update 351 and 89 ms. The same page has the ceilings by number of clients and of organizations, the pause of a move and the load limit: [docs/performance.md](docs/performance.md). Where the round trips come from and what to tune is explained there too.
+**A moved organization** pays for distance: its latency is almost linear in the round-trip time. At 43 ms a read through `fdw` takes 352 ms and through `fdw+direct` 133 ms; an update 351 and 89 ms. The same page has the ceilings by number of clients and of organizations, the pause of a move and the load limit: [Performance](docs/performance.md). Where the round trips come from and what to tune is explained there too.
 
 **Improved by changes made after these measurements, not re-measured:**
 
@@ -136,13 +138,13 @@ LokaDB promises one thing: **the rows of the chosen tables of a moved organizati
 - **Narrow, never widen.** The proxy only takes the organization from the statement itself. A wrong guess yields an empty or partial answer, never another organization's rows; a statement with no organization is refused by default; a statement in which the proxy sees no LokaDB table runs under "no organization" rather than "all organizations".
 - **Not an authorization layer.** If the application asks for another organization's document by id, the proxy routes the query to where that document lives. Who may read what is still the application's job.
 - **The cloud never reaches into the customer network.** The agent opens the only connection, outbound, with mutual TLS; tokens are single-use; the agent's private key never leaves its machine; certificates renew themselves and can be revoked. TLS can run end to end from the cloud to the customer database so that the relay sees only ciphertext.
-- **What LokaDB does not isolate:** your application's caches, queues, search indexes, files, logs and error reports; backups and replicas made before the move; and, on the `fdw` profile, the moved rows in transit through the cloud Postgres (memory, temporary files, logs if `log_statement` is on). The full list is in [docs/limits.md](docs/limits.md#what-lokadb-does-not-isolate); promise customers isolation only together with that list.
+- **What LokaDB does not isolate:** your application's caches, queues, search indexes, files, logs and error reports; backups and replicas made before the move; and, on the `fdw` profile, the moved rows in transit through the cloud Postgres (memory, temporary files, logs if `log_statement` is on). The full list is in [Limits and isolation](docs/limits.md#what-lokadb-does-not-isolate); promise customers isolation only together with that list.
 
-Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+Report vulnerabilities as described in the [security policy](SECURITY.md).
 
 ## Status
 
-LokaDB is under active development by a small team. The core — `check`, `enable`, the proxy, `move-org`, the way back, migrations, the tunnel — is complete for the supported scope and is covered by an end-to-end stand and a suite of regression checks for every defect found so far. It has not yet run a production customer. What is next is in [ROADMAP.md](ROADMAP.md).
+LokaDB is under active development by a small team. The core — `check`, `enable`, the proxy, `move-org`, the way back, migrations, the tunnel — is complete for the supported scope and is covered by an end-to-end stand and a suite of regression checks for every defect found so far. It has not yet run a production customer. What is next is in the [Roadmap](ROADMAP.md).
 
 ## Documentation
 
@@ -173,7 +175,7 @@ LokaDB is under active development by a small team. The core — `check`, `enabl
 
 ## Contributing
 
-Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Go code is built and tested in Docker (`golang:1.25`); a change that touches routing, moving or the tunnel should come with a check in `e2e/defects` that fails before it and passes after.
+Issues and pull requests are welcome; see [Contributing](CONTRIBUTING.md). Go code is built and tested in Docker (`golang:1.25`); a change that touches routing, moving or the tunnel should come with a check in `e2e/defects` that fails before it and passes after.
 
 ## License
 

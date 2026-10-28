@@ -1,6 +1,6 @@
 # Performance reference
 
-Measured on eight separate servers, not in Docker on one machine: a cloud database (8 cores, 32 GB), the proxy together with the relay (4 cores, 16 GB), a load generator (4 cores, 16 GB), and the databases of four organizations (2 cores, 4–8 GB each) at 0.19, 9.4, 38.7 and 43.3 ms round-trip time from the cloud. Postgres 18, `fsync` on, one scenario at a time; every point is 60 s after 15 s of warm-up, two repeats, the median. All figures are **for this workload** — access by primary key and by an `(organization_id, id)` index; another workload gives other numbers. Method, scenarios and raw results are in `research/bench/`; the numbers behind every chart are in [charts-data.md](../research/bench/charts-data.md).
+Measured on seven separate servers, not in Docker on one machine: a cloud database (8 cores, 32 GB), the proxy together with the relay (4 cores, 16 GB), a load generator (4 cores, 16 GB), and the databases of four organizations (2 cores, 4–8 GB each) at 0.19, 9.4, 38.7 and 43.3 ms round-trip time from the cloud. Postgres 18, `fsync` on, one scenario at a time; every point is 60 s after 15 s of warm-up, two repeats, the median. All figures are **for this workload** — access by primary key and by an `(organization_id, id)` index; another workload gives other numbers. Method, scenarios and raw results are in `research/bench/`; the numbers behind every chart are in [charts-data.md](../research/bench/charts-data.md).
 
 The structure of the cost — which round trips an operation makes — and what to tune come first; the measured results follow.
 
@@ -18,6 +18,8 @@ Every statement on a moved organization through the `fdw` profile is executed by
 | first statement of a new client connection | login (SCRAM), a tunnel stream, five `SET`s of `postgres_fdw` | +9 |
 
 The time of an operation is these round trips multiplied by the round-trip time to the organization.
+
+Two kinds of numbers appear on this page, and they count different things. The table above is read off the organization's statement log for one operation on its own. The latencies measured further down are the slope of the time against the round-trip time (0.19, 9.4, 38.7 and 43.3 ms) for the benchmark's operations, a read inside a transaction with its begin and commit: about 8 round trips on `fdw` and about 3 on `fdw+direct`. Do not set the one against the other; "about one round trip per statement" on the direct path is for a single statement of its own.
 
 - `UPDATE` and `DELETE` cost 8 because LokaDB keeps row triggers on the foreign partition (`__refs`, the parent check, foreign keys to cloud tables, key maps); with a row trigger `postgres_fdw` cannot push the whole statement down. Without them it would be 3.
 - The `+9` per connection is why the **cache of cloud connections (`upstream_pool`) is on by default for all databases** (`"upstream_pool": false` turns it off): a cloud backend and its `postgres_fdw` connection stay warm between clients. An application that connects per request (PHP, serverless) would otherwise pay these round trips on every request.
@@ -112,7 +114,12 @@ Read and update, ops/s:
 | 500 | 83,095 | 27,286 | 2,156 | 0 % |
 | 1000 | 74,397 | 25,608 | 2,044 | 82 % |
 
-Moved organizations on `fdw` are limited by the network to the organization, not by the processor. With 1000 clients 82 % of the operations on moved organizations were refused a connection: in this scenario the relay's `max_streams` is the ceiling (2048 connections through the relay to all organizations together; every `fdw` client keeps its own connection to the database of every organization it touches). As an **approximation for this scenario**: clients through `fdw` ≤ `max_streams` ÷ the number of moved organizations a client touches, and not more than the organization database's `max_connections` and the agent's `-max-conns`. What helps: raising `max_streams` (relay memory up to 4 MiB per connection in the worst case), `fdw+direct` with `direct_pool`, a pooler in front of the proxy, fewer clients per organization.
+Moved organizations on `fdw` are limited by the network to the organization, not by the processor. With 1000 clients 82 % of the operations on moved organizations were refused a connection: in this scenario the relay's `max_streams` is the ceiling (2048 connections through the relay to all organizations together; every `fdw` client keeps its own connection to the database of every organization it touches). As an **approximation for this scenario**: clients through `fdw` ≤ `max_streams` ÷ the number of moved organizations a client touches, and not more than the organization database's `max_connections` and the agent's `-max-conns`. What helps:
+
+- raising `max_streams` (relay memory up to 4 MiB per connection in the worst case);
+- `fdw+direct` with `direct_pool`;
+- a pooler in front of the proxy;
+- fewer clients per organization.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/bench/client-ceiling-dark.svg">

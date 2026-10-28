@@ -3,12 +3,13 @@
 ## The end-to-end stand
 
 ```bash
+cd e2e && docker compose down -v && docker compose --profile tools --profile apps build && cd ..
 bash e2e/run.sh
 ```
 
 Requires Docker. Together with the defect checks below it runs several hundred checks. The stand (`e2e/compose.yml`) has a cloud Postgres (with `pg_stat_statements`), a customer Postgres, the relay, the agent and the proxy, on three Docker networks: the cloud network and the customer network share nothing; only the relay and the agent are on a third one. Before anything else the script verifies that no cloud container can even resolve the customer database, and that it is reachable through the tunnel.
 
-For each of three unmodified applications — **Laravel**, **Django**, **Go** — it:
+For each of the test applications — unmodified **Laravel**, **Django** and **Go** applications, which stand for any other (LokaDB's scope is the Postgres protocol, not these three) — it:
 
 1. runs migrations and seeding;
 2. runs `lokadb check` with the recorded workload and the customer database (the verdict must not be `BLOCKED`);

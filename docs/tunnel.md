@@ -18,12 +18,12 @@ DETAIL:  ... FATAL:  lokadb relay: the agent of organization 1 is not connected
 
 ## Enrolment, renewal and revocation
 
-1. **Token.** `lokadb token -org 1 -ttl 15m` prints the token once; the registry keeps only its sha256, the organization and the expiry.
+1. **Token.** `lokadb token -cp "$CP_DSN" -org 1 -ttl 15m` prints the token once; the registry keeps only its sha256, the organization and the expiry.
 2. **Install.** The agent needs three things: the CA certificate (to verify the relay), the token in a file (`-token-file`, not on the command line), and a state directory (`-state`).
 3. **Enrol.** The agent creates a P-256 key and sends only a CSR and the token. The relay validates the CSR and that it serves the token's organization (neither failure burns the token), then consumes the token atomically and signs a certificate for `cert_ttl`. **The agent's key never leaves its machine.**
 4. **Renew.** At two thirds of the lifetime the agent creates a new key and gets a new certificate over mutual TLS. Revoked, expired or non-enrolled certificates cannot renew. A live session is not cut when the certificate expires; the next connection uses the new one. The previous certificate stays valid until the new one is used, so a lost renewal response does not lock the agent out. A certificate that expired at most `renew_expired` ago (24 h by default) can still renew — the agent recovers on its own after the relay or registry was down.
 5. **Restart.** The agent reuses the certificate from `-state` (one file, mode 0600, replaced atomically); no new token.
-6. **Revoke.** `lokadb revoke -org 1` revokes all certificates of the organization and its unused tokens. The relay checks live sessions against the registry every two seconds and cuts revoked ones. `-serial S` revokes one agent with its whole renewal chain. Only a new token brings the organization back.
+6. **Revoke.** `lokadb revoke -cp "$CP_DSN" -org 1` revokes all certificates of the organization and its unused tokens. The relay checks live sessions against the registry every two seconds and cuts revoked ones. `-serial S` revokes one agent with its whole renewal chain. Only a new token brings the organization back.
 
 Failed enrolment and renewal attempts are limited per client address (`enroll_fail_per_min`, 10). Each registry call made for a connection is limited to 5 s.
 
@@ -62,7 +62,7 @@ backend org1
   server relay-b relay-b:15001 check port 7446 inter 2s
 ```
 
-**Graceful stop.** On `SIGTERM` the relay answers 503 on `/healthz` at once, closes its ports after `drain_delay` (5 s), asks agents to open no new streams, and lets open streams finish until `drain_timeout` (1 min). Connection pools (`postgres_fdw`, the proxy's pools) keep connections open, so with pools the drain usually lasts the whole `drain_timeout` and the remaining connections are then cut: an upgrade without interruption needs several relays behind a balancer. Docker kills a container after 10 s by default — set `stop_grace_period` higher.
+**Graceful stop.** On `SIGTERM` the relay answers 503 on `/healthz` at once, closes its ports after `drain_delay` (default `0`), asks agents to open no new streams, and lets open streams finish until `drain_timeout` (default `5s`). With several relays raise both (for example `5s` and `1m`). Connection pools (`postgres_fdw`, the proxy's pools) keep connections open, so with pools the drain usually lasts the whole `drain_timeout` and the remaining connections are then cut: an upgrade without interruption needs several relays behind a balancer. Docker kills a container after 10 s by default — set `stop_grace_period` higher.
 
 The relay starts without the registry (on the organizations of its `relay.json`) and connects when the registry comes back. While the registry is down, **revocation does not reach live sessions**; `registry_grace` admits only agents whose certificate the registry confirmed within that period.
 
@@ -92,7 +92,7 @@ The relay and agent pass bytes as they are, so TLS can run from `postgres_fdw`, 
 
 To make sure no one forgets, require TLS on the relay — for all organizations (`"org_tls": "require"`) or one (`org-endpoint -org N -tls require`). The relay then refuses a connection that does not start with `SSLRequest`, does not let a client continue in clear text if the database refuses TLS, and still passes `CancelRequest`.
 
-Between the application and the proxy, turn on `tls` in `lokadb.json`: the proxy receives the application's password in clear text to pass it to Postgres. See [configuration.md](configuration.md#proxy-lokadbjson).
+Between the application and the proxy, turn on `tls` in `lokadb.json`: the proxy receives the application's password in clear text to pass it to Postgres. See [Configuration](configuration.md#proxy-lokadbjson).
 
 ## Limits
 
@@ -108,3 +108,19 @@ Between the application and the proxy, turn on `tls` in `lokadb.json`: the proxy
 Above a limit the connection is refused with `08006` and the setting named in the log. A negative value removes a limit.
 
 The `org_allow` list is required: without it the relay does not start. List the cloud addresses that reach organizations — the proxy, the cloud Postgres, the machines that run `check` and `move-org`. Otherwise anyone who can reach an organization port on the relay would get a connection to that organization's database through its agent.
+
+## Troubleshooting
+
+| What you see | Cause | What to do |
+|---|---|---|
+| The application gets `lokadb relay: the agent of organization N is not connected` | no agent of that organization has a session with the relay | on the agent's host: is it running, and what does its log say (`tunnel up` or the reason it cannot connect)? Its `GET /status` (`-status-listen`) shows `state` and, per relay, `last_error`. On the relay side: `lokadb agents -cp "$CP_DSN"` lists the certificates, `GET /sessions` on `health_listen` the live sessions |
+| `lokadb relay: organization N is not available until the relay reads the registry` | the relay has not read the control plane yet | check that the relay reaches the control plane database (`control_plane` in `relay.json`) |
+| The relay logs `organization endpoint: connection refused, not in org_allow` | the connecting machine's address is not listed | add it to `org_allow` (the proxy, the cloud Postgres, every machine that runs `check` or `move-org`) and restart the relay |
+| Enrolment answers 429 `too many failed attempts` | more than `enroll_fail_per_min` (10) failed attempts from one address | wait a minute; fix the cause (a wrong token or CA) before retrying |
+| The agent logs that the token was used or expired | a token works once, for its `-ttl` (15 minutes by default) | `lokadb token -cp "$CP_DSN" -org N` makes a new one |
+| The agent's `state` is `revoked` | `lokadb revoke` was run for the organization | only a new token brings it back |
+| The agent's `state` is `cert_expired`, or it logs `issue a new token` | the agent was down longer than the certificate's lifetime plus `renew_expired` | a new token ([restarts and upgrades](https://docs.lokadb.com/operations/restarts-and-upgrades/)) |
+| A connection ends with `08006` and the log names a setting (`max_org_conns`, `max_streams`, agent `-max-conns`…) | a [limit](#limits) is reached | raise that setting, or find why connections pile up |
+| `lokadb agent: connection from X to the cloud window refused; add it to -cloud-allow` | a logical move's subscription comes from an address the agent does not allow | add the address to the agent's `-cloud-allow` |
+
+The agent's `state` is one of `connected`, `reconnecting`, `revoked`, `cert_expired`. Alerts worth having: the agent not `connected` for more than a few minutes; `cert_ends` (in the agent's status) less than a third of `cert_ttl` away, which means renewal is failing; the relay's `/healthz` not 200; the number of sessions on the relay's `/sessions` below the number of agents you run.

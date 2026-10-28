@@ -18,7 +18,7 @@ LokaDB's promise is narrow, and so is the scope: **the rows of the LokaDB tables
 - credentials of an organization database read by someone who should not (the control-plane storage, logs, the recording);
 - a way to make the relay or the proxy execute or read something outside its job.
 
-What is **not** a vulnerability, because it is documented: the application's own caches, queues, search indexes, files and logs; backups and replicas made before a move; a connection to the cloud database that bypasses the proxy; rows passing through the cloud Postgres on the `fdw` profile; LokaDB not being an authorization layer. See [docs/limits.md](docs/limits.md#what-lokadb-does-not-isolate).
+What is **not** a vulnerability, because it is documented: the application's own caches, queues, search indexes, files and logs; backups and replicas made before a move; a connection to the cloud database that bypasses the proxy; rows passing through the cloud Postgres on the `fdw` profile; LokaDB not being an authorization layer. See [Limits and isolation](docs/limits.md#what-lokadb-does-not-isolate).
 
 ## Supported versions
 

@@ -2,11 +2,15 @@
 
 ## `lokadb move-back`: returning an organization to the cloud
 
+*Run it where you ran `move-org`: on a machine that reaches your database and, through the relay, the organization's.*
+
 ```bash
-lokadb move-back -db CLOUD_ADMIN -org 1 -customer CUSTOMER_ADMIN_DSN [-dry-run]
+lokadb move-back -db "$CLOUD_DSN" -spec spec.json -org 1 -customer "$CUST_ADMIN_DSN" [-dry-run]
 ```
 
-For the end of a contract, leaving BYOD, or a move to another database. It is the trigger-based move run in reverse:
+`-spec` is the same spec file as for `enable`; `-customer` is the organization's administrator through the relay's port for it (the names are those of [Install on your database](install.md#the-names-used-on-this-page)). **Success:** the command logs `move-back done`; the organization's rows are in your database again, in a partition of their own (`<table>__o<N>`), and the proxy reads them there.
+
+Use it at the end of a contract, to stop using LokaDB for this organization, or to move to another database. It is the trigger-based move run in reverse:
 
 - capture triggers are installed on the organization's tables **in its database** and log every change there — including foreign-key cascades and writes that bypass the cloud, which the cloud never sees;
 - the tables are copied into unattached cloud partitions and the log is applied to them. Logical replication is not used in this direction (a subscription writes by table name, and the cloud table is the parent: rows would flow back to the customer through the foreign partition);
@@ -14,15 +18,15 @@ For the end of a contract, leaving BYOD, or a move to another database. It is th
 - after the switch: a full comparison of the two snapshots (a mismatch names up to five tables and keys), foreign keys of the new partitions validated, the FDW server dropped;
 - `__refs` catch up with rows written in the customer database bypassing the cloud; if such a row's id belongs to another organization, nothing switches and the error names the id;
 - for 60 s (`-bridge`) a view stands in for the old foreign table, so a proxy with stale metadata writes into the new partition, not into a database the cloud no longer reads;
-- **the customer's tables stay** with a comment "returned to the cloud by LokaDB at …"; LokaDB does not drop them (the command to do so is logged), and a later `move-org` of the same organization into the same database sets them aside in a schema `lokadb_returned_<N>_<date>` (or drops them with `-drop-returned`; see [moving.md](moving.md#moving-an-organization-again)), while the customer's own tables of the same names are never touched;
+- **the customer's tables stay** with a comment "returned to the cloud by LokaDB at …"; LokaDB does not drop them (the command to do so is logged), and a later `move-org` of the same organization into the same database sets them aside in a schema `lokadb_returned_<N>_<date>` (or drops them with `-drop-returned`; see [Moving organizations](moving.md#moving-an-organization-again)), while the customer's own tables of the same names are never touched;
 - without an administrative DSN (the role does not own the tables or cannot create the log schema), the copy runs **under the organization's pause** without triggers: slower, but the data comes back. `-dry-run` says which way it will take and how many rows.
 
-**The customer database is unavailable.** `move-back` refuses and names the way out: LokaDB keeps no copy of a moved organization's rows. The customer restores the database from their backup, then `lokadb repoint`, then `move-back` (the loss is their backup's RPO). If the data is gone for good, `move-back -abandon -confirm-org N` returns the organization **empty**: its `__refs` rows are deleted with the foreign-key actions of cloud tables, with a loud warning.
+**The customer database is unavailable.** `move-back` refuses and names the way out: LokaDB keeps no copy of a moved organization's rows. The customer restores the database from their backup, then `lokadb repoint`, then `move-back` (the loss is their backup's RPO). If the data is gone for good, `lokadb move-back -db … -spec spec.json -org N -abandon -confirm-org N` returns the organization **empty**: its `__refs` rows are deleted with the foreign-key actions of cloud tables, with a loud warning.
 
 ## `lokadb repoint`: a new database with the same rows
 
 ```bash
-lokadb repoint -db CLOUD_ADMIN -org 1 -customer-app NEW_DSN -proxy-config lokadb.json
+lokadb repoint -db "$CLOUD_DSN" -org 1 -customer-app "$NEW_CUST_APP_DSN" -proxy-config lokadb.json
 ```
 
 For a restore on another host, a failover to a replica, a new password.
@@ -37,7 +41,7 @@ For a restore on another host, a failover to a replica, a new password.
 ## `lokadb disable`: undoing `enable`
 
 ```bash
-lokadb disable -db CLOUD_ADMIN -spec spec.json [-dry-run]
+lokadb disable -db "$CLOUD_DSN" -spec spec.json [-dry-run]
 ```
 
 - **One transaction under `ACCESS EXCLUSIVE`.** The table `enable` started from, `<table>__cloud`, stays with its indexes, constraints and statistics; rows of other partitions (returned organizations, rows without an organization) are poured into it with triggers and foreign-key checks off. The pause grows with these rows; `-dry-run` counts them.
@@ -48,4 +52,4 @@ lokadb disable -db CLOUD_ADMIN -spec spec.json [-dry-run]
 - Open proxy sessions learn about `disable` by notification (or within 30 s) and pass statements through as before `enable`, including statements prepared while the tables were enabled.
 - After `enable -prepare` without `enable`, `disable` removes what the preparation did.
 
-The e2e stand runs `move-back` and `disable` under load for each application and checks that the rows equal those before the return and the schema equals the one before `enable`.
+We test `move-back` and `disable` under continuous writes, and check that the rows equal those before the return and the schema equals the one before `enable`.

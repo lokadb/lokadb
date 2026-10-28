@@ -26,7 +26,7 @@ DEFECTS_ONLY=<name>,<name> bash e2e/defects/defects.sh
 DEFECTS_MODE=trigger bash e2e/defects/defects.sh # the same with moves by triggers
 ```
 
-The stand keeps Postgres data in memory (tmpfs) and starts about ten containers: give Docker around 8 GB, and do not run two stands at once from one directory (`E2E_NET=232 COMPOSE_PROJECT_NAME=lokadb-e2e2` runs a second one from a second copy). See [docs/testing.md](docs/testing.md).
+The stand keeps Postgres data in memory (tmpfs) and starts about ten containers: give Docker around 8 GB, and do not run two stands at once from one directory (`E2E_NET=232 COMPOSE_PROJECT_NAME=lokadb-e2e2` runs a second one from a second copy). See [Testing](docs/testing.md).
 
 **A change to routing, moving, the tunnel or the schema conversion should come with a check in `e2e/defects` that fails before the change and passes after it.** That is how the defects fixed so far stay fixed.
 
@@ -40,4 +40,4 @@ The stand keeps Postgres data in memory (tmpfs) and starts about ten containers:
 
 ## Reporting a security problem
 
-Not through an issue: see [SECURITY.md](SECURITY.md). Other questions: hello@lokadb.com.
+Not through an issue: see [Security policy](SECURITY.md). Other questions: hello@lokadb.com.

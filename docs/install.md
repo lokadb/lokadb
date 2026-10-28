@@ -1,68 +1,110 @@
 # Install on your database
 
-This page is the path from nothing to a LokaDB proxy running in front of **your own** Postgres, and then to the first organization moved out. For a demo stand that needs nothing of yours, see the [quickstart](quickstart.md).
+This page is the path from nothing to a LokaDB proxy running in front of **your own** Postgres, and then to the first organization moved into its own database. For a demo that needs nothing of yours, see the [quickstart](quickstart.md).
 
-Each step says where it runs, gives the command, and says what success looks like. The flags are those of `lokadb <command> -h` and the keys are those of [configuration.md](configuration.md). Words in capitals are yours to replace.
+Each step says which machine it runs on, gives the exact commands, and says what success looks like. The flags are those of `lokadb <command> -h` and the keys are those of the [configuration reference](configuration.md).
 
-| Step | Where | What you get |
-|---|---|---|
-| [1. Get LokaDB](#1-get-lokadb) | every machine below | the `lokadb` binary or image |
-| [2. Check](#2-check-your-database-and-workload) | a machine that reaches your database | a verdict and the list of what to review |
-| [3. The spec](#3-write-the-spec) | the same | `spec.json`: which tables move with an organization |
-| [4. Control plane and key](#4-the-control-plane-and-the-credentials-key) | the database server and the proxy host | a registry database and a key file |
-| [5. The proxy](#5-the-proxy) | a host next to your database | a proxy that passes everything through |
-| [6. The application](#6-point-the-application-at-the-proxy) | the application's config | the application works through the proxy |
-| [7. Enable](#7-enable) | a machine that reaches your database | the tables are partitioned by organization |
-| [8. The tunnel](#8-the-relay-and-the-agent-for-an-organizations-database) | the relay in your network, the agent in the organization's | an organization's database reachable from yours |
-| [9. The first organization](#9-move-the-first-organization) | a machine that reaches both | an organization's rows in its own database |
-
-## What you need
-
-- A **Postgres** database that holds many organizations' rows in shared tables, and a role that owns the application's tables (`app` below). The role that runs `check` and `enable` must be able to create objects and `CREATE EXTENSION postgres_fdw` ([check](check.md) tries exactly that, in a transaction it rolls back, and tells you what is missing).
-- One host that runs the proxy (and, later, the relay). It reaches your database's port. The application reaches the proxy instead of the database.
-- For the move: the organization's own Postgres and a host in its network for the agent. You can leave this to step 8.
+| Step | What you get |
+|---|---|
+| [1. Get LokaDB](#1-get-lokadb) | the `lokadb` binary or image on the proxy host |
+| [2. Check](#2-check-your-database-and-workload) | a verdict, and the list of what to review |
+| [3. The spec](#3-write-the-spec) | `spec.json`: which tables move with an organization |
+| [4. Control plane and key](#4-the-control-plane-and-the-credentials-key) | a small registry database and a key file |
+| [5. The proxy](#5-the-proxy) | a proxy in front of your database |
+| [6. The application](#6-point-the-application-at-the-proxy) | the application working through the proxy |
+| [7. Enable](#7-enable) | the tables partitioned by organization |
+| [8. The tunnel](#8-the-tunnel-the-relay-and-the-agent) | an organization's own database reachable from yours |
+| [9. The first organization](#9-move-the-first-organization) | its rows in its own database |
 
 LokaDB changes nothing in your database until step 7.
 
+## What you need
+
+- **Postgres.** A database in which many organizations (tenants, accounts, companies) share tables, each table with a column that says whose row it is. The stand, the end-to-end tests and the measurements all run on Postgres 18; we have not tested other versions. The role that runs `check` and `enable` must be able to create objects and `CREATE EXTENSION postgres_fdw`. You do not have to work this out: the [check](check.md) tries it, in a transaction it rolls back, and names what is missing. On a managed service, use the platform's administrator role (`rds_superuser`, `cloudsqlsuperuser`, `azure_pg_admin`).
+- **`pg_stat_statements`**, if you can: with it in `shared_preload_libraries` and created in the database (`CREATE EXTENSION pg_stat_statements`), the check also reads the statements your application has already run.
+- **The proxy host.** One machine that reaches your database's port, and that the application can reach. **Run steps 2 to 9 on it**: they read and write files there (`spec.json`, the recording, the key) and several commands must come from an address that the relay allows (`org_allow`, step 8), which the proxy host is. The relay can run on the same machine.
+- **For step 8 and 9**, the organization's own Postgres and a machine in its network for the agent.
+
+### The names used on this page
+
+Words in capitals are yours to replace, the same everywhere. Lowercase values (`app`, `organizations`, `documents`, `1`) are examples from the demo: use your own.
+
+| Name | What it is | Example |
+|---|---|---|
+| `DB_HOST` | the host name of your Postgres, as the proxy host reaches it | `db.internal` |
+| `DB_ADDR` | the IP address of the machine your Postgres runs on, as the relay sees it (used in allow lists) | the machine's address |
+| `DB_NAME` | the application's database | `shop` |
+| `APP_ROLE` | the role the application connects as; usually also the role that owns its tables (`-owner`) | `app` |
+| `ADMIN_ROLE` | a role of your Postgres that may create objects (a superuser, or the managed service's administrator) | `postgres` |
+| `CP_ROLE`, `controlplane` | the role and the database of LokaDB's own registry (step 4) | `cp_role` |
+| `PROXY_HOST`, `PROXY_ADDR` | the proxy host: the name the application uses, and its IP address | |
+| `RELAY_NAME` | the name the agents connect to; it goes into the relay's certificate | `relay.example.com` |
+| `RELAY_HOST` | the relay as machines in **your** network reach the organizations' ports (15001…): the proxy host and your database server must reach it. It is the same machine as `RELAY_NAME` seen from inside | |
+| `ORG_DB_HOST`, `ORG_DB` | the organization's Postgres, as its agent reaches it, and the database in it | |
+| `ORG_ADMIN` | an administrator role of the organization's database | |
+| `1` (in `-org 1`) | the organization's number: the value of its key in your organizations table (an integer). For a uuid key, see [step 8](#8-the-tunnel-the-relay-and-the-agent) | |
+| `VERSION`, `IMAGE` | the release you install, and the image that runs it (step 1) | |
+
+The commands take their database addresses as connection strings. Where a long one is used several times, it is a shell variable:
+
+| Variable | Is the DSN of |
+|---|---|
+| `CLOUD_DSN` | your application's database, as `ADMIN_ROLE` |
+| `CP_DSN` | the control plane, as `CP_ROLE` |
+| `CUST_ADMIN_DSN`, `CUST_APP_DSN` | the organization's database through the relay, as `ORG_ADMIN` and as `lokadb_app` |
+
+Passwords in connection strings are visible in `ps` and in shell history. Every DSN flag also takes `env:NAME` or `-` (stdin): [passwords on the command line](configuration.md#passwords-on-the-command-line).
+
 ## 1. Get LokaDB
 
-LokaDB is one binary, `lokadb`, with subcommands for the proxy, the relay, the agent and the administrative commands ([configuration.md](configuration.md)). Get it in one of three ways.
+*On the proxy host, and on the relay and agent hosts later.* LokaDB is one program, `lokadb`, with subcommands for the proxy, the relay, the agent and the administrative commands.
 
-**A release.** Each version tag publishes a Linux x86-64 binary with its checksum, and an image:
+**Until the first release is published, build it from the source.** You need Docker only:
 
 ```bash
-VERSION=v0.1.0   # the version you choose; the releases page of the repository lists them
+git clone https://github.com/lokadb/lokadb && cd lokadb
+docker build -t lokadb proxy          # the image `lokadb`; a few minutes the first time
+IMAGE=lokadb
+```
+
+With Go 1.25 and a C compiler, `cd proxy && CGO_ENABLED=1 go build -o lokadb ./cmd/lokadb` builds the binary instead; `sudo install lokadb /usr/local/bin/`.
+
+**From a release** (once there is one), a version tag publishes a Linux x86-64 binary with its checksum, and an image:
+
+```bash
+VERSION=v0.1.0        # the version you choose; the repository's releases page lists them
 curl -fLO https://github.com/lokadb/lokadb/releases/download/$VERSION/lokadb-linux-amd64.tar.gz
 curl -fLO https://github.com/lokadb/lokadb/releases/download/$VERSION/lokadb-linux-amd64.tar.gz.sha256
 sha256sum -c lokadb-linux-amd64.tar.gz.sha256 && tar -xzf lokadb-linux-amd64.tar.gz
 sudo install lokadb /usr/local/bin/lokadb
+# or the image:  IMAGE=ghcr.io/lokadb/lokadb:$VERSION
 ```
+
+**If you run the image**, the commands below say `lokadb …`. Define it once per shell. It mounts the directories the commands read and write, and runs in the current directory so that files like `spec.json` land on the host, not in a container that is deleted:
 
 ```bash
-docker pull ghcr.io/lokadb/lokadb:$VERSION     # the same binary; its entrypoint is `lokadb`
+lokadb() { docker run --rm -i --network host \
+    -v /etc/lokadb:/etc/lokadb -v /var/lib/lokadb:/var/lib/lokadb -v "$PWD":/work -w /work \
+    "$IMAGE" "$@"; }
 ```
 
-**Until the first release**, build it from the source. You need Docker only:
+(`-i` lets a password come through stdin; `--network host` lets the container reach your database. The long-running programs get their own `docker run -d` command in the steps below.)
+
+Create the two directories, which the commands below write to, and check that `lokadb` works:
 
 ```bash
-git clone https://github.com/lokadb/lokadb && cd lokadb
-docker build -t lokadb proxy                   # the image `lokadb`; a few minutes the first time
+sudo mkdir -p /etc/lokadb /var/lib/lokadb
 ```
 
-With Go 1.25 and a C compiler, `cd proxy && CGO_ENABLED=1 go build -o lokadb ./cmd/lokadb` makes the binary instead.
-
-Everywhere below, `lokadb …` means the binary, or `docker run --rm -i lokadb …` (with the image you have: `lokadb` or `ghcr.io/lokadb/lokadb:$VERSION`), with `--network host` or the right network so the container reaches your database, and `-v` for the files it reads.
-
-**Success:** `lokadb -h` prints the list of commands.
+**Success:** `lokadb -h` prints what LokaDB is, where to start, and the list of commands.
 
 ## 2. Check your database and workload
 
-*Runs on any machine that reaches your database; it changes nothing.* `check` answers whether your organizations can be moved: it reads the schema and `pg_stat_statements` and tries what `enable` and `move-org` will do inside a transaction that is rolled back.
+*On the proxy host. It changes nothing in your database.* `check` answers whether your organizations can be moved: it reads the schema, tries what `enable` and `move-org` will do inside a transaction that is rolled back, and judges the statements your application sends.
 
-First let the check see the application's real statements. Start a recording proxy that passes everything through (the config is the smallest one; step 5 extends it):
+To judge the statements, the check wants a **recording** of the application's real workload. It is optional but worth it: from `pg_stat_statements` alone the check does not know which statements run together in a transaction, and the verdict is never `READY`. Record by running a pass-through proxy and using the application, or just its test suite, through it. A staging copy is fine; you need not put production behind a new proxy yet.
 
 ```bash
-mkdir -p /etc/lokadb
 cat > /etc/lokadb/lokadb.json <<'EOF'
 {
   "listen": ":6432",
@@ -70,73 +112,85 @@ cat > /etc/lokadb/lokadb.json <<'EOF'
   "record": "/var/lib/lokadb/workload.json"
 }
 EOF
-lokadb proxy -config /etc/lokadb/lokadb.json
+lokadb proxy -config /etc/lokadb/lokadb.json        # leave it running in its own terminal
 ```
 
-Point the application, or its tests, at `PROXY_HOST:6432` (step 6 says how) and use it as it is used in production. The recording is rewritten every two seconds and appended across restarts; it holds normalized statements, never values. Then run the check. If you do not have a spec yet, let it propose one from your organizations table (`-org-table`, here `organizations`):
+Point the application (or its tests) at `PROXY_HOST:6432` ([step 6](#6-point-the-application-at-the-proxy) says how) and use it. The recording is rewritten every two seconds, never holds values (statements are normalized), and is appended to across restarts.
+
+Which table is your organizations table? Ask the check, with only `-db`:
 
 ```bash
-lokadb check -db "host=DB_HOST dbname=APPDB user=ADMIN sslmode=require" \
+lokadb check -db "host=DB_HOST dbname=DB_NAME user=ADMIN_ROLE password=… sslmode=require" -org-candidates
+```
+
+It prints the tables that look like it, best first. Then run the check on it (here `organizations`); it also writes a first spec:
+
+```bash
+lokadb check -db "host=DB_HOST dbname=DB_NAME user=ADMIN_ROLE password=… sslmode=require" \
   -org-table organizations -write-spec spec.json \
   -workload /var/lib/lokadb/workload.json -proxy-config /etc/lokadb/lokadb.json
 ```
 
-Keep the passwords out of the arguments: every DSN flag also takes `env:NAME` or `-` for stdin ([configuration.md](configuration.md#passwords-on-the-command-line)).
+Leave out `-workload` if you have no recording.
 
-**Success:** the report ends with a verdict and the exit code says which:
+**Success:** the report ends with a verdict, and the exit code says which:
 
 | Verdict | Exit code | What to do |
 |---|---|---|
 | `READY` | 0 | go on |
 | `NEEDS REVIEW` | 2 | read the warnings; most are changes in behaviour you accept |
-| `BLOCKED` | 3 | stop: the report names what blocks, and how to remove it |
+| `BLOCKED` | 3 | stop: the report names what blocks and how to remove it |
 | `NOT SUPPORTED YET`, `INVALID SPEC` | 4, 5 | some tables cannot be moved yet, or the spec has errors |
 
-Every finding, the report's fields and `-org-table` are described in [check.md](check.md) and [the check report format](check.md#json-and-ci).
+Every finding, and what the report can and cannot promise, is in the [compatibility check](check.md).
 
 ## 3. Write the spec
 
-*Review the file `check` wrote.* The spec names the tables whose rows move with an organization, and how each finds its organization ([configuration.md](configuration.md#the-spec-file)). The check also says why each other table stays in the cloud database. Which data may leave your database is a human decision: read it, edit it, and run the check again with `-spec spec.json` instead of `-org-table`.
+*On the proxy host.* The spec names the tables whose rows move with an organization, and how each finds its organization ([the spec file](configuration.md#the-spec-file)). The check says why every other table stays. Which data may leave your database is a human decision: read `spec.json`, edit it, and run the check again with `-spec` instead of `-org-table`.
 
 ```bash
-lokadb check -db "host=DB_HOST dbname=APPDB user=ADMIN sslmode=require" \
+lokadb check -db "host=DB_HOST dbname=DB_NAME user=ADMIN_ROLE password=… sslmode=require" \
   -spec spec.json -workload /var/lib/lokadb/workload.json -proxy-config /etc/lokadb/lokadb.json
 ```
 
-If the report suggests routing declarations (relations without a foreign key, columns that are unique across the table), `-suggest patch.json` saves them for `enable` ([check.md](check.md#from-findings-to-declarations), [routing.md](routing.md#declarations)).
+If the report suggests routing declarations (relations without a foreign key, columns that are unique across the table), add `-suggest patch.json` to save them, and pass `-patch patch.json` to `check`, `enable` and `move-org` alike ([from findings to declarations](check.md#from-findings-to-declarations), [routing declarations](routing.md#declarations)).
 
-**Success:** the same verdict as before with `-spec`, and no `INVALID SPEC`.
+**Success:** the same verdict, and no `INVALID SPEC`.
 
 ## 4. The control plane and the credentials key
 
-*The control plane is a small database of LokaDB's own: enrolment tokens and certificates of the tunnel, and (sealed) the credentials of organizations' databases. The key seals those credentials.* Both can wait until you move an organization, but make them now so the proxy's config is final.
+*The control plane is a small database of LokaDB's own: the tunnel's enrolment tokens and certificates, and, sealed, the credentials of organizations' databases. The key seals those credentials.* Both can wait until you move an organization, but make them now so that the proxy's config is final.
 
-Create the database on the server of your Postgres (or any other Postgres; it is not the application's database):
-
-```bash
-psql "host=DB_HOST user=ADMIN dbname=postgres sslmode=require" -c 'CREATE DATABASE controlplane'
-```
-
-LokaDB makes its tables in it: the relay at its first start (step 8), and `lokadb org-credentials` when it stores a credential (step 9). The role `CP_USER` that the relay and the proxy use needs to create objects in it.
-
-Make the key on the host that runs the proxy. It is 32 random bytes as 64 hexadecimal digits, mode `0600`, and **you must keep it**: without it the stored credentials cannot be opened.
+Create the role and the database on your Postgres (it is not the application's database), as `ADMIN_ROLE`:
 
 ```bash
-umask 077
-openssl rand -hex 32 > /etc/lokadb/credentials.key
+psql "host=DB_HOST dbname=postgres user=ADMIN_ROLE password=… sslmode=require" \
+  -c "CREATE ROLE cp_role LOGIN PASSWORD '…'" -c "CREATE DATABASE controlplane OWNER cp_role"
 ```
 
-**Success:** `ls -l /etc/lokadb/credentials.key` shows `-rw-------`, and `psql … -d controlplane -c 'SELECT 1'` works for `CP_USER`. Rotation of the key: [configuration.md](configuration.md#credentials-in-the-control-plane).
+LokaDB creates its tables in it: the relay at its first start (step 8), and `lokadb org-credentials` when it stores a credential (step 9). From now on:
+
+```bash
+CP_DSN="host=DB_HOST dbname=controlplane user=cp_role password=… sslmode=require"
+```
+
+Make the key on the proxy host: 32 random bytes as 64 hexadecimal digits, mode `0600`. **Keep it safe**: without it the stored credentials cannot be opened.
+
+```bash
+( umask 077; openssl rand -hex 32 | sudo tee /etc/lokadb/credentials.key >/dev/null )
+```
+
+**Success:** `ls -l /etc/lokadb/credentials.key` shows `-rw-------`, and `psql "$CP_DSN" -c 'SELECT 1'` works. Rotating the key: [credentials in the control plane](configuration.md#credentials-in-the-control-plane).
 
 ## 5. The proxy
 
-*Runs on a host next to your database; your database accepts connections from it.* Extend the config of step 2 with the final keys ([configuration.md](configuration.md#proxy-lokadbjson)):
+*On the proxy host.* Write the final config ([the proxy's keys](configuration.md#proxy-lokadbjson)):
 
 ```json
 {
   "listen": ":6432",
   "upstream": "host=DB_HOST port=5432 sslmode=require",
-  "control_plane": "host=DB_HOST dbname=controlplane user=CP_USER password=… sslmode=require",
+  "control_plane": "host=DB_HOST dbname=controlplane user=cp_role password=… sslmode=require",
   "credentials_key": "/etc/lokadb/credentials.key",
   "fanout": {"*": {"mode": "reject"}},
   "tls": {"cert": "/etc/lokadb/proxy.crt", "key": "/etc/lokadb/proxy.key", "require": true},
@@ -145,69 +199,87 @@ openssl rand -hex 32 > /etc/lokadb/credentials.key
 ```
 
 - `upstream` has no user, password or database: they come from the application's connection.
-- `fanout` decides what happens to a statement that names no organization. `reject` is the default and the safe one; the check of step 2 told you which statements of your application it would refuse.
-- `tls` is what the application talks to the proxy over; leave it out for a first try on a private network, not for production: the proxy receives the application's password in clear text to pass it on.
-- `metrics_listen` serves `/healthz` and `/metrics` to your monitoring ([status and monitoring](https://docs.lokadb.com/operations/status-and-monitoring/)).
+- `fanout` decides what happens to a statement that names no organization. `reject` is the safe default; the check of step 2 told you which of your application's statements it would refuse.
+- `tls` is the proxy's certificate for the application's connections: a certificate for `PROXY_HOST` from your CA, or, for a first try with `sslmode=require` (which does not verify the certificate), a self-signed one: `openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj /CN=PROXY_HOST -keyout /etc/lokadb/proxy.key -out /etc/lokadb/proxy.crt`. Leave `tls` out only on a private network for a first try: the proxy receives the application's password in clear text to pass it on.
+- `metrics_listen` serves `/healthz`, `/status` and `/metrics` to your monitoring ([status and monitoring](https://docs.lokadb.com/operations/status-and-monitoring/)).
 
-Stop the recording proxy of step 2 and start the real one. As a service, from the binary:
-
-```bash
-lokadb proxy -config /etc/lokadb/lokadb.json
-```
-
-or from the image:
+Stop the recording proxy of step 2 (Ctrl-C) and start this one. From the binary, as a service of your init system, or from the image:
 
 ```bash
 docker run -d --name lokadb-proxy --restart unless-stopped --network host \
-  -v /etc/lokadb:/etc/lokadb:ro ghcr.io/lokadb/lokadb:$VERSION proxy -config /etc/lokadb/lokadb.json
+  -v /etc/lokadb:/etc/lokadb:ro "$IMAGE" proxy -config /etc/lokadb/lokadb.json
 ```
 
-A restart is safe: the application's connections are re-made. `SIGHUP` re-reads credentials and drops pooled connections ([configuration.md](configuration.md#proxy-lokadbjson)).
+The proxy does not drain: when it stops, the connections of the application are cut and the application reconnects. Restart it when that is acceptable ([restarts and upgrades](https://docs.lokadb.com/operations/restarts-and-upgrades/)). `SIGHUP` re-reads credentials and drops pooled connections ([the proxy's keys](configuration.md#proxy-lokadbjson)).
 
-Close the other way in: the application's role must reach the database **only** through the proxy, or LokaDB protects nothing ([limits.md](limits.md#installation-direct-access-to-the-cloud-database-is-closed)). `lokadb check -proxy-hosts PROXY_ADDR …` reports any `pg_hba.conf` rule that admits the application's role from elsewhere.
-
-**Success:** the process stays up, `curl -s http://127.0.0.1:9187/healthz` prints `ok`, and
+**Close the other way in.** The application's role must reach the database **only** through the proxy, or LokaDB protects nothing ([limits](limits.md#installation-direct-access-to-the-cloud-database-is-closed)). The check reads the `pg_hba.conf` rules and reports any that admits the application's role from another address:
 
 ```bash
-psql "host=PROXY_HOST port=6432 dbname=APPDB user=APP_USER sslmode=require" -c 'SELECT 1'
+lokadb check -db "$CLOUD_DSN" -spec spec.json -proxy-hosts PROXY_ADDR
 ```
 
-answers like the database would (use `sslmode=disable` if you left `tls` out).
+(`CLOUD_DSN="host=DB_HOST dbname=DB_NAME user=ADMIN_ROLE password=… sslmode=require"`.)
+
+**Success:** the process stays up, `curl -s http://127.0.0.1:9187/healthz` prints `ok`, and through the proxy the database answers like it did:
+
+```bash
+psql "host=PROXY_HOST port=6432 dbname=DB_NAME user=APP_ROLE sslmode=require" -c 'SELECT 1'
+```
 
 ## 6. Point the application at the proxy
 
-*In the application's configuration.* Change the **host and port** of its database connection to the proxy's (`PROXY_HOST`, `6432`). User, password and database name stay as they are: the proxy passes them to Postgres. With `tls` on, the application connects with `sslmode=require` or stricter.
+*In the application's configuration.* Change the **host and port** of its database connection to the proxy's (`PROXY_HOST`, `6432`). User, password and database name stay: the proxy passes them to Postgres. With `tls` on, the application connects with `sslmode=require` or stricter.
 
-**Success:** the application works as before. Before `enable` the proxy passes every statement through unchanged. In `curl -s http://127.0.0.1:9187/metrics` the counters of statements grow. Run the application's tests or a normal day against it; every statement that the check of step 2 listed as refused is a place to fix first.
+**Success:** the application works as before. Before `enable` the proxy passes every statement through. The counters in `curl -s http://127.0.0.1:9187/metrics` grow. Run the application's tests, or a normal day, against it.
 
-Do not go on while any part of the application still connects to the database directly: after step 7, a write that bypasses the proxy reaches the table with no organization, and is refused.
+Do not go on while any part of the application (a job, a console, a migration tool) still connects to the database directly: after step 7, a write that bypasses the proxy reaches the table without an organization and is refused.
 
 ## 7. Enable
 
-*Runs on any machine that reaches your database, as the administrator.* `enable` converts the tables of the spec: each becomes a partitioned table, and all organizations stay where they are, in the default partition. No row is copied ([moving.md](moving.md#lokadb-enable-converting-the-schema)).
+*On the proxy host.* `enable` converts the tables of the spec: each becomes a partitioned table, and every organization stays where it is, in the table's default partition. No row is copied ([`enable`](moving.md#lokadb-enable-converting-the-schema)).
 
 ```bash
-lokadb enable -db "host=DB_HOST dbname=APPDB user=ADMIN sslmode=require" -spec spec.json -owner app
-# add -patch patch.json if step 3 saved routing declarations
+lokadb enable -db "$CLOUD_DSN" -spec spec.json -owner APP_ROLE         # add -patch patch.json if step 3 saved one
 ```
 
-For large tables do it in two steps, so that the switch itself takes a short lock: run `lokadb enable … -prepare` first (online, can be stopped and repeated), then the same command without `-prepare`.
+For large tables do it in two steps, so that the switch itself takes a short lock: first the same command with `-prepare` (online, can be stopped and repeated), then once more without it.
 
-**Success:** the command ends without an error, and in the database `\d+ documents` (a table of your spec) says "Partitioned table" with a `documents__cloud` default partition. The application, still through the proxy, works as before. If it gets "the row reached the table without its organization … retry the statement" once, that is a write that was waiting for `enable`; it succeeds on retry.
+**Success:** the command ends without an error, `\d+` of a table of your spec in psql says "Partitioned table" with a default partition named `<table>__cloud`, and the application, still through the proxy, works as before. If one of its writes got "the row reached the table without its organization … retry the statement" while `enable` was running, that write succeeds on retry.
 
-To undo it: `lokadb disable` ([rollback.md](rollback.md#lokadb-disable-undoing-enable)).
+To undo it: [`lokadb disable`](rollback.md#lokadb-disable-undoing-enable).
 
-## 8. The relay and the agent for an organization's database
+## 8. The tunnel: the relay and the agent
 
-*Needed only to move an organization into its own database.* The cloud never connects into the organization's network. An **agent** in that network opens one outbound TLS connection to a **relay** in yours, and every access to the organization's database goes through it ([tunnel.md](tunnel.md)).
+*Needed only to move an organization into its own database.* Your side never connects into the organization's network. An **agent** in that network opens one outbound TLS connection to a **relay** in yours, and every access to the organization's database goes through it ([the tunnel](tunnel.md)).
 
-**Certificates.** The relay needs a CA that signs the agents' certificates, and its own certificate. For a first try, `lokadb certs` makes a demo CA; for production use your own and see [CA key in a separate issuing service](tunnel.md#ca-key-in-a-separate-issuing-service):
+**If the organization's key is a uuid**, give it a number first; every command below that says `-org 1` takes this number instead. Commands that take `-tenant UUID` instead of `-org` are named in `lokadb -h`.
 
 ```bash
-lokadb certs -dir /etc/lokadb/certs -relay-host RELAY_NAME    # RELAY_NAME: the name the agents connect to
+lokadb org-add -db "$CLOUD_DSN" -tenant 0f8fad5b-d9cb-469f-a165-70867728950e      # prints: organization 7: 0f8fad5b-…
 ```
 
-**The relay**, on a host in your network. Its config ([configuration.md](configuration.md#relay-relayjson)):
+### 8a. Prepare the organization's database
+
+*Done by the organization's administrator, in the organization's own Postgres, before the agent is started.* LokaDB needs two roles there: one that will **own** the moved tables (`lokadb_app`; your database reads and writes through it), and one for DML only (`lokadb_dml`; the proxy's direct path). Their passwords go into the DSNs below.
+
+```sql
+-- connected to ORG_DB as ORG_ADMIN
+CREATE ROLE lokadb_app LOGIN PASSWORD '…';
+CREATE ROLE lokadb_dml LOGIN PASSWORD '…';
+GRANT CREATE ON SCHEMA public TO lokadb_app;
+```
+
+`ORG_ADMIN` itself is an administrator of that database (it creates the extensions and types the tables need, and sets the move up). The organization's `pg_hba.conf` must let `lokadb_app`, `lokadb_dml` and `ORG_ADMIN` in from the agent's address.
+
+### 8b. Certificates and the relay
+
+*On the relay's machine (it can be the proxy host).* The relay needs a CA that signs the agents' certificates, and its own certificate. For a first try, `lokadb certs` makes a demo CA; for production use your own and read [the CA key in a separate issuing service](tunnel.md#ca-key-in-a-separate-issuing-service) (a first install keeps the CA key on the relay, as below).
+
+```bash
+lokadb certs -dir /etc/lokadb/certs -relay-host RELAY_NAME
+```
+
+The relay's config ([the relay's keys](configuration.md#relay-relayjson)):
 
 ```json
 {
@@ -217,81 +289,96 @@ lokadb certs -dir /etc/lokadb/certs -relay-host RELAY_NAME    # RELAY_NAME: the 
   "cert": "/etc/lokadb/certs/relay.crt", "key": "/etc/lokadb/certs/relay.key",
   "ca": "/etc/lokadb/certs/ca.crt", "ca_key": "/etc/lokadb/certs/ca.key",
   "cert_ttl": "24h",
-  "control_plane": "host=DB_HOST dbname=controlplane user=CP_USER password=… sslmode=require",
+  "control_plane": "host=DB_HOST dbname=controlplane user=cp_role password=… sslmode=require",
   "orgs": {"1": ":15001"},
-  "org_allow": ["PROXY_ADDR", "DB_ADDR", "ADMIN_ADDR"]
+  "org_allow": ["PROXY_ADDR", "DB_ADDR"]
 }
 ```
 
-`orgs` gives each organization a port inside your network; `org_allow` lists the only addresses that may use it: the proxy, your database (`postgres_fdw`), and the machines that run `check` and `move-org`. It is required. The agents reach `listen` and `enroll_listen` from outside.
+`orgs` gives each organization a port in your network. `org_allow` is required: it lists the only addresses that may connect to those ports: the proxy, the machine your Postgres runs on (`postgres_fdw`), and any other machine from which you run `check` or `move-org`. The agents reach `listen` and `enroll_listen` from outside, so those two ports must be open to them.
 
 ```bash
 lokadb relay -config /etc/lokadb/relay.json
+# or:  docker run -d --name lokadb-relay --restart unless-stopped --network host -v /etc/lokadb:/etc/lokadb:ro "$IMAGE" relay -config /etc/lokadb/relay.json
 ```
 
-**Success:** `curl -s http://127.0.0.1:7446/healthz` answers 200; the relay's first start made the tables of the control plane.
+**Success:** `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7446/healthz` prints `200`, and the relay has created its tables in the control plane.
 
-**The token and the agent.** For each organization, one-time token (valid 15 minutes, shown once), carried to the organization's administrator:
+### 8c. The token and the agent
+
+*Token: on the proxy host. Agent: on a machine in the organization's network, next to its Postgres.*
+
+A one-time token (valid for 15 minutes, printed once), to be carried to the organization's administrator:
 
 ```bash
-lokadb token -cp "host=DB_HOST dbname=controlplane user=CP_USER sslmode=require" -org 1 > token
+lokadb token -cp "$CP_DSN" -org 1 > token
 ```
 
-The administrator puts the token in a file, the relay's `ca.crt` next to it, and starts the agent **in the organization's network**, next to its Postgres (`ORG_DB_HOST:5432`):
+(The commands spell the control plane's DSN `-cp` (`token`, `revoke`, `agents`, `org-endpoint`, `move-org`) or `-control-plane` (`org-credentials`, `org-profile`); it is the same database.)
+
+The administrator puts the token in a file and the relay's `ca.crt` (public; from `/etc/lokadb/certs/` on the relay) next to it, and starts the agent:
 
 ```bash
 lokadb agent -relay RELAY_NAME:7443 -ca ca.crt -state /var/lib/lokadb-agent \
   -token-file token -db ORG_DB_HOST:5432
+# or the image:  docker run -d --name lokadb-agent --restart unless-stopped --network host \
+#   -v "$PWD":/work -v lokadb-agent:/var/lib/lokadb-agent "$IMAGE" agent -relay RELAY_NAME:7443 -ca /work/ca.crt -state /var/lib/lokadb-agent -token-file /work/token -db ORG_DB_HOST:5432
 ```
 
 The agent enrols (the token is consumed), then keeps an outbound tunnel; it opens no port, and forwards only to `-db`. It keeps its key and certificate in `-state`, so a restart needs no new token.
 
-**Success:** the agent logs `enrolled` and then `tunnel up`; the relay logs `agent connected`; `lokadb agents -cp … ` lists the certificate; and from a machine in `org_allow`:
+**Success:** the agent logs `enrolled`, then `tunnel up`; the relay logs `agent connected`; `lokadb agents -cp "$CP_DSN"` lists the certificate; and from the proxy host
 
 ```bash
-psql "host=RELAY_HOST port=15001 dbname=ORG_DB user=ORG_ADMIN sslmode=require"
+psql "host=RELAY_HOST port=15001 dbname=ORG_DB user=lokadb_app password=… sslmode=require" -c 'SELECT 1'
 ```
 
 reaches the organization's database through the tunnel. If the agent is not connected, the relay answers with a Postgres error that says so.
 
-The organization's database needs two roles, prepared by its administrator before the move: one that **owns** the moved tables (`lokadb_app`) and one that does DML only (`lokadb_dml`, used by the proxy's direct path). The quickstart's [`customer.sql`](https://github.com/lokadb/lokadb/blob/main/quickstart/initdb/customer.sql) is the smallest example; the Postgres of the organization must also let them in from the agent's address (`pg_hba.conf`).
-
 ## 9. Move the first organization
 
-*Runs on a machine that reaches your database and, through the relay, the organization's.* First check this particular move: the same `check` as in step 3, with the organization's connections added.
+*On the proxy host* (an address in the relay's `org_allow`, which reaches both your database and the organization's, through the relay).
 
 ```bash
-ADMIN="host=DB_HOST dbname=APPDB user=ADMIN password=… sslmode=require"
-CP="host=DB_HOST dbname=controlplane user=CP_USER password=… sslmode=require"
-CUST_ADMIN="host=RELAY_HOST port=15001 dbname=ORG_DB user=ORG_ADMIN password=… sslmode=require"
-CUST_APP="host=RELAY_HOST port=15001 dbname=ORG_DB user=lokadb_app password=… sslmode=require"
-lokadb check -db "$ADMIN" -spec spec.json -proxy-config /etc/lokadb/lokadb.json   -customer "$CUST_ADMIN" -customer-app "$CUST_APP" -org 1
+CUST_ADMIN_DSN="host=RELAY_HOST port=15001 dbname=ORG_DB user=ORG_ADMIN password=… sslmode=require"
+CUST_APP_DSN="host=RELAY_HOST port=15001 dbname=ORG_DB user=lokadb_app password=… sslmode=require"
 ```
 
-Then store the credentials the proxy will use for this organization's database, sealed with the key of step 4, so they live in the control plane and not in a config file (the DSN comes from stdin). The direct path's role must have DML alone; the owner is the role that will own the moved tables, not an administrator:
+First check this particular move: the check of step 3 with the organization's connections added.
+
+```bash
+lokadb check -db "$CLOUD_DSN" -spec spec.json -proxy-config /etc/lokadb/lokadb.json \
+  -customer "$CUST_ADMIN_DSN" -customer-app "$CUST_APP_DSN" -org 1
+```
+
+Then store the credentials the proxy will use for this organization's database, sealed with the key of step 4, so that they live in the control plane and not in a config file. The DSN comes from stdin. The direct path's role must have DML alone; the owner is the role that will own the moved tables, not an administrator:
 
 ```bash
 echo "host=RELAY_HOST port=15001 dbname=ORG_DB user=lokadb_dml password=… sslmode=require" |
-  lokadb org-credentials -db "$ADMIN" -control-plane "$CP" -key /etc/lokadb/credentials.key -org 1 -kind direct -dsn -
-echo "$CUST_APP" |
-  lokadb org-credentials -db "$ADMIN" -control-plane "$CP" -key /etc/lokadb/credentials.key -org 1 -kind owner -dsn -
+  lokadb org-credentials -db "$CLOUD_DSN" -control-plane "$CP_DSN" -key /etc/lokadb/credentials.key -org 1 -kind direct -dsn -
+echo "$CUST_APP_DSN" |
+  lokadb org-credentials -db "$CLOUD_DSN" -control-plane "$CP_DSN" -key /etc/lokadb/credentials.key -org 1 -kind owner -dsn -
 ```
 
 And move it. The application keeps working through the proxy all along:
 
 ```bash
-lokadb move-org -db "$ADMIN" -spec spec.json -owner app -org 1   -customer "$CUST_ADMIN" -customer-app "$CUST_APP"   -proxy-config /etc/lokadb/lokadb.json -direct-role lokadb_dml
+lokadb move-org -db "$CLOUD_DSN" -spec spec.json -owner APP_ROLE -org 1 \
+  -customer "$CUST_ADMIN_DSN" -customer-app "$CUST_APP_DSN" \
+  -proxy-config /etc/lokadb/lokadb.json -direct-role lokadb_dml
 ```
+
+`-proxy-config` lets `move-org` see that the proxy has the direct path's credentials, and so set the organization's profile to `fdw+direct` instead of `fdw` ([profiles](profiles-and-cooperative-mode.md)). Add `-patch patch.json` if you use one.
 
 **Success:** the command prints its progress per step and table and ends without an error; the organization's rows are in its own database and not in yours:
 
 ```sql
-SELECT count(*) FROM documents WHERE organization_id = 1;   -- through the proxy: read from the organization's database
-SELECT count(*) FROM ONLY documents__cloud WHERE organization_id = 1;   -- in your database: 0
+SELECT count(*) FROM documents WHERE organization_id = 1;                -- through the proxy: read from the organization's database
+SELECT count(*) FROM ONLY documents__cloud WHERE organization_id = 1;   -- in your own database: 0
 ```
 
-Everything about this step is in [moving.md](moving.md) (modes, the pause, limits, progress) and [profiles and cooperative mode](profiles-and-cooperative-mode.md) (the `fdw+direct` path). To return the organization: [rollback.md](rollback.md).
+How the move works (modes, the pause, limits, progress) is in [moving organizations](moving.md). To return the organization: [the way back](rollback.md).
 
 ## Using LokaDB Cloud
 
-[LokaDB Cloud](https://docs.lokadb.com/cloud/) puts a panel and an API on top of the same programs: it does not replace this page. Its **runner** (`lokadb runner`) does the checks, moves and move-backs for you, and it needs exactly what steps 1 to 8 give: the proxy with `control_plane` and `credentials_key`, and the relay with the control plane. Once they run, install the runner as [the runner page](https://docs.lokadb.com/cloud/runner/) says.
+[LokaDB Cloud](https://docs.lokadb.com/cloud/) puts a web panel and an API on top of the same programs; it does not replace this page. Its **runner** (`lokadb runner`) does the checks, moves and move-backs for you, and it needs exactly what steps 1 to 8 give: the proxy with `control_plane` and `credentials_key`, and the relay with the control plane. Once they run, install the runner as [the runner page](https://docs.lokadb.com/cloud/runner/) says.

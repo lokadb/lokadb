@@ -54,6 +54,9 @@ func main() {
 	switch os.Args[1] {
 	case "-h", "-help", "--help", "help":
 		usage()
+	case "version", "-version", "--version":
+		fmt.Println(version)
+		return
 	}
 	var err error
 	switch os.Args[1] {
@@ -88,7 +91,7 @@ func main() {
 		customerApp := fs.String("customer-app", "", "DSN of the role move-org -customer-app gets (with -customer): can it own the moved tables")
 		customerSchema := fs.String("customer-schema", "", "the schema move-org -customer-schema gets (default: public if it can take the tables, else lokadb)")
 		org := fs.Int64("org", 0, "organization to be moved (with -customer)")
-		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (block 18: its number from org-add)")
+		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (the number lokadb org-add gave it)")
 		asJSON := fs.Bool("json", false, "print the report as JSON")
 		// block 11: CI of the customer (tasks/check-report-format.md §8)
 		ci := fs.Bool("ci", false, "fail (exit 6) on what -baseline has not accepted; print only that")
@@ -500,7 +503,7 @@ func main() {
 		fs := flag.NewFlagSet("org-profile", flag.ExitOnError)
 		db := fs.String("db", "", "admin DSN of the cloud database")
 		org := fs.Int64("org", 0, "organization id")
-		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (block 18: its number from org-add)")
+		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (the number lokadb org-add gave it)")
 		lockTimeout := fs.Duration("lock-timeout", 5*time.Second, "max wait for the organization's pause per attempt")
 		custApp := fs.String("customer-app", "", "fdw+direct: DSN of the moved tables' owner in the organization's database (move-org's -customer-app)")
 		directRole := fs.String("direct-role", "", "fdw+direct: the role the proxy's direct path uses there (customers_app); it gets DML on the organization's tables")
@@ -535,7 +538,7 @@ func main() {
 		dsn := fs.String("dsn", "", "the credentials: a DSN of the organization's database, or - to read it from stdin")
 		list := fs.Bool("list", false, "list what is stored (no secrets)")
 		reseal := fs.Bool("reseal", false, "key rotation: seal with -key every row sealed with -key-old")
-		claim := fs.Bool("claim-legacy", false, "the rows stored before 26.10 (no cloud named in them) of -db's database are this cloud's: seal them for it")
+		claim := fs.Bool("claim-legacy", false, "rows stored by versions that did not record the cloud (no cloud named in them) in -db's database are this cloud's: seal them for it")
 		keyOld := fs.String("key-old", "", "-reseal: the old key file (credentials_key_old)")
 		parseArgs(fs)
 		if *reseal || *claim {
@@ -609,6 +612,9 @@ func main() {
 		db := fs.String("db", "", "admin DSN of the cloud database")
 		specPath := fs.String("spec", "", "tables spec (JSON) with its routing declarations")
 		patchPath := fs.String("patch", "", "routing declarations to add to the spec (as the extended lokadb check -suggest writes them)")
+		if len(os.Args) >= 3 && (os.Args[2] == "-h" || os.Args[2] == "-help" || os.Args[2] == "--help") { // lokadb routing -h: the flags of apply
+			os.Args = append([]string{os.Args[0], "routing", "apply"}, os.Args[2:]...)
+		}
 		if len(os.Args) < 3 || os.Args[2] != "apply" {
 			usage()
 		}
@@ -630,7 +636,7 @@ func main() {
 		cp := fs.String("cp", "", "control plane DSN: opens the relay's window to the cloud database for the move (move-org)")
 		publisher := fs.String("publisher", "", "cloud database DSN as seen from the customer database (move-org; default: -db)")
 		org := fs.Int64("org", 0, "organization id (move-org)")
-		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (move-org; block 18: its number from org-add)")
+		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (move-org; the number lokadb org-add gave it)")
 		lockTimeout := fs.Duration("lock-timeout", 5*time.Second, "max wait for the write lock at switch time (move-org; enable after -prepare, and -prepare's short catalog changes)")
 		// block 3 (1.4): enable in two steps
 		prepare := fs.Bool("prepare", false, "enable: prepare online (refs tables, organization columns of child tables, FKs, key indexes; can be stopped and run again); then enable without it switches in a short lock")
@@ -700,7 +706,7 @@ func main() {
 		fs := flag.NewFlagSet("repoint", flag.ExitOnError)
 		db := fs.String("db", "", "admin DSN of the cloud database")
 		org := fs.Int64("org", 0, "organization id")
-		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (block 18: its number from org-add)")
+		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (the number lokadb org-add gave it)")
 		customerApp := fs.String("customer-app", "", "the organization's database at its new address, as the cloud's role there (postgres_fdw uses it)")
 		custSchema := fs.String("customer-schema", "", "schema of the organization's tables there (default: unchanged)")
 		lockTimeout := fs.Duration("lock-timeout", 5*time.Second, "max wait for the organization's pause")
@@ -748,7 +754,7 @@ func main() {
 		db := fs.String("db", "", "admin DSN of the cloud database")
 		specPath := fs.String("spec", "", "tables spec (JSON)")
 		org := fs.Int64("org", 0, "organization id")
-		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (block 18: its number from org-add)")
+		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (the number lokadb org-add gave it)")
 		customer := fs.String("customer", "", "DSN of the organization's database: its admin, or the cloud's role there (then the copy may run under a pause of the organization: see -dry-run)")
 		lockTimeout := fs.Duration("lock-timeout", 5*time.Second, "max wait for the write lock at switch time")
 		maxPause := fs.Duration("max-pause", 10*time.Second, "max write pause while the last changes are applied")
@@ -880,32 +886,35 @@ Docs:   https://docs.lokadb.com   (install on your database: https://docs.lokadb
 usage:
   lokadb proxy -config lokadb.json [-record workload.json]
   lokadb check -db DSN (-spec spec.json | -org-table TABLE [-write-spec F] | -tenant-column COL [-write-spec F]) [-workload F[,F]] [-app-role R[,R]] [-proxy-config F]
-              [-customer DSN [-customer-app DSN] [-customer-schema S] [-org N]] [-direct-forms forms.sql]
-              [-profile fdw|fdw+direct|direct] [-json]
+              [-customer DSN [-customer-app DSN] [-customer-schema S] [-org N | -tenant UUID]] [-direct-forms forms.sql]
+              [-profile fdw|fdw+direct|direct] [-rtt MS] [-patch patch.json] [-suggest patch.json] [-proxy-hosts A[,A]] [-count-limit N] [-json]
+              lokadb check -db DSN -org-candidates   (the tables that look like the organizations table, as JSON)
               exit code: 0 ready, 2 needs review, 3 blocked, 4 not supported by lokadb yet, 5 invalid spec, 1 the check failed
               [-ci [-baseline accepted.json]] [-write-baseline F]: exit 0 nothing new, 6 new items (CI of the application)
   lokadb relay -config relay.json
   lokadb runner -config runner.json   (LokaDB Cloud's runner: takes jobs from the service, runs them here)
   lokadb issuer -config issuer.json   (signs agent certificates for the relays: the CA key lives only here)
-  lokadb agent -relay HOST:PORT -ca F -state DIR -token-file F -db HOST:PORT [-cloud-listen ADDR [-cloud-allow A[,A]]] [-status-listen ADDR] [-status-url URL -status-token-file F] [-enroll-only]
+  lokadb agent -relay HOST:PORT -ca F -state DIR -token-file F -db HOST:PORT [-cloud-listen ADDR [-cloud-allow A[,A]]] [-sessions N] [-max-conns N] [-enroll ADDR] [-server-name NAME] [-status-listen ADDR] [-status-url URL -status-token-file F] [-enroll-only]
   lokadb token  -cp DSN -org N [-ttl 15m]
   lokadb revoke -cp DSN -org N [-serial S]
   lokadb agents -cp DSN
   lokadb org-endpoint -cp DSN -org N (-listen ADDR [-tls require] [-change-port] | -remove)   (relays serve the organization without a restart)
-  lokadb certs -dir DIR -relay-host relay
-  lokadb org-profile -db DSN -org N [-customer-app DSN -direct-role ROLE] [-control-plane DSN -key FILE [-drop-fdw-credentials]] fdw|fdw+direct|direct   (the organization's routing profile, switched under its pause)
-  lokadb org-credentials -db DSN -control-plane DSN -key FILE -org N -kind direct|owner -dsn DSN|-   (the organization's credentials for the proxy, sealed in the control plane)
-  lokadb org-add -db DSN -tenant UUID [-org N]   (the number of an organization numbered by uuid: every command with -org takes it, or -tenant UUID)
+  lokadb certs -dir DIR -relay-host relay [-orgs N,N] [-force]   (a demo CA and relay certificate)
+  lokadb org-profile -db DSN (-org N | -tenant UUID) [-customer-app DSN -direct-role ROLE] [-control-plane DSN -key FILE [-key-old F] [-drop-fdw-credentials]] [-lock-timeout 5s] fdw|fdw+direct|direct   (the organization's routing profile, switched under its pause)
+  lokadb org-credentials -db DSN -control-plane DSN -key FILE (-org N | -tenant UUID) -kind direct|owner -dsn DSN|-   (the organization's credentials for the proxy, sealed in the control plane)
+               also: -list, -reseal -key-old F (key rotation), -claim-legacy
+  lokadb org-add -db DSN -tenant UUID [-org N]   (the number of an organization numbered by uuid; check, enable, move-org, move-back, repoint, org-profile and org-credentials take -tenant UUID instead of -org, the others need the number)
   lokadb enable -db DSN -spec spec.json [-patch patch.json] -owner ROLE [-prepare] [-lock-timeout 5s]
                (-prepare first on large tables: online; enable then switches in a short lock)
   lokadb routing apply -db DSN -spec spec.json [-patch patch.json]   (routing declarations after enable)
   lokadb move-cleanup -db DSN   (what killed moves left: capture triggers, log, slots; refused while a move runs)
-  lokadb move-org -db DSN -spec spec.json -owner ROLE -org N -customer DSN [-customer-app DSN] [-customer-schema S] [-publisher DSN] [-cp DSN]
+  lokadb move-org -db DSN -spec spec.json -owner ROLE (-org N | -tenant UUID) -customer DSN [-customer-app DSN] [-customer-schema S] [-publisher DSN] [-cp DSN]
+                 [-proxy-config F] [-direct-role ROLE] [-profile fdw|fdw+direct|direct] [-patch patch.json]
                  [-lock-timeout 5s] [-max-pause 10s] [-retain-source] [-mode auto|logical|trigger] [-fetch-size 1000]
                  [-batch-rows 10000] [-max-split-pause 10m] [-copy-timeout 24h] [-catchup-timeout 2h] [-catchup-stall 10m] [-drop-returned] [-allow-customer-replication] [-dry-run [-sample 10s]]
-  lokadb repoint -db DSN -org N -customer-app DSN -proxy-config F [-customer-schema S] [-direct DSN] [-owner DSN] [-key F] [-lock-timeout 5s]
+  lokadb repoint -db DSN (-org N | -tenant UUID) -customer-app DSN -proxy-config F [-customer-schema S] [-direct DSN] [-owner DSN] [-key F [-key-old F]] [-lock-timeout 5s]
                  (the organization's database moved: same rows, new address or credentials)
-  lokadb move-back -db DSN -spec spec.json -org N -customer DSN [-dry-run] [-lock-timeout 5s] [-max-pause 10s] [-bridge 60s]
+  lokadb move-back -db DSN -spec spec.json (-org N | -tenant UUID) -customer DSN [-dry-run] [-lock-timeout 5s] [-max-pause 10s] [-bridge 60s]
   lokadb move-back -db DSN -spec spec.json -org N -abandon -confirm-org N   (its database is lost: back EMPTY)
   lokadb disable -db DSN -spec spec.json [-dry-run] [-grace 60s] [-lock-timeout 5s] [-attempts 5]   (undo enable; every organization moved back first)
   lokadb schema-diff -db DSN [-org N[,N]] [-customer N=DSN]... [-proxy-config F] [-json]
@@ -913,7 +922,8 @@ usage:
               the organizations' copies of the LokaDB tables against the cloud's; exit code 0 same, 2 differences left, 1 failed
   lokadb refs-diff -db DSN [-org N[,N]] [-cloud] [-json]
   lokadb refs-sync -db DSN (-org N[,N] | -all [-cloud]) [-delete-stale] [-max-sequence-jump 100000] [-json]
-              the refs tables against the rows the organizations have (rows written there past the cloud)
+              the refs tables against the rows the organizations have (rows written there past the cloud); exit code 0 same, 2 differences left, 1 failed
+  lokadb version   (the release this binary was built from; "dev" for a local build)
   lokadb COMMAND -h   (the flags of one command)`)
 	os.Exit(2)
 }

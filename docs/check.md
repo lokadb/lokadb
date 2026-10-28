@@ -3,23 +3,31 @@
 `lokadb check` answers "can the organizations of this database and this application be moved?" before anything is changed. It reads the catalog, `pg_stat_statements` and the proxy's workload recording. It does not infer permissions from the catalog: it **tries** what `enable` and `move-org` will do (`CREATE TABLE`, `CREATE EXTENSION`, `CREATE SERVER`, `CREATE SUBSCRIPTION … WITH (connect = false)`, `ALTER TABLE … OWNER TO`) in a transaction that is always rolled back. The answer is therefore right for any role, for managed-service roles (`rds_superuser`, `cloudsqlsuperuser`, `azure_pg_admin`) and settings (`default_transaction_read_only`, a replica).
 
 ```bash
-lokadb check -db DSN -spec spec.json -workload workload.json -proxy-config lokadb.json \
-  -customer CUSTOMER_ADMIN_DSN -customer-app CUSTOMER_APP_DSN -org 1
+lokadb check -db "$CLOUD_DSN" -spec spec.json -workload workload.json -proxy-config lokadb.json \
+  -customer "$CUST_ADMIN_DSN" -customer-app "$CUST_APP_DSN" -org 1
 ```
+
+**Before you run it.** None of the inputs is needed to start:
+
+- `-db` is the administrator's connection string to your database. With only `-db` and `-org-candidates` the check names the table that looks like your organizations table; with `-org-table TABLE` it discovers the tables to move and writes a first spec (`-write-spec spec.json`); [without a spec](#without-a-spec) explains how.
+- `-workload` is a recording of the application's statements, made by the proxy (`lokadb proxy -record workload.json`, [recording the workload](#recording-the-workload)). It is optional, but without it the verdict is never `READY`.
+- `-customer`, `-customer-app` and `-org` are for checking one particular move: the organization's database (through the relay) and its number. Leave them out for a first check of your own database.
+
+The names (`$CLOUD_DSN`, `$CUST_ADMIN_DSN`, …) are explained in [Install on your database](install.md#the-names-used-on-this-page), which also shows the whole path.
 
 ## Findings
 
 Findings come in groups, and only blockers are a problem of the customer's environment:
 
 - **Spec errors** — the spec does not match the database: a table or column is missing, a table has no way to find its organization, a parent is not in the spec, parents form a cycle. The report suggests a similar table name or a foreign key that shows the organization.
-- **Blockers** — what stops the move whatever LokaDB does: an environment that is not ready (cloud, customer database), or a move that would overwrite customer data.
+- **Blockers** — what stops the move whatever LokaDB does: an environment that is not ready (your database or the organization's own), or a move that would overwrite the organization's data.
 - **Not supported by LokaDB yet** — an ordinary schema that LokaDB cannot move yet (key types, composite foreign keys to a child without its own organization column, polymorphic references, constraint triggers…). These are limitations of LokaDB, not defects of the schema; where there is a workaround, the report names it.
 - **Changes after the move** — the move works, but behaviour changes and the application owner decides: a global unique constraint becomes unique per organization; a transaction that writes cloud and moved tables becomes two commits.
 
-Example — the e2e database `badapp`, where problems are planted on purpose (shortened):
+Example — a database in which problems are planted on purpose (shortened). In the report "migration" means moving organizations, not schema migrations ([migrations](migrations.md)):
 
 ```
-Database compatibility report: badapp
+Database compatibility report: example
 Verdict: BLOCKED: the migration is blocked until the blockers below are fixed
 
   0 of 4 tables ready for tenant partitioning
@@ -38,7 +46,7 @@ Changes after the migration (the application works, but these behave differently
   [unique_not_tenant_scoped] users_email_key on users is global today; after the move it holds within each organization only ...
 ```
 
-The three demo applications get `NEEDS REVIEW`, and the findings are real: the Go seeder writes moved tables and the cloud `comments` table in one transaction (two commits after the move); Django's ORM cascades a document delete into the cloud `docs_comment`; Laravel and Django migrations add constraints on moved tables (the proxy refuses such DDL after `enable`).
+Real applications usually get `NEEDS REVIEW`, and the findings are real: a transaction that writes moved tables and a table that stays in the cloud becomes two commits after the move; an ORM cascades a delete into a table that stays in the cloud; migration tools add constraints on moved tables (the proxy refuses such DDL after `enable`).
 
 ### What is checked
 
@@ -94,7 +102,7 @@ The JSON report has the `discovery` object, one entry per table: its role (`orga
 
 Run the proxy with `-record workload.json` (or `"record"` in the config). It records normalized statements (constants replaced by `$n`; parameter values are never seen) and transaction shapes: which statements ran in one transaction, how often, and how the client sent them. The proxy can run as a transparent pass-through before `enable` just to record. The file is rewritten every two seconds and appended to across restarts.
 
-`pg_stat_statements` needs nothing installed but does not know transaction boundaries: without a recording, mixed transactions are not checked and the verdict is never `READY`. Statements of the role running the check, and statements the application never sent (the proxy's own, and Postgres's), are excluded.
+`pg_stat_statements` needs no LokaDB proxy, but it must be in `shared_preload_libraries` and created in the database, and it does not know transaction boundaries: without a recording, mixed transactions are not checked and the verdict is never `READY`. Statements of the role running the check, and statements the application never sent (the proxy's own, and Postgres's), are excluded.
 
 **What the report cannot promise.** It sees the schema and the statements already run. Rare code paths and dynamic SQL are not covered: run the application's tests through the recording proxy before `enable`, and re-run the check before every move. What the report misses, the proxy catches: a statement without an organization is refused by default.
 
@@ -148,4 +156,4 @@ Exit code 0 — nothing new; 6 — something `accepted.json` has not accepted, a
 
 ## Profiles
 
-`check -profile fdw+direct|direct [-org N]` estimates, from the recorded workload, what share of statements on moved tables would take the direct path and why the rest would not. See [profiles-and-cooperative-mode.md](profiles-and-cooperative-mode.md#estimating-a-profile-before-switching).
+`check -profile fdw+direct|direct [-org N]` estimates, from the recorded workload, what share of statements on moved tables would take the direct path and why the rest would not. See [Profiles and cooperative mode](profiles-and-cooperative-mode.md#estimating-a-profile-before-switching).

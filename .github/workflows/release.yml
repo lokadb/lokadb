@@ -1,8 +1,16 @@
 name: Release
 
-# On a version tag (v0.1.0): the lokadb binary for Linux x86-64 as a release asset with its
-# SHA-256, and the image ghcr.io/lokadb/lokadb. The GitHub Action of lokadb/check downloads
-# exactly these names (lokadb-linux-amd64.tar.gz and .sha256), or runs the image.
+# On a version tag (v0.1.0, or a pre-release v0.1.0-rc.1): the lokadb binary for Linux x86-64 and
+# ARM64 as release assets with their SHA-256, and the multi-arch image ghcr.io/lokadb/lokadb. The
+# GitHub Action of lokadb/check downloads exactly these names (lokadb-linux-amd64.tar.gz and
+# .sha256, lokadb-linux-arm64.tar.gz and .sha256), or runs the image.
+#
+# Image tags: v0.1.0, 0.1.0, 0.1 and latest; a pre-release gets its own tag only (v0.1.0-rc.1,
+# 0.1.0-rc.1). The image carries an SBOM and build provenance; once the repository is public it is
+# also signed with cosign (keyless, GitHub's OIDC identity of this workflow):
+#   cosign verify ghcr.io/lokadb/lokadb:v0.1.0 \
+#     --certificate-identity-regexp '^https://github.com/lokadb/lokadb/.github/workflows/release.yml@' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 on:
   push:
     tags: ["v*"]
@@ -10,47 +18,100 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write # cosign keyless signing
 
 jobs:
-  binary:
-    name: binary (linux/amd64)
+  release:
+    name: binaries and image (linux/amd64, linux/arm64)
     runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache-dependency-path: proxy/go.sum
-      - name: build
-        working-directory: proxy
-        run: CGO_ENABLED=1 go build -trimpath -o "$RUNNER_TEMP/out/lokadb" ./cmd/lokadb
-      - name: package
+      - name: version
+        id: v
         run: |
-          cd "$RUNNER_TEMP/out"
-          tar -czf lokadb-linux-amd64.tar.gz lokadb
-          sha256sum lokadb-linux-amd64.tar.gz > lokadb-linux-amd64.tar.gz.sha256
-      - name: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes
-          gh release upload "$TAG" --clobber "$RUNNER_TEMP/out/lokadb-linux-amd64.tar.gz" "$RUNNER_TEMP/out/lokadb-linux-amd64.tar.gz.sha256"
+          v="${TAG#v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::tag $TAG is not vX.Y.Z[-pre]"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "minor=$(cut -d. -f1,2 <<<"${v%%-*}")" >> "$GITHUB_OUTPUT"
+          if [[ "$v" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+      # QEMU only for the smoke test of the arm64 binary: the build itself cross-compiles
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-  image:
-    name: image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: binaries
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --target binary \
+            --build-arg VERSION="${{ steps.v.outputs.version }}" --output "type=local,dest=$RUNNER_TEMP/bin" proxy
+          mkdir -p "$RUNNER_TEMP/out"
+          for arch in amd64 arm64; do
+            d="$RUNNER_TEMP/bin/linux_$arch"
+            # the binary starts on its platform (usage exits 2)
+            out=$(docker run --rm --platform "linux/$arch" -v "$d:/b:ro" debian:bookworm-slim /b/lokadb -h 2>&1 || true)
+            grep -q "lokadb runner -config" <<<"$out" || { echo "$out"; echo "::error::linux/$arch binary does not start"; exit 1; }
+            tar -czf "$RUNNER_TEMP/out/lokadb-linux-$arch.tar.gz" -C "$d" lokadb
+            (cd "$RUNNER_TEMP/out" && sha256sum "lokadb-linux-$arch.tar.gz" > "lokadb-linux-$arch.tar.gz.sha256")
+          done
+          cat "$RUNNER_TEMP"/out/*.sha256
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - uses: docker/build-push-action@v6
+      - id: meta
+        uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          # raw tags: metadata-action turns every semver pattern of a pre-release into plain {{version}}
+          tags: |
+            type=raw,value=v${{ steps.v.outputs.version }}
+            type=raw,value=${{ steps.v.outputs.version }}
+            type=raw,value=${{ steps.v.outputs.minor }},enable=${{ steps.v.outputs.prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ steps.v.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.title=lokadb
+            org.opencontainers.image.description=LokaDB: moves a SaaS customer's organization to the customer's own Postgres, behind a Postgres proxy
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+          annotations: |
+            org.opencontainers.image.title=lokadb
+            org.opencontainers.image.description=LokaDB: moves a SaaS customer's organization to the customer's own Postgres, behind a Postgres proxy
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: proxy
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ steps.v.outputs.version }}
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          sbom: true
+          provenance: mode=max
+      # Keyless signatures go to the public transparency log (Rekor) with this repository's name:
+      # not while the repository is private.
+      - uses: sigstore/cosign-installer@v3
+        if: ${{ !github.event.repository.private }}
+      - name: sign
+        if: ${{ !github.event.repository.private }}
+        run: cosign sign --yes "$IMAGE@${{ steps.build.outputs.digest }}"
+
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRE: ${{ steps.v.outputs.prerelease }}
+        run: |
+          flags=(--verify-tag --generate-notes)
+          [ "$PRE" = true ] && flags+=(--prerelease)
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" "${flags[@]}"
+          gh release upload "$TAG" --clobber "$RUNNER_TEMP"/out/lokadb-linux-*.tar.gz "$RUNNER_TEMP"/out/lokadb-linux-*.tar.gz.sha256
