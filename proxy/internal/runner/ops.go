@@ -20,6 +20,7 @@ import (
 	"github.com/lokadb/lokadb/proxy/internal/admin"
 	"github.com/lokadb/lokadb/proxy/internal/cloudproto"
 	"github.com/lokadb/lokadb/proxy/internal/creds"
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 	"github.com/lokadb/lokadb/proxy/internal/pgext"
 	"github.com/lokadb/lokadb/proxy/internal/seal"
 	"github.com/lokadb/lokadb/proxy/internal/tunnel"
@@ -319,7 +320,7 @@ func (o *Ops) Release(ctx context.Context, a cloudproto.OrgArgs) error {
 // functions, operator classes of their columns and indexes), with their version and whether
 // a role without superuser may create them (trusted).
 func (o *Ops) Extensions(ctx context.Context) ([]cloudproto.Extension, error) {
-	conn, err := pgx.Connect(ctx, o.Cfg.DB)
+	conn, err := ownsql.Connect(ctx, o.Cfg.DB)
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +389,7 @@ func (o *Ops) Inventory(ctx context.Context) (cloudproto.Inventory, error) {
 	if inv.Relay, err = o.relayInfo(); err != nil {
 		return inv, err
 	}
-	conn, err := pgx.Connect(ctx, o.Cfg.DB)
+	conn, err := ownsql.Connect(ctx, o.Cfg.DB)
 	if err != nil {
 		return inv, err
 	}

@@ -40,4 +40,4 @@ The stand keeps Postgres data in memory (tmpfs) and starts about ten containers:
 
 ## Reporting a security problem
 
-Not through an issue: see [SECURITY.md](SECURITY.md). Other questions: hello@keepplain.com.
+Not through an issue: see [SECURITY.md](SECURITY.md). Other questions: hello@lokadb.com.

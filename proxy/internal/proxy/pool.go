@@ -16,6 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
+
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // The cache of cloud connections (block 9, item 5; tasks/proxy-pooling.md, project of 25.10):
@@ -321,7 +323,7 @@ func probe(hj *pgconn.HijackedConn) bool {
 func frontQuery(hj *pgconn.HijackedConn, sql string) ([][]string, error) {
 	_ = hj.Conn.SetDeadline(time.Now().Add(15 * time.Second))
 	defer hj.Conn.SetDeadline(time.Time{})
-	hj.Frontend.Send(&pgproto3.Query{String: sql})
+	hj.Frontend.Send(&pgproto3.Query{String: ownsql.Tag(sql)})
 	if err := hj.Frontend.Flush(); err != nil {
 		return nil, err
 	}

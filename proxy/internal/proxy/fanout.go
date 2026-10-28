@@ -5,6 +5,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgproto3"
 	pg "github.com/pganalyze/pg_query_go/v6"
+
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // Fanout policy: what the proxy does with a statement on LokaDB tables that it cannot confine
@@ -112,7 +114,7 @@ func (f *Fanout) raiseSQL(an *Analysis) string {
 	if g := an.GapText(); g != "" {
 		detail = ", DETAIL = " + sqlString("why: "+g)
 	}
-	return fmt.Sprintf("DO $lokadb$ BEGIN RAISE EXCEPTION USING ERRCODE = '0A000', MESSAGE = %s%s, HINT = %s; END $lokadb$", sqlString(msg), detail, sqlString(hint))
+	return ownsql.Tag(fmt.Sprintf("DO $lokadb$ BEGIN RAISE EXCEPTION USING ERRCODE = '0A000', MESSAGE = %s%s, HINT = %s; END $lokadb$", sqlString(msg), detail, sqlString(hint)))
 }
 
 // fanoutTable: the LokaDB table the statement fails to confine.
@@ -129,7 +131,7 @@ func raise(sql string) []outMsg {
 	return []outMsg{
 		{msg: &pgproto3.Close{ObjectType: 'S', Name: "lokadb_r"}, mode: mDrop},
 		{msg: &pgproto3.Close{ObjectType: 'P', Name: "lokadb_rp"}, mode: mDrop},
-		{msg: &pgproto3.Parse{Name: "lokadb_r", Query: sql}, mode: mDrop},
+		{msg: &pgproto3.Parse{Name: "lokadb_r", Query: ownsql.Tag(sql)}, mode: mDrop},
 		{msg: &pgproto3.Bind{DestinationPortal: "lokadb_rp", PreparedStatement: "lokadb_r"}, mode: mDrop},
 		{msg: &pgproto3.Execute{Portal: "lokadb_rp"}, mode: mDrop},
 	}

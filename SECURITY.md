@@ -4,7 +4,7 @@
 
 Please do **not** open a public issue for a security problem.
 
-Report it through GitHub's private vulnerability reporting for this repository ("Security" tab → "Report a vulnerability"), or by email to **hello@keepplain.com** with the subject "LokaDB security". There is no separate security mailbox.
+Report it through GitHub's private vulnerability reporting for this repository ("Security" tab → "Report a vulnerability"), or by email to **security@lokadb.com** with the subject "LokaDB security".
 
 Include what you found, the version or commit, how to reproduce it, and what an attacker gains. We will answer within a few days. We will credit you in the fix unless you prefer not to be named.
 

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lokadb/lokadb/proxy/internal/admin"
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // cloudReady: what move-org needs from the cloud database.
@@ -109,7 +110,7 @@ func (c *checker) cloudFDW(unavailable bool) {
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, c.o.DSN) // the check's own transaction is read-only
+	conn, err := ownsql.Connect(ctx, c.o.DSN) // the check's own transaction is read-only
 	if err != nil {
 		return
 	}

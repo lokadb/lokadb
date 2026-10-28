@@ -66,7 +66,8 @@ const (
 	ClassFanout      = "fanout"       // LokaDB tables without the organization: every organization's database
 	ClassRefused     = "refused"      // ... and the fanout policy refuses it
 	ClassAllowed     = "allowed"      // ... and the fanout policy allows it explicitly
-	ClassUpsert      = "upsert"       // a rewritten upsert
+	ClassUpsert      = "upsert"       // an INSERT … ON CONFLICT the proxy rewrites
+	ClassSameOrg     = "same_org"     // an UPDATE that assigns the organization column (kept by lokadb.same_org)
 	ClassDDL         = "ddl"          // replayed in the organizations' databases
 	ClassDDLRejected = "ddl_rejected" // refused after enable
 	ClassForbidden   = "forbidden"    // lokadb's own objects or FDW commands: refused after enable
@@ -74,7 +75,7 @@ const (
 )
 
 var classNames = map[kind]string{kCloud: ClassCloud, kRouted: ClassRouted, kFanout: ClassFanout, kRefused: ClassRefused,
-	kAllowed: ClassAllowed, kUpsert: ClassUpsert, kDDL: ClassDDL, kDDLRejected: ClassDDLRejected, kForbidden: ClassForbidden, kParse: ClassParse}
+	kAllowed: ClassAllowed, kUpsert: ClassUpsert, kDDL: ClassDDL, kDDLRejected: ClassDDLRejected, kForbidden: ClassForbidden, kParse: ClassParse, kSameOrg: ClassSameOrg}
 
 // WorkloadPattern: a query pattern of the workload as check judged it.
 type WorkloadPattern struct {

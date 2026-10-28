@@ -28,6 +28,7 @@ import (
 	"github.com/lokadb/lokadb/proxy/internal/admin"
 	"github.com/lokadb/lokadb/proxy/internal/creds"
 	"github.com/lokadb/lokadb/proxy/internal/migrate"
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 	"github.com/lokadb/lokadb/proxy/internal/proxy"
 	"github.com/lokadb/lokadb/proxy/internal/runner"
 	"github.com/lokadb/lokadb/proxy/internal/tunnel"
@@ -116,7 +117,7 @@ func main() {
 		}
 		if *orgCands {
 			var conn *pgx.Conn
-			if conn, err = pgx.Connect(context.Background(), *db); err != nil {
+			if conn, err = ownsql.Connect(context.Background(), *db); err != nil {
 				break
 			}
 			var cands []check.OrgCandidate

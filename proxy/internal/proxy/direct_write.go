@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgproto3"
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // Writes on the direct path, stage 8b (tasks/direct-path.md, section 5; coordinator's
@@ -584,7 +586,7 @@ func (s *session) cloudStart(qs ...string) *capture {
 	for i, q := range qs {
 		st, p := fmt.Sprintf("lokadb_w%d", i), fmt.Sprintf("lokadb_wp%d", i)
 		ms = append(ms, &pgproto3.Close{ObjectType: 'S', Name: st}, &pgproto3.Close{ObjectType: 'P', Name: p},
-			&pgproto3.Parse{Name: st, Query: q}, &pgproto3.Bind{DestinationPortal: p, PreparedStatement: st}, &pgproto3.Execute{Portal: p})
+			&pgproto3.Parse{Name: st, Query: ownsql.Tag(q)}, &pgproto3.Bind{DestinationPortal: p, PreparedStatement: st}, &pgproto3.Execute{Portal: p})
 	}
 	if err := s.send(s.extMsgs(c, ms...)); err != nil {
 		c.fail(err)

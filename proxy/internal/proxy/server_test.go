@@ -64,6 +64,7 @@ func fakePostgresQueries(t *testing.T, pid string, risky [][]string) (string, fu
 					if err != nil {
 						return
 					}
+					unmark(m)
 					q, ok := m.(*pgproto3.Query)
 					if !ok {
 						continue

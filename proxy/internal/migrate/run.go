@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lokadb/lokadb/proxy/internal/admin"
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 func unmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }
@@ -17,7 +18,7 @@ func unmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }
 func connect(ctx context.Context, dsn string) (*pgx.Conn, error) {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return pgx.Connect(cctx, dsn)
+	return ownsql.Connect(cctx, dsn) // the command's statements are LokaDB's own (check skips them)
 }
 
 type lokadbTable struct{ name, tenant string }

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lokadb/lokadb/proxy/internal/creds"
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // CredentialsOptions: lokadb org-credentials (stage 9a, tasks/direct-profile.md).
@@ -138,7 +139,7 @@ func ResealCredentials(ctx context.Context, cloudDSN, controlPlane, keyFile stri
 // CloudInstallation: the cloud's installation, its cluster's system_identifier (review of
 // admin, A14): the credentials of the organizations are sealed for it.
 func CloudInstallation(ctx context.Context, cloudDSN string) (string, error) {
-	c, err := pgx.Connect(ctx, cloudDSN)
+	c, err := ownsql.Connect(ctx, cloudDSN)
 	if err != nil {
 		return "", fmt.Errorf("cloud database: %w", err)
 	}

@@ -885,6 +885,25 @@ if part uuidapp && [[ " $APPS " == *" goapp "* ]]; then
   lokadb org-profile -db "$admin" -tenant "$A" fdw >/dev/null 2>&1 || fail "uuidapp: org-profile back to fdw"
   uapp coop || fail "uuidapp: cooperative mode on fdw"
 
+  # block 11: LokaDB's own statements (the proxy's read of lokadb.tenants on the application's
+  # connection, the commands' queries) carry internal/ownsql's mark: neither the recording nor
+  # pg_stat_statements gives check a statement of LokaDB's as the application's (a query_forbidden
+  # blocker "lokadb.tenants belongs to LokaDB" on a real database)
+  log "uuidapp: check of the recorded workload and pg_stat_statements after enable: no statement of LokaDB's own"
+  sleep 3
+  run_check check_uuidapp_after.log -db "$admin" -spec /specs/uuidapp.json -workload /workload/workload.json -proxy-config /etc/lokadb.json >/dev/null
+  pss=$(cloud_sql "$db" "SELECT count(*) FILTER (WHERE query LIKE '%/* lokadb */') || '/' || count(*) FILTER (WHERE query NOT LIKE '%/* lokadb */')
+    FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND userid = 'app'::regrole AND query LIKE '%FROM lokadb.tenants%'")
+  rec=$(grep -c 'lokadb\.tenants' workload/workload.json)
+  # (exit 3 is right: r1's statement that names no account is refused under fanout reject)
+  if [[ $CHECK_RC =~ ^[0234]$ ]] && ! reported check_uuidapp_after.log query_forbidden && ! grep -q 'lokadb\.tenants' check_uuidapp_after.log \
+    && [[ $pss =~ ^[1-9][0-9]*/0$ ]] && [ "$rec" = 0 ]; then
+    echo "PASS  uuidapp: check after enable (exit $CHECK_RC) names no statement of LokaDB's; the proxy's reads of lokadb.tenants under the application's role are marked in pg_stat_statements ($pss marked/not), none in the recording"
+  else
+    fail "uuidapp: LokaDB's own statements: check exit $CHECK_RC, pg_stat_statements marked/not '$pss', in the recording $rec"
+    sed -n '/^Blockers/,/^$/p' check_uuidapp_after.log | head -8
+  fi
+
   log "uuidapp: account A's database goes offline"
   $C stop -t 60 customer >/dev/null
   uapp offline || fail "uuidapp offline"

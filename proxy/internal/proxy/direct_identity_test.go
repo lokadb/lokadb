@@ -154,6 +154,7 @@ func fakePG(t *testing.T, marks []string) (string, chan string) {
 		if err != nil {
 			return
 		}
+		unmark(m)
 		q, _ := m.(*pgproto3.Query)
 		if q == nil {
 			return

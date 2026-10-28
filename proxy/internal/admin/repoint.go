@@ -11,6 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // RepointOptions configures Repoint.
@@ -256,7 +258,7 @@ func Repoint(ctx context.Context, o RepointOptions) error {
 func repointCommitted(cloudDSN string, org int64, dbID, server string, app *pgconn.Config, log *slog.Logger) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	c, err := pgx.Connect(ctx, cloudDSN)
+	c, err := ownsql.Connect(ctx, cloudDSN)
 	if err != nil {
 		log.Warn("whether repoint's transaction committed is not known (the cloud does not answer): the control plane's credentials are put back; check the server's address and run repoint again", "err", err)
 		return false

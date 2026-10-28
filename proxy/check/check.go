@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lokadb/lokadb/proxy/internal/admin"
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 	"github.com/lokadb/lokadb/proxy/internal/proxy"
 )
 
@@ -285,7 +286,7 @@ type checker struct {
 }
 
 func Run(ctx context.Context, o Options) (*Report, error) {
-	conn, err := pgx.Connect(ctx, o.DSN)
+	conn, err := ownsql.Connect(ctx, o.DSN) // check's own statements: its workload analysis skips them (internal/ownsql)
 	if err != nil {
 		return nil, err
 	}

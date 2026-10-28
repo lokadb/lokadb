@@ -158,6 +158,7 @@ transactions_not_checked
 triggers_carried
 unique_not_tenant_scoped
 unlinked_table
+update_assigns_organization
 upsert_rewritten
 user_trigger
 views_not_checked

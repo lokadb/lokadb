@@ -90,6 +90,7 @@ func (f *poolFake) serve(c net.Conn) {
 		if err != nil {
 			return
 		}
+		unmark(m)
 		switch m := m.(type) {
 		case *pgproto3.Terminate:
 			return

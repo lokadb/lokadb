@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 	"github.com/lokadb/lokadb/proxy/internal/proxy"
 )
 
@@ -25,11 +27,12 @@ const (
 	kFanout                  // LokaDB tables without the organization: run in every organization's database
 	kRefused                 // ... and the fanout policy refuses it
 	kAllowed                 // ... and the fanout policy allows it explicitly
-	kUpsert                  // rewritten upsert
+	kUpsert                  // an INSERT … ON CONFLICT the proxy rewrites
 	kDDL                     // replayed in the organizations' databases
 	kDDLRejected             // refused after enable
 	kForbidden               // LokaDB's own objects or FDW commands: refused after enable
 	kParse                   // not understood
+	kSameOrg                 // an UPDATE that assigns the organization column: the proxy wraps it in lokadb.same_org
 )
 
 type group struct {
@@ -88,13 +91,15 @@ func (c *checker) workload() error {
 	c.fan = fan
 	c.rep.FanoutPolicy = fmt.Sprintf("%s, %s (%s)", fan.Mode, plural(fan.Allowed, "statement allowed", "statements allowed"), src)
 
-	ext, err := c.rows(`SELECT n.nspname::text FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_stat_statements'`)
-	if err != nil {
-		return err
+	var ext [][]string
+	if c.tx != nil { // without a database (an offline session, a test) only the recordings are read
+		if ext, err = c.rows(`SELECT n.nspname::text FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_stat_statements'`); err != nil {
+			return err
+		}
 	}
-	if len(ext) == 0 {
+	if c.tx != nil && len(ext) == 0 {
 		c.add(Info, "no_pg_stat_statements", "", "pg_stat_statements is not installed in this database: its statistics are not used", nil)
-	} else {
+	} else if c.tx != nil {
 		sp, err := c.tx.Begin(c.ctx) // a savepoint: the view errors out when the library is not preloaded
 		if err != nil {
 			return err
@@ -122,7 +127,7 @@ func (c *checker) workload() error {
 				switch {
 				case query == "<insufficient privilege>":
 					hidden++
-				case strings.HasPrefix(query, strings.TrimSpace(ownMark)), c.notApplication(query):
+				case ownsql.IsOwn(query), strings.HasPrefix(query, strings.TrimSpace(ownMark)), c.notApplication(query):
 				case len(roles) > 0 && !roles[role], len(roles) == 0 && role == self:
 					skipped[role]++
 				default:
@@ -174,10 +179,17 @@ func (c *checker) workload() error {
 			continue
 		}
 		for _, s := range wd.Statements {
+			if ownsql.IsOwn(s.SQL) { // LokaDB's own (a recording of an older proxy may hold some)
+				continue
+			}
 			pats[s.SQL] = max(pats[s.SQL], s.Count)
 			seen(s.SQL, "", "recording:"+path)
 		}
-		txs = append(txs, wd.Transactions...)
+		for _, t := range wd.Transactions {
+			if !slices.ContainsFunc(t.Statements, ownsql.IsOwn) {
+				txs = append(txs, t)
+			}
+		}
 		c.rep.Sources = append(c.rep.Sources, fmt.Sprintf("proxy recording %s: %d statements, %d transaction shapes, updated %s",
 			path, len(wd.Statements), len(wd.Transactions), w.Updated.Format(time.RFC3339)))
 		if wd.Dropped > 0 {
@@ -283,6 +295,8 @@ func (c *checker) workload() error {
 	report(kParse, Warning, "parse_error", "statement is", "statements are", " not understood by the Postgres parser the proxy uses (PostgreSQL 17's grammar) and name no LokaDB table: the proxy sends them to the cloud as they are. A statement that names one is judged by the fanout policy like a query without the organization (query_refused, query_without_organization)")
 	report(kUpsert, Info, "upsert_rewritten", "upsert pattern on LokaDB tables is", "upsert patterns on LokaDB tables are",
 		" rewritten by the proxy; under concurrent inserts of the same key one of them can fail with a unique violation instead of updating")
+	report(kSameOrg, Info, "update_assigns_organization", "UPDATE pattern assigns", "UPDATE patterns assign",
+		" the organization column of a LokaDB table (an ORM's save() writes every column). The proxy keeps the value through lokadb.same_org: the same organization passes unchanged, another one is refused with an error, since a row cannot move to another organization")
 	report(kDDL, Info, "ddl_replayed", "DDL pattern on LokaDB tables is", "DDL patterns on LokaDB tables are", " replayed in each organization's database before COMMIT")
 	c.copyFromCost(byKind[kRouted])
 	for _, g := range groups {
@@ -439,6 +453,8 @@ func (c *checker) serverMade(sql string) bool {
 var metaTables = map[string]bool{"tables": true, "lookups": true}
 
 // proxyMade: statements the proxy itself sends after enable on the application's connection,
+// as a proxy before LokaDB's own mark sent them (internal/ownsql: a proxy that marks them is
+// skipped by the mark; pg_stat_statements keeps the old texts until it is reset),
 // seen by pg_stat_statements under the application's role but not written by it: rewritten
 // upserts, lokadb.org, the pause lock, unique indexes per partition, refs lookups, the table owner check,
 // refusals (DO $lokadb$), the metadata read at connect, SELECT/UPDATE/DELETE aimed straight
@@ -453,6 +469,8 @@ func (c *checker) proxyMade(sql string) bool {
 		strings.Contains(s, "to_regprocedure('lokadb.replay_targets()')"),
 		strings.Contains(s, "lock(hashtext("),                                                 // a rewritten upsert's lock (proxy.upsertLock)
 		s == "SELECT org::text, schema FROM lokadb.orgs",                                      // the schemas of the organizations' tables (proxy.LoadMeta)
+		s == "SELECT tenant, org::text FROM lokadb.tenants",                                   // the numbers of organizations named by uuid (proxy.loadOrgNums)
+		strings.HasPrefix(s, "SELECT (to_regclass('lokadb."),                                  // the metadata read asking whether a table of LokaDB's is there
 		s == "SELECT org::text, profile FROM lokadb.orgs WHERE profile IS NOT NULL",           // their routing profiles (proxy.LoadMeta)
 		s == "SELECT org::text, db_id FROM lokadb.orgs WHERE db_id IS NOT NULL",               // their databases' ids (proxy.LoadMeta, the check of the database)
 		strings.HasPrefix(s, "SELECT coalesce((SELECT profile FROM lokadb.orgs WHERE org = "), // the direct path's gate (fdw+direct)
@@ -572,10 +590,44 @@ func (c *checker) classify(sql string) (kind, string) {
 		return kFanout, ""
 	case a.Rewritten != "" && isCopy(sql): // COPY FROM loaded through a staging table (block 2): routed, not an upsert
 		return kRouted, ""
-	case a.Rewritten != "":
+	case a.Rewritten != "" && isUpsert(sql): // INSERT … ON CONFLICT (proxy rewriteUpsert)
 		return kUpsert, ""
+	case a.Rewritten != "" && c.assignsOrg(sql): // UPDATE … SET <organization column> (proxy sameOrg)
+		return kSameOrg, ""
 	}
-	return kRouted, ""
+	return kRouted, "" // other rewrites (MERGE) route the statement as it is meant
+}
+
+// isUpsert: an INSERT … ON CONFLICT.
+func isUpsert(sql string) bool {
+	tree, err := pg.Parse(sql)
+	if err != nil || len(tree.Stmts) != 1 {
+		return false
+	}
+	ins := tree.Stmts[0].Stmt.GetInsertStmt()
+	return ins != nil && ins.OnConflictClause != nil
+}
+
+// assignsOrg: an UPDATE of a LokaDB table that assigns its organization column.
+func (c *checker) assignsOrg(sql string) bool {
+	tree, err := pg.Parse(sql)
+	if err != nil || len(tree.Stmts) != 1 || c.meta == nil {
+		return false
+	}
+	u := tree.Stmts[0].Stmt.GetUpdateStmt()
+	if u == nil {
+		return false
+	}
+	t := c.meta.TableIn(u.Relation, c.path)
+	if t == nil || t.TenantCol == "" {
+		return false
+	}
+	for _, x := range u.TargetList {
+		if rt := x.GetResTarget(); rt != nil && rt.Name == t.TenantCol {
+			return true
+		}
+	}
+	return false
 }
 
 // isCopy: a COPY statement.

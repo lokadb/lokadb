@@ -15,9 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/lokadb/lokadb/proxy/internal/cloudproto"
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 	"github.com/lokadb/lokadb/proxy/internal/seal"
 	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 )
@@ -182,7 +181,7 @@ func (r *Runner) register(ctx context.Context) error {
 // lock: the SaaS database's runner lock, held on a connection of its own until unlock.
 func (r *Runner) lock(ctx context.Context) (func(), error) {
 	for {
-		conn, err := pgx.Connect(ctx, r.Cfg.DB)
+		conn, err := ownsql.Connect(ctx, r.Cfg.DB)
 		if err != nil {
 			return nil, fmt.Errorf("SaaS database: %w", err)
 		}

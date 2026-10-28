@@ -18,6 +18,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 const (
@@ -887,6 +889,7 @@ func watchWaits(ctx context.Context, conn *pgx.Conn, what string, log *slog.Logg
 			}
 			if w == nil {
 				var err error
+				ownsql.Configure(cfg)
 				if w, err = pgx.ConnectConfig(ctx, cfg); err != nil {
 					continue
 				}

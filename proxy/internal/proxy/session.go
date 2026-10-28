@@ -19,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	pg "github.com/pganalyze/pg_query_go/v6"
+
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // expectKind identifies a message sent upstream whose responses are still pending.
@@ -951,7 +953,7 @@ func (s *session) handleQuery(sql string) {
 			return
 		}
 		if tx != 'E' && s.readsRows(an) && s.upOrg != fetchOrg {
-			out = append(out, outMsg{msg: &pgproto3.Query{String: "SELECT set_config('lokadb.org', " + sqlString(fetchOrg) + ", false)"}, mode: mDrop})
+			out = append(out, outMsg{msg: &pgproto3.Query{String: ownsql.Tag("SELECT set_config('lokadb.org', " + sqlString(fetchOrg) + ", false)")}, mode: mDrop})
 		}
 		s.upOrg = "?"
 	case an.Utility: // nothing to set, and SET TRANSACTION must stay first in the transaction
@@ -971,7 +973,7 @@ func (s *session) handleQuery(sql string) {
 			org, set = h, true
 		}
 		if set && s.upOrg != org {
-			out = append(out, outMsg{msg: &pgproto3.Query{String: "SELECT set_config('lokadb.org', " + sqlString(org) + ", false)"}, mode: mDrop})
+			out = append(out, outMsg{msg: &pgproto3.Query{String: ownsql.Tag("SELECT set_config('lokadb.org', " + sqlString(org) + ", false)")}, mode: mDrop})
 		}
 		s.upOrg = "?"
 		if set && (tx == 'I' || !an.Reverts) { // a session value, kept unless the string's ROLLBACK undoes it
@@ -1034,26 +1036,26 @@ func (s *session) handleQuery(sql string) {
 				// Each query string is a transaction of its own: a session lock, released
 				// right after it (a transaction lock taken here would end with this query).
 				lockFn = "pg_advisory_lock_shared(" + lock + ")"
-				unlocks = append(unlocks, outMsg{msg: &pgproto3.Query{String: "SELECT pg_advisory_unlock_shared(" + lock + ")"}, mode: mDrop})
+				unlocks = append(unlocks, outMsg{msg: &pgproto3.Query{String: ownsql.Tag("SELECT pg_advisory_unlock_shared(" + lock + ")")}, mode: mDrop})
 			default:
 				lockFn = "pg_advisory_xact_lock_shared(" + lock + ")"
 			}
 		}
 		if q := strings.Join(slices.DeleteFunc([]string{setOrg, lockFn}, func(x string) bool { return x == "" }), ", "); q != "" {
-			out = append(out, outMsg{msg: &pgproto3.Query{String: "SELECT " + q}, mode: mDrop})
+			out = append(out, outMsg{msg: &pgproto3.Query{String: ownsql.Tag("SELECT " + q)}, mode: mDrop})
 		}
 		if tx != 'E' { // an aborted transaction would refuse it and skip the client's ROLLBACK
 			for _, p := range an.Prelude {
-				out = append(out, outMsg{msg: &pgproto3.Query{String: p}, mode: mDrop})
+				out = append(out, outMsg{msg: &pgproto3.Query{String: ownsql.Tag(p)}, mode: mDrop})
 			}
 		}
 		part := s.foreignPart(an, org)
 		if key := upsertLock(an, org, part); key != "" && tx != 'E' {
 			if tx == 'I' { // as the pause lock: a transaction lock would end with this query
-				out = append(out, outMsg{msg: &pgproto3.Query{String: "SELECT pg_advisory_lock(" + upsertLockArgs(sqlString(key)) + ")"}, mode: mDrop})
-				unlocks = append(unlocks, outMsg{msg: &pgproto3.Query{String: "SELECT pg_advisory_unlock(" + upsertLockArgs(sqlString(key)) + ")"}, mode: mDrop})
+				out = append(out, outMsg{msg: &pgproto3.Query{String: ownsql.Tag("SELECT pg_advisory_lock(" + upsertLockArgs(sqlString(key)) + ")")}, mode: mDrop})
+				unlocks = append(unlocks, outMsg{msg: &pgproto3.Query{String: ownsql.Tag("SELECT pg_advisory_unlock(" + upsertLockArgs(sqlString(key)) + ")")}, mode: mDrop})
 			} else {
-				out = append(out, outMsg{msg: &pgproto3.Query{String: "SELECT pg_advisory_xact_lock(" + upsertLockArgs(sqlString(key)) + ")"}, mode: mDrop})
+				out = append(out, outMsg{msg: &pgproto3.Query{String: ownsql.Tag("SELECT pg_advisory_xact_lock(" + upsertLockArgs(sqlString(key)) + ")")}, mode: mDrop})
 			}
 		}
 		if part != "" {
@@ -1675,14 +1677,14 @@ func (s *session) handleBatch(final pgproto3.FrontendMessage) {
 
 // relisten sends LISTEN lokadb_meta again after the client's UNLISTEN * or DISCARD ALL.
 func (s *session) relisten() {
-	_ = s.send([]outMsg{{msg: &pgproto3.Query{String: "LISTEN " + metaChannel}, mode: mDrop}})
+	_ = s.send([]outMsg{{msg: &pgproto3.Query{String: ownsql.Tag("LISTEN " + metaChannel)}, mode: mDrop}})
 }
 
 // listenMsgs: LISTEN lokadb_meta inside a batch, through a statement and portal of the proxy's own.
 func listenMsgs() []outMsg {
 	return []outMsg{
 		{msg: &pgproto3.Close{ObjectType: 'S', Name: "lokadb_n"}, mode: mDrop},
-		{msg: &pgproto3.Parse{Name: "lokadb_n", Query: "LISTEN " + metaChannel}, mode: mDrop},
+		{msg: &pgproto3.Parse{Name: "lokadb_n", Query: ownsql.Tag("LISTEN " + metaChannel)}, mode: mDrop},
 		{msg: &pgproto3.Bind{DestinationPortal: "lokadb_np", PreparedStatement: "lokadb_n"}, mode: mDrop},
 		{msg: &pgproto3.Execute{Portal: "lokadb_np"}, mode: mDrop},
 	}
@@ -1841,7 +1843,7 @@ func raiseSQL(msg string) string { return raiseSQLCode("0A000", msg) }
 
 // raiseSQLCode is a statement that fails with msg and SQLSTATE code.
 func raiseSQLCode(code, msg string) string {
-	return fmt.Sprintf("DO $lokadb$ BEGIN RAISE EXCEPTION USING ERRCODE = '%s', MESSAGE = %s; END $lokadb$", code, sqlString(msg))
+	return ownsql.Tag(fmt.Sprintf("DO $lokadb$ BEGIN RAISE EXCEPTION USING ERRCODE = '%s', MESSAGE = %s; END $lokadb$", code, sqlString(msg)))
 }
 
 // orgLock is the pause lock a statement takes (lokadb.org_lock): move-org holds a lock
@@ -1907,7 +1909,7 @@ func lockUpsert(key string) []outMsg {
 	return []outMsg{
 		{msg: &pgproto3.Close{ObjectType: 'S', Name: "lokadb_us"}, mode: mDrop},
 		{msg: &pgproto3.Close{ObjectType: 'P', Name: "lokadb_up"}, mode: mDrop},
-		{msg: &pgproto3.Parse{Name: "lokadb_us", Query: "SELECT pg_advisory_xact_lock(" + upsertLockArgs("$1::text") + ")"}, mode: mDrop},
+		{msg: &pgproto3.Parse{Name: "lokadb_us", Query: ownsql.Tag("SELECT pg_advisory_xact_lock(" + upsertLockArgs("$1::text") + ")")}, mode: mDrop},
 		{msg: &pgproto3.Bind{DestinationPortal: "lokadb_up", PreparedStatement: "lokadb_us", Parameters: [][]byte{[]byte(key)}}, mode: mDrop},
 		{msg: &pgproto3.Execute{Portal: "lokadb_up"}, mode: mDrop},
 	}
@@ -1924,7 +1926,7 @@ func prelude(stmts []string) []outMsg {
 		out = append(out,
 			outMsg{msg: &pgproto3.Close{ObjectType: 'S', Name: "lokadb_pre"}, mode: mDrop},
 			outMsg{msg: &pgproto3.Close{ObjectType: 'P', Name: "lokadb_prep"}, mode: mDrop},
-			outMsg{msg: &pgproto3.Parse{Name: "lokadb_pre", Query: q}, mode: mDrop},
+			outMsg{msg: &pgproto3.Parse{Name: "lokadb_pre", Query: ownsql.Tag(q)}, mode: mDrop},
 			outMsg{msg: &pgproto3.Bind{DestinationPortal: "lokadb_prep", PreparedStatement: "lokadb_pre"}, mode: mDrop},
 			outMsg{msg: &pgproto3.Execute{Portal: "lokadb_prep"}, mode: mDrop})
 	}
@@ -1967,7 +1969,7 @@ func (s *session) svc(st svcStmt, portal string, p []byte) []outMsg {
 		e0, bit := s.svcEpoch.Load(), st.bit
 		out = append(out,
 			outMsg{msg: &pgproto3.Close{ObjectType: 'S', Name: st.name}, mode: mDrop},
-			outMsg{msg: &pgproto3.Parse{Name: st.name, Query: st.query}, mode: mDrop, onOK: func() {
+			outMsg{msg: &pgproto3.Parse{Name: st.name, Query: ownsql.Tag(st.query)}, mode: mDrop, onOK: func() {
 				if s.svcEpoch.Load() == e0 {
 					s.svcPrep.Or(bit)
 				}
@@ -2490,7 +2492,7 @@ func (s *session) captureExt(sql string, flush bool) ([][]string, error) {
 	if err := s.send(s.extMsgs(c,
 		&pgproto3.Close{ObjectType: 'S', Name: "lokadb_q"},
 		&pgproto3.Close{ObjectType: 'P', Name: "lokadb_qp"},
-		&pgproto3.Parse{Name: "lokadb_q", Query: sql},
+		&pgproto3.Parse{Name: "lokadb_q", Query: ownsql.Tag(sql)}, // LokaDB's own: check skips it (internal/ownsql)
 		&pgproto3.Bind{DestinationPortal: "lokadb_qp", PreparedStatement: "lokadb_q"},
 		&pgproto3.Execute{Portal: "lokadb_qp"})); err != nil {
 		return nil, err
@@ -2543,7 +2545,7 @@ func (s *session) resultTypes(name string) []uint32 {
 // transaction, so it also sees the client's uncommitted rows). Call only when idle.
 func (s *session) capture(sql string) ([][]string, error) {
 	c := &capture{done: make(chan struct{})}
-	if err := s.send([]outMsg{{msg: &pgproto3.Query{String: sql}, mode: mCapture, cap: c}}); err != nil {
+	if err := s.send([]outMsg{{msg: &pgproto3.Query{String: ownsql.Tag(sql)}, mode: mCapture, cap: c}}); err != nil {
 		return nil, err
 	}
 	<-c.done

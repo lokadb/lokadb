@@ -14,6 +14,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgproto3"
 	pg "github.com/pganalyze/pg_query_go/v6"
+
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // Workload recording (proxy -record FILE): while the proxy forwards traffic, LokaDB enabled
@@ -143,6 +145,9 @@ func (r *recorder) record(db string, order []stmtKey, runs map[string]int64, for
 	seen := map[string]bool{}
 	runsFP := map[string]int64{} // texts that differ only in list lengths share a fingerprint, and its runs
 	for _, k := range order {
+		if ownsql.IsOwn(k.norm) { // LokaDB's own statement is not the application's workload
+			continue
+		}
 		runsFP[k.fp] += runs[k.norm]
 		if s := d.stmts[k.norm]; s != nil {
 			s.Count += runs[k.norm]
@@ -157,6 +162,9 @@ func (r *recorder) record(db string, order []stmtKey, runs map[string]int64, for
 			fps = append(fps, k.fp)
 			texts = append(texts, k.norm)
 		}
+	}
+	if len(fps) == 0 { // only LokaDB's own statements: no shape of the application's
+		return
 	}
 	key := form + "|" + strings.Join(fps, " ")
 	if d.txs[key] == nil { // a shape of a recording made before Form was kept takes the form of the first new run

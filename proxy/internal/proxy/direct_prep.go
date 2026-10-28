@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgproto3"
+
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
 
 // The direct path's statements of its own in the cloud, prepared once per cloud connection
@@ -92,7 +94,7 @@ func (s *session) cloudStartStmts(items ...cloudStmt) *capture {
 			st := fmt.Sprintf("lokadb_w%d", i)
 			add(&pgproto3.Close{ObjectType: 'S', Name: st})
 			add(&pgproto3.Close{ObjectType: 'P', Name: portal})
-			add(&pgproto3.Parse{Name: st, Query: it.sql})
+			add(&pgproto3.Parse{Name: st, Query: ownsql.Tag(it.sql)})
 			add(&pgproto3.Bind{DestinationPortal: portal, PreparedStatement: st, Parameters: it.params})
 			add(&pgproto3.Execute{Portal: portal})
 			continue
@@ -105,7 +107,7 @@ func (s *session) cloudStartStmts(items ...cloudStmt) *capture {
 		add(&pgproto3.Close{ObjectType: 'P', Name: portal})
 		if parse {
 			add(&pgproto3.Close{ObjectType: 'S', Name: name})
-			out = append(out, outMsg{msg: &pgproto3.Parse{Name: name, Query: it.sql}, mode: mCapture, cap: c,
+			out = append(out, outMsg{msg: &pgproto3.Parse{Name: name, Query: ownsql.Tag(it.sql)}, mode: mCapture, cap: c,
 				onOK: func() { s.prep.confirm(name, epoch) }})
 		}
 		add(&pgproto3.Bind{DestinationPortal: portal, PreparedStatement: name, Parameters: it.params})

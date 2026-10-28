@@ -41,6 +41,7 @@ type fakeUpstream struct {
 	delayQuery    time.Duration // wait before answering a simple query
 	noticeFirst   bool          // a simple query is answered with a NOTICE first, at once (RAISE NOTICE of a long procedure)
 	parsed        []string      // the name of every Parse the server took, in order
+	own           []string      // the statements that came with LokaDB's own mark (internal/ownsql), as sent
 	lockErr       string        // SQLSTATE the gate's pause lock fails with (a cancel, lock_timeout)
 	dropNext      bool          // close the connection on the next statement, unanswered (an idle drop)
 	roleWhy       string        // what the direct role check finds beyond DML ("": nothing)
@@ -122,6 +123,11 @@ func (f *fakeUpstream) run() {
 		msg, err := be.Receive()
 		if err != nil {
 			return
+		}
+		if q := unmark(msg); q != "" {
+			f.mu.Lock()
+			f.own = append(f.own, q)
+			f.mu.Unlock()
 		}
 		switch msg.(type) {
 		case *pgproto3.Sync:

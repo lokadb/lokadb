@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 
 	"github.com/jackc/pgx/v5"
@@ -1363,6 +1364,7 @@ func connect(ctx context.Context, dsn string) (*pgx.Conn, error) {
 	// lit() doubles a quote and nothing else: a backslash before one (a text key) is an escape
 	// with the setting off (a database of an old application can have it so), review A18
 	cfg.RuntimeParams["standard_conforming_strings"] = "on"
+	ownsql.Configure(cfg) // the command's statements are LokaDB's own (check skips them)
 	return pgx.ConnectConfig(ctx, cfg)
 }
 
@@ -1376,6 +1378,7 @@ func connectPlain(ctx context.Context, dsn string) (*pgx.Conn, error) {
 		return nil, err
 	}
 	cfg.RuntimeParams["standard_conforming_strings"] = "on"
+	ownsql.Configure(cfg) // the command's statements are LokaDB's own (check skips them)
 	return pgx.ConnectConfig(ctx, cfg)
 }
 
