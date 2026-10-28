@@ -1,12 +1,15 @@
 # Quickstart
 
-One command starts a complete small setup and moves one organization out while an application keeps writing:
+This is a **demo stand**: it runs on its own throwaway databases and installs nothing on yours. To put LokaDB in front of your own database, see [Install on your database](install.md).
+
+Get the repository first, then one command starts a complete small setup and moves one organization out while an application keeps writing:
 
 ```bash
+git clone https://github.com/lokadb/lokadb && cd lokadb
 docker compose -f quickstart/compose.yml up --build
 ```
 
-Needs Docker with Compose v2.17 or newer and about 2 GB of free disk. The first run builds LokaDB from source (a few minutes). `psql` on the host is optional: every `psql` command below can be run inside the stand instead (shown after the first one). Run the commands from the root of this repository. `up` stays attached and prints the logs of all services: run it in one terminal (or add `-d`) and the commands below in another.
+Needs Docker with Compose v2.17 or newer and about 2 GB of free disk. The first run builds LokaDB from source (a few minutes). `psql` on the host is optional: every `psql` command below can be run inside the stand instead (shown after the first one). Run every command on this page from the root of the cloned repository. `up` stays attached and prints the logs of all services: run it in one terminal (or add `-d`) and the commands below in another.
 
 ## What runs
 

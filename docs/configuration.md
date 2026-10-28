@@ -65,6 +65,7 @@ The spec names the tables whose rows move with an organization, and how each tab
 | `route_log` | off | one `route` log line per statement on a LokaDB table (costs throughput: leave off when measuring) |
 | `no_route_log` | off | suppress `route` lines even at debug level |
 | `record` | — | path of a workload recording (same as `-record`) |
+| `metrics_listen` | off | address that serves `GET /metrics` (Prometheus text), `GET /status` (JSON) and `GET /healthz`. Bind it to an address only the monitoring reaches: the counters carry organization numbers |
 | `max_connections` | 1000 | client connections |
 | `max_message_bytes` | 256 MB | largest protocol message |
 

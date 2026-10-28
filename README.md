@@ -148,6 +148,7 @@ LokaDB is under active development by a small team. The core — `check`, `enabl
 
 | | |
 |---|---|
+| [Install on your database](docs/install.md) | from nothing to a proxy in front of your own Postgres, then the first organization moved |
 | [Quickstart](docs/quickstart.md) | run the demo locally |
 | [Configuration](docs/configuration.md) | `lokadb.json` (proxy), `relay.json`, `issuer.json`, the spec file, passwords |
 | [Compatibility check](docs/check.md) | `lokadb check`: findings, verdicts, suggestions, latency forecast, JSON, CI baseline |
