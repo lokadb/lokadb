@@ -1,0 +1,3 @@
+{"tables": [
+  {"name": "documents", "tenant_column": "organization_id"}
+]}

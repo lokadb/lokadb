@@ -1,0 +1,104 @@
+# lokadb quickstart: a cloud database, one organization in its own database behind the relay
+# and the agent, the proxy, and a small writer that keeps writing for two organizations while
+# organization 1 is moved out.
+#
+#   docker compose -f quickstart/compose.yml up --build
+#
+# Then watch `init` (check, enable, move-org, where the rows are) and `demo` (writes through
+# the proxy). Connect yourself: psql "host=localhost port=6432 dbname=demo user=app password=app"
+# Clean up: docker compose -f quickstart/compose.yml down -v
+#
+# LOKADB_SRC: the Go module of lokadb (the proxy/ directory of this repository).
+name: lokadb-quickstart
+
+# every lokadb service runs the one image that `certs` builds
+x-lokadb: &lokadb
+  image: lokadb-quickstart
+  pull_policy: never
+  entrypoint: ["lokadb"]
+
+networks:
+  # the cloud and the organization share nothing; only relay and agent meet on "internet"
+  cloudnet: {ipam: {config: [{subnet: "10.251.1.0/24"}]}}
+  custnet: {ipam: {config: [{subnet: "10.251.2.0/24"}]}}
+  internet: {ipam: {config: [{subnet: "10.251.3.0/24"}]}}
+
+volumes:
+  certs: {}      # cloud only: the CA key and the relay's key
+  capub: {}      # the CA certificate, the only thing the agent gets in advance
+  agentstate: {} # the agent's own key and certificate
+  shared: {}     # the one-time enrolment token, handed from init to the agent
+
+services:
+  cloud:
+    image: postgres:18
+    environment: {POSTGRES_PASSWORD: pw}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "shared_preload_libraries=pg_stat_statements"]
+    volumes: ["./initdb/cloud.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 120}
+    networks: [cloudnet]
+
+  customer:
+    image: postgres:18
+    environment: {POSTGRES_PASSWORD: pw}
+    volumes: ["./initdb/customer.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 120}
+    networks: [custnet]
+
+  certs:
+    <<: *lokadb
+    build:
+      context: ${LOKADB_SRC:-../proxy}
+      # lokadb on top of the postgres image: init and demo need psql next to lokadb
+      dockerfile_inline: |
+        FROM golang:1.25-bookworm AS build
+        WORKDIR /src
+        COPY go.mod go.sum ./
+        RUN go mod download
+        COPY . .
+        RUN CGO_ENABLED=1 go build -o /out/lokadb ./cmd/lokadb
+        FROM postgres:18
+        COPY --from=build /out/lokadb /usr/local/bin/lokadb
+    pull_policy: build
+    entrypoint: ["sh", "-c", "lokadb certs -dir /certs -relay-host relay && cp /certs/ca.crt /capub/ca.crt"]
+    volumes: ["certs:/certs", "capub:/capub"]
+    network_mode: none
+
+  relay:
+    <<: *lokadb
+    command: ["relay", "-config", "/etc/relay.json"]
+    volumes: ["./relay.json:/etc/relay.json:ro", "certs:/certs:ro"]
+    depends_on: {certs: {condition: service_completed_successfully}, cloud: {condition: service_healthy}}
+    networks: [cloudnet, internet]
+
+  proxy:
+    <<: *lokadb
+    command: ["proxy", "-config", "/etc/lokadb.json"]
+    volumes: ["./lokadb.json:/etc/lokadb.json:ro"]
+    ports: ["6432:6432"]
+    depends_on: {certs: {condition: service_completed_successfully}, cloud: {condition: service_healthy}}
+    networks: [cloudnet]
+
+  # in the organization's network: waits for the token, enrolls, opens the outbound tunnel
+  agent:
+    <<: *lokadb
+    entrypoint: ["sh", "-c", "until [ -s /shared/token ]; do sleep 1; done; exec lokadb agent -relay relay:7443 -ca /ca/ca.crt -state /state -token-file /shared/token -db customer:5432"]
+    volumes: ["capub:/ca:ro", "agentstate:/state", "shared:/shared:ro"]
+    depends_on: {certs: {condition: service_completed_successfully}, customer: {condition: service_healthy}}
+    networks: [custnet, internet]
+
+  # one shot: token, wait for the tunnel, check, enable, move-org, then where the rows are
+  init:
+    <<: *lokadb
+    entrypoint: ["sh", "/quickstart/init.sh"]
+    volumes: [".:/quickstart:ro", "shared:/shared"]
+    depends_on: {relay: {condition: service_started}, proxy: {condition: service_started}}
+    networks: [cloudnet]
+
+  # the application: writes documents for organizations 1 and 2 through the proxy, all along
+  demo:
+    <<: *lokadb
+    entrypoint: ["sh", "/quickstart/demo.sh"]
+    volumes: [".:/quickstart:ro"]
+    depends_on: {proxy: {condition: service_started}}
+    networks: [cloudnet]

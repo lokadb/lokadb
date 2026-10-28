@@ -1,0 +1,44 @@
+warning: -cp holds a password on the command line (ps and the shell's history show it): give -cp - (stdin) or -cp env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -customer holds a password on the command line (ps and the shell's history show it): give -customer - (stdin) or -customer env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -customer-app holds a password on the command line (ps and the shell's history show it): give -customer-app - (stdin) or -customer-app env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -db holds a password on the command line (ps and the shell's history show it): give -db - (stdin) or -db env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -publisher holds a password on the command line (ps and the shell's history show it): give -publisher - (stdin) or -publisher env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+time=2026-10-27T16:30:52.260636844Z level=WARN msg="LOGICAL REPLICATION: for the time of the move the organization's database can read the change stream of the WHOLE cloud database (a role with the REPLICATION attribute): the rows of every organization, not this one's only. Use it only if the cloud and the organization's database have one owner" org=4 cloud_logical=true customer_can_subscribe=true customer_cannot_because=""
+time=2026-10-27T16:30:52.260700042Z level=INFO msg="move mode" org=4 mode=logical
+time=2026-10-27T16:30:52.285739769Z level=INFO msg="step 1/6: organization partitions" org=4
+time=2026-10-27T16:30:52.308583937Z level=INFO msg="organization paused (its statements wait, the other organizations' do not)" org=4 attempt=1
+time=2026-10-27T16:30:52.503439118Z level=INFO msg=progress org=4 step=split table=documents rows=0 rows_total=3011817 bytes=0 elapsed=0s state=started
+time=2026-10-27T16:30:54.630128201Z level=INFO msg=progress org=4 step=split table=documents rows=160000 rows_total=3011817 bytes=35632901 elapsed=2s eta=38s
+time=2026-10-27T16:30:56.662415166Z level=INFO msg=progress org=4 step=split table=documents rows=320000 rows_total=3011817 bytes=71362502 elapsed=4s eta=35s
+time=2026-10-27T16:30:58.778575947Z level=INFO msg=progress org=4 step=split table=documents rows=480000 rows_total=3011817 bytes=107110353 elapsed=6s eta=33s
+time=2026-10-27T16:31:00.882056912Z level=INFO msg=progress org=4 step=split table=documents rows=640000 rows_total=3011817 bytes=142879279 elapsed=8s eta=31s
+time=2026-10-27T16:31:02.946184732Z level=INFO msg=progress org=4 step=split table=documents rows=820000 rows_total=3011817 bytes=183108170 elapsed=10s eta=28s
+time=2026-10-27T16:31:04.948920988Z level=INFO msg=progress org=4 step=split table=documents rows=1000000 rows_total=3011817 bytes=223343276 elapsed=12s eta=25s
+time=2026-10-27T16:31:06.996596633Z level=INFO msg=progress org=4 step=split table=documents rows=1180000 rows_total=3011817 bytes=263561613 elapsed=14s eta=22s
+time=2026-10-27T16:31:09.083058156Z level=INFO msg=progress org=4 step=split table=documents rows=1370000 rows_total=3011817 bytes=306011269 elapsed=17s eta=20s
+time=2026-10-27T16:31:11.180065376Z level=INFO msg=progress org=4 step=split table=documents rows=1560000 rows_total=3011817 bytes=348460979 elapsed=19s eta=17s
+time=2026-10-27T16:31:13.239358547Z level=INFO msg=progress org=4 step=split table=documents rows=1740000 rows_total=3011817 bytes=388670514 elapsed=21s eta=15s
+time=2026-10-27T16:31:15.332062324Z level=INFO msg=progress org=4 step=split table=documents rows=1930000 rows_total=3011817 bytes=431120251 elapsed=23s eta=13s
+time=2026-10-27T16:31:17.375204696Z level=INFO msg=progress org=4 step=split table=documents rows=2120000 rows_total=3011817 bytes=473569983 elapsed=25s eta=10s
+time=2026-10-27T16:31:19.377573975Z level=INFO msg=progress org=4 step=split table=documents rows=2290000 rows_total=3011817 bytes=511541252 elapsed=27s eta=8s
+time=2026-10-27T16:31:21.419676647Z level=INFO msg=progress org=4 step=split table=documents rows=2480000 rows_total=3011817 bytes=554000162 elapsed=29s eta=6s
+time=2026-10-27T16:31:23.506191011Z level=INFO msg=progress org=4 step=split table=documents rows=2670000 rows_total=3011817 bytes=596459165 elapsed=31s eta=4s
+time=2026-10-27T16:31:25.600656854Z level=INFO msg=progress org=4 step=split table=documents rows=2860000 rows_total=3011817 bytes=638918238 elapsed=33s eta=2s
+time=2026-10-27T16:31:27.217262067Z level=INFO msg=progress org=4 step=split table=documents rows=3011817 rows_total=3011817 bytes=670594869 elapsed=35s state=done
+time=2026-10-27T16:31:33.338796529Z level=INFO msg="organization split out of DEFAULT (the others went on)" org=4 table=documents took=41.028s last_transaction=6.119s
+time=2026-10-27T16:31:33.440150443Z level=INFO msg=progress org=4 step=split table=document_versions rows=0 rows_total=3011817 bytes=0 elapsed=0s state=started
+time=2026-10-27T16:31:35.46115763Z level=INFO msg=progress org=4 step=split table=document_versions rows=480000 rows_total=3011817 bytes=9406002 elapsed=2s eta=11s
+time=2026-10-27T16:31:37.472212065Z level=INFO msg=progress org=4 step=split table=document_versions rows=900000 rows_total=3011817 bytes=17806002 elapsed=4s eta=9s
+time=2026-10-27T16:31:39.497126973Z level=INFO msg=progress org=4 step=split table=document_versions rows=1320000 rows_total=3011817 bytes=26206002 elapsed=6s eta=8s
+time=2026-10-27T16:31:41.504720004Z level=INFO msg=progress org=4 step=split table=document_versions rows=1690000 rows_total=3011817 bytes=33606002 elapsed=8s eta=6s
+time=2026-10-27T16:31:43.538693768Z level=INFO msg=progress org=4 step=split table=document_versions rows=2080000 rows_total=3011817 bytes=41406002 elapsed=10s eta=5s
+time=2026-10-27T16:31:45.586992177Z level=INFO msg=progress org=4 step=split table=document_versions rows=2480000 rows_total=3011817 bytes=49406002 elapsed=12s eta=3s
+time=2026-10-27T16:31:47.633285284Z level=INFO msg=progress org=4 step=split table=document_versions rows=2890000 rows_total=3011817 bytes=57606002 elapsed=14s eta=1s
+time=2026-10-27T16:31:48.18022751Z level=INFO msg=progress org=4 step=split table=document_versions rows=3011817 rows_total=3011817 bytes=60042342 elapsed=15s state=done
+time=2026-10-27T16:31:55.941854328Z level=INFO msg="organization split out of DEFAULT (the others went on)" org=4 table=document_versions took=22.602s last_transaction=7.759s
+time=2026-10-27T16:31:55.94254887Z level=INFO msg="organization resumed" org=4 paused=1m3.634s
+time=2026-10-27T16:31:55.950129534Z level=INFO msg="step 2/6: customer schema" org=4 host=relay db=cust_bench
+time=2026-10-27T16:31:57.527436204Z level=INFO msg="step 3/6: publication, foreign tables, CHECK on DEFAULT" org=4
+time=2026-10-27T16:31:57.543421565Z level=INFO msg="step 4/6: subscription, initial copy" org=4
+error: customer database: ERROR: subscription "lokadb_org4" could not connect to the publisher: connection to server at "<ip>", port 5454 failed: FATAL:  pg_hba.conf rejects connection for host "<ip>", user "lokadb_repl_19465_org4", database "bench", no encryption (SQLSTATE 08006)
+  in: CREATE SUBSCRIPTION "lokadb_org4" CONNECTION 'host=<ip> port=5454 dbname=bench user=postgres password=*** sslmode=disable user=''lokadb_repl_19465_org4'' password=***' PUBLICATION "lokadb_org4" WITH (slot_name = 'lokadb_19465_org4')

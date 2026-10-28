@@ -1,0 +1,127 @@
+scenario http, started 2026-10-27T17:25:08+03:00
+== django fdw
+enable: time=2026-10-27T14:26:31.374311057Z level=INFO msg="index on the organization column" table="\"docs_documentversion__cloud\"" index=docs_documentversion__key took=75ms time=2026-10-27T14:26:31.3743834
+move-org 1: time=2026-10-27T14:26:38.752073241Z level=INFO msg="move-org done"
+move-org 2: time=2026-10-27T14:26:48.241509825Z level=INFO msg="move-org done"
+move-org 3: time=2026-10-27T14:27:05.011011423Z level=INFO msg="move-org done"
+move-org 4: time=2026-10-27T14:27:22.034295592Z level=INFO msg="move-org done"
+{"clients":1,"errors":0,"max_ms":482.341,"mean_ms":246.385,"op":"read","ops":243,"p50_ms":103.137,"p95_ms":454.022,"p99_ms":454.661,"qps":4.05,"seconds":60,"tags":{"app":"django","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":466.5,"mean_ms":248.035,"op":"read","ops":243,"p50_ms":107.013,"p95_ms":454.936,"p99_ms":461.668,"qps":4.05,"seconds":60,"tags":{"app":"django","class":"moved","client
+{"clients":1,"errors":0,"max_ms":482.341,"mean_ms":246.385,"op":"read","ops":243,"p50_ms":103.137,"p95_ms":454.022,"p99_ms":454.661,"qps":4.05,"seconds":60,"tags":{"app":"django","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":466.5,"mean_ms":248.035,"op":"read","ops":243,"p50_ms":107.013,"p95_ms":454.936,"p99_ms":461.668,"qps":4.05,"seconds":60,"tags":{"app":"django","class":"moved","client
+{"clients":1,"errors":0,"max_ms":407.974,"mean_ms":165.578,"op":"feed","ops":363,"p50_ms":234.949,"p95_ms":352.187,"p99_ms":406.046,"qps":6.05,"seconds":60,"tags":{"app":"django","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":409.646,"mean_ms":165.616,"op":"feed","ops":363,"p50_ms":233.676,"p95_ms":352.093,"p99_ms":405.306,"qps":6.05,"seconds":60,"tags":{"app":"django","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":407.974,"mean_ms":165.578,"op":"feed","ops":363,"p50_ms":234.949,"p95_ms":352.187,"p99_ms":406.046,"qps":6.05,"seconds":60,"tags":{"app":"django","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":409.646,"mean_ms":165.616,"op":"feed","ops":363,"p50_ms":233.676,"p95_ms":352.093,"p99_ms":405.306,"qps":6.05,"seconds":60,"tags":{"app":"django","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":404.749,"mean_ms":205.128,"op":"insert","ops":292,"p50_ms":93.202,"p95_ms":367.992,"p99_ms":370.123,"qps":4.867,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":396.63,"mean_ms":205.678,"op":"insert","ops":292,"p50_ms":97.481,"p95_ms":367.347,"p99_ms":376.576,"qps":4.867,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":404.749,"mean_ms":205.128,"op":"insert","ops":292,"p50_ms":93.202,"p95_ms":367.992,"p99_ms":370.123,"qps":4.867,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":396.63,"mean_ms":205.678,"op":"insert","ops":292,"p50_ms":97.481,"p95_ms":367.347,"p99_ms":376.576,"qps":4.867,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":504.611,"mean_ms":280.631,"op":"update","ops":214,"p50_ms":483.996,"p95_ms":501.24,"p99_ms":502.942,"qps":3.567,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":885.912,"mean_ms":329.846,"op":"update","ops":182,"p50_ms":483.665,"p95_ms":871.137,"p99_ms":883.787,"qps":3.033,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":1,"errors":0,"max_ms":504.611,"mean_ms":280.631,"op":"update","ops":214,"p50_ms":483.996,"p95_ms":501.24,"p99_ms":502.942,"qps":3.567,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":885.912,"mean_ms":329.846,"op":"update","ops":182,"p50_ms":483.665,"p95_ms":871.137,"p99_ms":883.787,"qps":3.033,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":1,"errors":0,"max_ms":832.128,"mean_ms":260.912,"op":"read","ops":230,"p50_ms":103.121,"p95_ms":458.224,"p99_ms":828.329,"qps":3.833,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":799.724,"mean_ms":254.238,"op":"read","ops":236,"p50_ms":114.725,"p95_ms":457.572,"p99_ms":465.858,"qps":3.933,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":832.128,"mean_ms":260.912,"op":"read","ops":230,"p50_ms":103.121,"p95_ms":458.224,"p99_ms":828.329,"qps":3.833,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":799.724,"mean_ms":254.238,"op":"read","ops":236,"p50_ms":114.725,"p95_ms":457.572,"p99_ms":465.858,"qps":3.933,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":16,"errors":0,"max_ms":483.075,"mean_ms":251.738,"op":"read","ops":3814,"p50_ms":436.002,"p95_ms":455.073,"p99_ms":456.67,"qps":63.567,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":481.343,"mean_ms":251.419,"op":"read","ops":3817,"p50_ms":435.402,"p95_ms":454.819,"p99_ms":456.269,"qps":63.617,"seconds":60,"tags":{"app":"django","class":"moved","
+{"clients":16,"errors":0,"max_ms":483.075,"mean_ms":251.738,"op":"read","ops":3814,"p50_ms":436.002,"p95_ms":455.073,"p99_ms":456.67,"qps":63.567,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":481.343,"mean_ms":251.419,"op":"read","ops":3817,"p50_ms":435.402,"p95_ms":454.819,"p99_ms":456.269,"qps":63.617,"seconds":60,"tags":{"app":"django","class":"moved","
+{"clients":16,"errors":0,"max_ms":444.22,"mean_ms":227.684,"op":"feed","ops":4219,"p50_ms":285.747,"p95_ms":377.288,"p99_ms":395.949,"qps":70.317,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":534.51,"mean_ms":223.379,"op":"feed","ops":4292,"p50_ms":279.881,"p95_ms":377.621,"p99_ms":399.236,"qps":71.533,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":444.22,"mean_ms":227.684,"op":"feed","ops":4219,"p50_ms":285.747,"p95_ms":377.288,"p99_ms":395.949,"qps":70.317,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":534.51,"mean_ms":223.379,"op":"feed","ops":4292,"p50_ms":279.881,"p95_ms":377.621,"p99_ms":399.236,"qps":71.533,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":753.907,"mean_ms":207.398,"op":"insert","ops":4628,"p50_ms":351.097,"p95_ms":367.133,"p99_ms":369.85,"qps":77.133,"seconds":60,"tags":{"app":"django","class":"moved",
+{"clients":16,"errors":0,"max_ms":390.672,"mean_ms":206.156,"op":"insert","ops":4657,"p50_ms":351.573,"p95_ms":367.644,"p99_ms":376.981,"qps":77.617,"seconds":60,"tags":{"app":"django","class":"moved"
+{"clients":16,"errors":0,"max_ms":753.907,"mean_ms":207.398,"op":"insert","ops":4628,"p50_ms":351.097,"p95_ms":367.133,"p99_ms":369.85,"qps":77.133,"seconds":60,"tags":{"app":"django","class":"moved",
+{"clients":16,"errors":0,"max_ms":390.672,"mean_ms":206.156,"op":"insert","ops":4657,"p50_ms":351.573,"p95_ms":367.644,"p99_ms":376.981,"qps":77.617,"seconds":60,"tags":{"app":"django","class":"moved"
+{"clients":16,"error_kinds":{"HTTP : \u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003ctitle\u003eServer Error ()\u003c/title\u003e \u003c/head":1},"errors":1,"first_error"
+{"clients":16,"error_kinds":{"HTTP : \u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003ctitle\u003eServer Error ()\u003c/title\u003e \u003c/head":1},"errors":1,"first_error"
+{"clients":16,"error_kinds":{"HTTP : \u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003ctitle\u003eServer Error ()\u003c/title\u003e \u003c/head":1},"errors":1,"first_error"
+{"clients":16,"error_kinds":{"HTTP : \u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003ctitle\u003eServer Error ()\u003c/title\u003e \u003c/head":1},"errors":1,"first_error"
+{"clients":16,"errors":0,"max_ms":464.617,"mean_ms":251.124,"op":"read","ops":3822,"p50_ms":435.266,"p95_ms":454.623,"p99_ms":455.788,"qps":63.7,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":16,"errors":0,"max_ms":469.913,"mean_ms":251.242,"op":"read","ops":3821,"p50_ms":435.122,"p95_ms":454.611,"p99_ms":455.828,"qps":63.683,"seconds":60,"tags":{"app":"django","class":"moved","
+{"clients":16,"errors":0,"max_ms":464.617,"mean_ms":251.124,"op":"read","ops":3822,"p50_ms":435.266,"p95_ms":454.623,"p99_ms":455.788,"qps":63.7,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":16,"errors":0,"max_ms":469.913,"mean_ms":251.242,"op":"read","ops":3821,"p50_ms":435.122,"p95_ms":454.611,"p99_ms":455.828,"qps":63.683,"seconds":60,"tags":{"app":"django","class":"moved","
+{"clients":1,"errors":0,"max_ms":33.166,"mean_ms":3.367,"op":"read","ops":17814,"p50_ms":3.275,"p95_ms":4.067,"p99_ms":4.838,"qps":296.9,"seconds":60,"tags":{"app":"django","class":"cloud","clients":"
+{"clients":1,"errors":0,"max_ms":58.164,"mean_ms":3.285,"op":"read","ops":18255,"p50_ms":3.117,"p95_ms":3.974,"p99_ms":5.618,"qps":304.25,"seconds":60,"tags":{"app":"django","class":"cloud","clients":
+{"clients":1,"errors":0,"max_ms":33.166,"mean_ms":3.367,"op":"read","ops":17814,"p50_ms":3.275,"p95_ms":4.067,"p99_ms":4.838,"qps":296.9,"seconds":60,"tags":{"app":"django","class":"cloud","clients":"
+{"clients":1,"errors":0,"max_ms":58.164,"mean_ms":3.285,"op":"read","ops":18255,"p50_ms":3.117,"p95_ms":3.974,"p99_ms":5.618,"qps":304.25,"seconds":60,"tags":{"app":"django","class":"cloud","clients":
+{"clients":1,"errors":0,"max_ms":95.257,"mean_ms":17.046,"op":"feed","ops":3519,"p50_ms":16.981,"p95_ms":31.343,"p99_ms":35.778,"qps":58.65,"seconds":60,"tags":{"app":"django","class":"cloud","clients
+{"clients":1,"errors":0,"max_ms":61.945,"mean_ms":16.383,"op":"feed","ops":3662,"p50_ms":16.334,"p95_ms":29.956,"p99_ms":32.462,"qps":61.033,"seconds":60,"tags":{"app":"django","class":"cloud","client
+{"clients":1,"errors":0,"max_ms":95.257,"mean_ms":17.046,"op":"feed","ops":3519,"p50_ms":16.981,"p95_ms":31.343,"p99_ms":35.778,"qps":58.65,"seconds":60,"tags":{"app":"django","class":"cloud","clients
+{"clients":1,"errors":0,"max_ms":61.945,"mean_ms":16.383,"op":"feed","ops":3662,"p50_ms":16.334,"p95_ms":29.956,"p99_ms":32.462,"qps":61.033,"seconds":60,"tags":{"app":"django","class":"cloud","client
+{"clients":1,"errors":0,"max_ms":31.036,"mean_ms":3.471,"op":"insert","ops":17279,"p50_ms":3.357,"p95_ms":4.154,"p99_ms":5.186,"qps":287.983,"seconds":60,"tags":{"app":"django","class":"cloud","client
+{"clients":1,"errors":0,"max_ms":30.899,"mean_ms":3.453,"op":"insert","ops":17368,"p50_ms":3.326,"p95_ms":4.156,"p99_ms":5.477,"qps":289.467,"seconds":60,"tags":{"app":"django","class":"cloud","client
+{"clients":1,"errors":0,"max_ms":31.036,"mean_ms":3.471,"op":"insert","ops":17279,"p50_ms":3.357,"p95_ms":4.154,"p99_ms":5.186,"qps":287.983,"seconds":60,"tags":{"app":"django","class":"cloud","client
+{"clients":1,"errors":0,"max_ms":30.899,"mean_ms":3.453,"op":"insert","ops":17368,"p50_ms":3.326,"p95_ms":4.156,"p99_ms":5.477,"qps":289.467,"seconds":60,"tags":{"app":"django","class":"cloud","client
+{"clients":1,"errors":0,"max_ms":32.46,"mean_ms":3.705,"op":"update","ops":16187,"p50_ms":3.442,"p95_ms":4.612,"p99_ms":9.554,"qps":269.783,"seconds":60,"tags":{"app":"django","class":"cloud","clients
+{"clients":1,"errors":0,"max_ms":88.269,"mean_ms":3.581,"op":"update","ops":16746,"p50_ms":3.415,"p95_ms":4.346,"p99_ms":6.468,"qps":279.1,"seconds":60,"tags":{"app":"django","class":"cloud","clients"
+{"clients":1,"errors":0,"max_ms":32.46,"mean_ms":3.705,"op":"update","ops":16187,"p50_ms":3.442,"p95_ms":4.612,"p99_ms":9.554,"qps":269.783,"seconds":60,"tags":{"app":"django","class":"cloud","clients
+{"clients":1,"errors":0,"max_ms":88.269,"mean_ms":3.581,"op":"update","ops":16746,"p50_ms":3.415,"p95_ms":4.346,"p99_ms":6.468,"qps":279.1,"seconds":60,"tags":{"app":"django","class":"cloud","clients"
+{"clients":1,"errors":0,"max_ms":29.57,"mean_ms":2.822,"op":"read","ops":21253,"p50_ms":2.767,"p95_ms":3.472,"p99_ms":4.11,"qps":354.217,"seconds":60,"tags":{"app":"django","class":"cloud","clients":"
+{"clients":1,"errors":0,"max_ms":30.257,"mean_ms":2.862,"op":"read","ops":20952,"p50_ms":2.795,"p95_ms":3.58,"p99_ms":4.258,"qps":349.2,"seconds":60,"tags":{"app":"django","class":"cloud","clients":"1
+{"clients":1,"errors":0,"max_ms":29.57,"mean_ms":2.822,"op":"read","ops":21253,"p50_ms":2.767,"p95_ms":3.472,"p99_ms":4.11,"qps":354.217,"seconds":60,"tags":{"app":"django","class":"cloud","clients":"
+{"clients":1,"errors":0,"max_ms":30.257,"mean_ms":2.862,"op":"read","ops":20952,"p50_ms":2.795,"p95_ms":3.58,"p99_ms":4.258,"qps":349.2,"seconds":60,"tags":{"app":"django","class":"cloud","clients":"1
+{"clients":16,"errors":0,"max_ms":34.847,"mean_ms":7.828,"op":"read","ops":122607,"p50_ms":7.397,"p95_ms":12.063,"p99_ms":16.401,"qps":2043.45,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":35.944,"mean_ms":8.113,"op":"read","ops":118308,"p50_ms":7.83,"p95_ms":11.868,"p99_ms":14.238,"qps":1971.8,"seconds":60,"tags":{"app":"django","class":"cloud","client
+{"clients":16,"errors":0,"max_ms":34.847,"mean_ms":7.828,"op":"read","ops":122607,"p50_ms":7.397,"p95_ms":12.063,"p99_ms":16.401,"qps":2043.45,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":35.944,"mean_ms":8.113,"op":"read","ops":118308,"p50_ms":7.83,"p95_ms":11.868,"p99_ms":14.238,"qps":1971.8,"seconds":60,"tags":{"app":"django","class":"cloud","client
+{"clients":16,"errors":0,"max_ms":44.231,"mean_ms":5.682,"op":"feed","ops":168925,"p50_ms":5.263,"p95_ms":9.926,"p99_ms":12.206,"qps":2815.417,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":44.434,"mean_ms":5.625,"op":"feed","ops":170629,"p50_ms":5.313,"p95_ms":9.503,"p99_ms":11.663,"qps":2843.817,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":44.231,"mean_ms":5.682,"op":"feed","ops":168925,"p50_ms":5.263,"p95_ms":9.926,"p99_ms":12.206,"qps":2815.417,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":44.434,"mean_ms":5.625,"op":"feed","ops":170629,"p50_ms":5.313,"p95_ms":9.503,"p99_ms":11.663,"qps":2843.817,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":37.097,"mean_ms":6.715,"op":"insert","ops":142932,"p50_ms":6.495,"p95_ms":9.186,"p99_ms":11.839,"qps":2382.2,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":55.859,"mean_ms":7.06,"op":"insert","ops":135946,"p50_ms":6.819,"p95_ms":9.775,"p99_ms":12.424,"qps":2265.767,"seconds":60,"tags":{"app":"django","class":"cloud","cli
+{"clients":16,"errors":0,"max_ms":37.097,"mean_ms":6.715,"op":"insert","ops":142932,"p50_ms":6.495,"p95_ms":9.186,"p99_ms":11.839,"qps":2382.2,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":55.859,"mean_ms":7.06,"op":"insert","ops":135946,"p50_ms":6.819,"p95_ms":9.775,"p99_ms":12.424,"qps":2265.767,"seconds":60,"tags":{"app":"django","class":"cloud","cli
+{"clients":16,"errors":0,"max_ms":37.962,"mean_ms":6.701,"op":"update","ops":143218,"p50_ms":6.443,"p95_ms":9.338,"p99_ms":12.22,"qps":2386.967,"seconds":60,"tags":{"app":"django","class":"cloud","cli
+{"clients":16,"errors":0,"max_ms":40.671,"mean_ms":6.931,"op":"update","ops":138468,"p50_ms":6.672,"p95_ms":9.688,"p99_ms":12.402,"qps":2307.8,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":37.962,"mean_ms":6.701,"op":"update","ops":143218,"p50_ms":6.443,"p95_ms":9.338,"p99_ms":12.22,"qps":2386.967,"seconds":60,"tags":{"app":"django","class":"cloud","cli
+{"clients":16,"errors":0,"max_ms":40.671,"mean_ms":6.931,"op":"update","ops":138468,"p50_ms":6.672,"p95_ms":9.688,"p99_ms":12.402,"qps":2307.8,"seconds":60,"tags":{"app":"django","class":"cloud","clie
+{"clients":16,"errors":0,"max_ms":34.649,"mean_ms":7.176,"op":"read","ops":133740,"p50_ms":6.748,"p95_ms":11.366,"p99_ms":13.622,"qps":2229,"seconds":60,"tags":{"app":"django","class":"cloud","clients
+{"clients":16,"errors":0,"max_ms":36.189,"mean_ms":7.116,"op":"read","ops":134884,"p50_ms":6.672,"p95_ms":11.255,"p99_ms":13.639,"qps":2248.067,"seconds":60,"tags":{"app":"django","class":"cloud","cli
+== django fdw+direct
+{"clients":16,"errors":0,"max_ms":34.649,"mean_ms":7.176,"op":"read","ops":133740,"p50_ms":6.748,"p95_ms":11.366,"p99_ms":13.622,"qps":2229,"seconds":60,"tags":{"app":"django","class":"cloud","clients
+{"clients":16,"errors":0,"max_ms":36.189,"mean_ms":7.116,"op":"read","ops":134884,"p50_ms":6.672,"p95_ms":11.255,"p99_ms":13.639,"qps":2248.067,"seconds":60,"tags":{"app":"django","class":"cloud","cli
+{"clients":1,"errors":0,"max_ms":123.57,"mean_ms":54.183,"op":"read","ops":1107,"p50_ms":90.373,"p95_ms":94.72,"p99_ms":96.939,"qps":18.45,"seconds":60,"tags":{"app":"django","class":"moved","clients"
+{"clients":1,"errors":0,"max_ms":99.005,"mean_ms":53.781,"op":"read","ops":1115,"p50_ms":90.202,"p95_ms":94.728,"p99_ms":95.334,"qps":18.583,"seconds":60,"tags":{"app":"django","class":"moved","client
+{"clients":1,"errors":0,"max_ms":123.57,"mean_ms":54.183,"op":"read","ops":1107,"p50_ms":90.373,"p95_ms":94.72,"p99_ms":96.939,"qps":18.45,"seconds":60,"tags":{"app":"django","class":"moved","clients"
+{"clients":1,"errors":0,"max_ms":99.005,"mean_ms":53.781,"op":"read","ops":1115,"p50_ms":90.202,"p95_ms":94.728,"p99_ms":95.334,"qps":18.583,"seconds":60,"tags":{"app":"django","class":"moved","client
+{"clients":1,"errors":0,"max_ms":320.107,"mean_ms":147.258,"op":"feed","ops":408,"p50_ms":222.844,"p95_ms":308.683,"p99_ms":318.196,"qps":6.8,"seconds":60,"tags":{"app":"django","class":"moved","clien
+{"clients":1,"errors":0,"max_ms":323.739,"mean_ms":148.307,"op":"feed","ops":404,"p50_ms":222.361,"p95_ms":309.639,"p99_ms":318.922,"qps":6.733,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":320.107,"mean_ms":147.258,"op":"feed","ops":408,"p50_ms":222.844,"p95_ms":308.683,"p99_ms":318.196,"qps":6.8,"seconds":60,"tags":{"app":"django","class":"moved","clien
+{"clients":1,"errors":0,"max_ms":323.739,"mean_ms":148.307,"op":"feed","ops":404,"p50_ms":222.361,"p95_ms":309.639,"p99_ms":318.922,"qps":6.733,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":396.839,"mean_ms":207.142,"op":"insert","ops":289,"p50_ms":92.211,"p95_ms":369.755,"p99_ms":375.278,"qps":4.817,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":394.598,"mean_ms":205.314,"op":"insert","ops":292,"p50_ms":90.27,"p95_ms":368.438,"p99_ms":370.819,"qps":4.867,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":396.839,"mean_ms":207.142,"op":"insert","ops":289,"p50_ms":92.211,"p95_ms":369.755,"p99_ms":375.278,"qps":4.817,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":394.598,"mean_ms":205.314,"op":"insert","ops":292,"p50_ms":90.27,"p95_ms":368.438,"p99_ms":370.819,"qps":4.867,"seconds":60,"tags":{"app":"django","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":522.242,"mean_ms":281.016,"op":"update","ops":213,"p50_ms":484.795,"p95_ms":504.582,"p99_ms":505.023,"qps":3.55,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":908.746,"mean_ms":326.118,"op":"update","ops":184,"p50_ms":484.882,"p95_ms":862.521,"p99_ms":885.867,"qps":3.067,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":1,"errors":0,"max_ms":522.242,"mean_ms":281.016,"op":"update","ops":213,"p50_ms":484.795,"p95_ms":504.582,"p99_ms":505.023,"qps":3.55,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":908.746,"mean_ms":326.118,"op":"update","ops":184,"p50_ms":484.882,"p95_ms":862.521,"p99_ms":885.867,"qps":3.067,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":1,"errors":0,"max_ms":379.698,"mean_ms":54.487,"op":"read","ops":1101,"p50_ms":24.999,"p95_ms":94.565,"p99_ms":96.61,"qps":18.35,"seconds":60,"tags":{"app":"django","class":"moved","clients
+{"clients":1,"errors":0,"max_ms":120.049,"mean_ms":53.478,"op":"read","ops":1122,"p50_ms":89.772,"p95_ms":94.237,"p99_ms":95.095,"qps":18.7,"seconds":60,"tags":{"app":"django","class":"moved","clients
+{"clients":1,"errors":0,"max_ms":379.698,"mean_ms":54.487,"op":"read","ops":1101,"p50_ms":24.999,"p95_ms":94.565,"p99_ms":96.61,"qps":18.35,"seconds":60,"tags":{"app":"django","class":"moved","clients
+{"clients":1,"errors":0,"max_ms":120.049,"mean_ms":53.478,"op":"read","ops":1122,"p50_ms":89.772,"p95_ms":94.237,"p99_ms":95.095,"qps":18.7,"seconds":60,"tags":{"app":"django","class":"moved","clients
+{"clients":16,"errors":0,"max_ms":114.467,"mean_ms":52.847,"op":"read","ops":18170,"p50_ms":89.257,"p95_ms":93.588,"p99_ms":94.739,"qps":302.833,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":16,"errors":0,"max_ms":115.16,"mean_ms":53.503,"op":"read","ops":17945,"p50_ms":89.345,"p95_ms":94.53,"p99_ms":98.51,"qps":299.083,"seconds":60,"tags":{"app":"django","class":"moved","clien
+{"clients":16,"errors":0,"max_ms":114.467,"mean_ms":52.847,"op":"read","ops":18170,"p50_ms":89.257,"p95_ms":93.588,"p99_ms":94.739,"qps":302.833,"seconds":60,"tags":{"app":"django","class":"moved","cl
+{"clients":16,"errors":0,"max_ms":115.16,"mean_ms":53.503,"op":"read","ops":17945,"p50_ms":89.345,"p95_ms":94.53,"p99_ms":98.51,"qps":299.083,"seconds":60,"tags":{"app":"django","class":"moved","clien
+{"clients":16,"errors":0,"max_ms":255.248,"mean_ms":134.119,"op":"feed","ops":7152,"p50_ms":221.861,"p95_ms":238.597,"p99_ms":243.628,"qps":119.2,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":255.585,"mean_ms":133.802,"op":"feed","ops":7173,"p50_ms":76.598,"p95_ms":238.703,"p99_ms":244.459,"qps":119.55,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":255.248,"mean_ms":134.119,"op":"feed","ops":7152,"p50_ms":221.861,"p95_ms":238.597,"p99_ms":243.628,"qps":119.2,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":255.585,"mean_ms":133.802,"op":"feed","ops":7173,"p50_ms":76.598,"p95_ms":238.703,"p99_ms":244.459,"qps":119.55,"seconds":60,"tags":{"app":"django","class":"moved","c
+{"clients":16,"errors":0,"max_ms":755.149,"mean_ms":208.585,"op":"insert","ops":4602,"p50_ms":352.153,"p95_ms":367.656,"p99_ms":387.589,"qps":76.7,"seconds":60,"tags":{"app":"django","class":"moved","
+{"clients":16,"errors":0,"max_ms":555.93,"mean_ms":205.456,"op":"insert","ops":4675,"p50_ms":352.478,"p95_ms":365.898,"p99_ms":368.237,"qps":77.917,"seconds":60,"tags":{"app":"django","class":"moved",
+{"clients":16,"errors":0,"max_ms":755.149,"mean_ms":208.585,"op":"insert","ops":4602,"p50_ms":352.153,"p95_ms":367.656,"p99_ms":387.589,"qps":76.7,"seconds":60,"tags":{"app":"django","class":"moved","
+{"clients":16,"errors":0,"max_ms":555.93,"mean_ms":205.456,"op":"insert","ops":4675,"p50_ms":352.478,"p95_ms":365.898,"p99_ms":368.237,"qps":77.917,"seconds":60,"tags":{"app":"django","class":"moved",
+{"clients":16,"error_kinds":{"HTTP : \u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003ctitle\u003eServer Error ()\u003c/title\u003e \u003c/head":1},"errors":1,"first_error"
+{"clients":16,"error_kinds":{"HTTP : \u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003ctitle\u003eServer Error ()\u003c/title\u003e \u003c/head":1},"errors":1,"first_error"
+{"clients":16,"error_kinds":{"HTTP : \u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003ctitle\u003eServer Error ()\u003c/title\u003e \u003c/head":1},"errors":1,"first_error"
+{"clients":16,"error_kinds":{"HTTP : \u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003ctitle\u003eServer Error ()\u003c/title\u003e \u003c/head":1},"errors":1,"first_error"
+{"clients":16,"errors":0,"max_ms":120.373,"mean_ms":52.689,"op":"read","ops":18222,"p50_ms":88.862,"p95_ms":93.513,"p99_ms":96.075,"qps":303.7,"seconds":60,"tags":{"app":"django","class":"moved","clie
+{"clients":16,"errors":0,"max_ms":118.339,"mean_ms":52.3,"op":"read","ops":18355,"p50_ms":88.829,"p95_ms":92.891,"p99_ms":94.033,"qps":305.917,"seconds":60,"tags":{"app":"django","class":"moved","clie
+finished 2026-10-27T18:53:09+03:00; results in /e/dev/lokadb/.claude/worktrees/block-14-load-85ba19/research/bench/2026-10-27-fixed-http

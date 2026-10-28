@@ -1,0 +1,6 @@
+LokaDB
+Copyright 2026 Evgeny Shevtsov
+
+This product includes software developed by Evgeny Shevtsov and the LokaDB contributors.
+Third-party components keep their own licenses; see the go.mod files and the
+license files of the modules they name.

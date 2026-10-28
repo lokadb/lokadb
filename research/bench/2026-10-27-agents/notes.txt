@@ -1,0 +1,27 @@
+scenario agents, started 2026-10-27T13:38:51+03:00
+{"setup": true, "orgs": 5, "documents": 100000, "seconds": 0.6}
+enable: time=2026-10-27T10:39:51.346419403Z level=INFO msg="enable done"
+move-org 4: time=2026-10-27T10:40:02.436500417Z level=INFO msg="move-org done"
+== 10 extra agents
+all 10 agents enrolled and connected: 91 s; relay rss_mb=39 threads=14 fds=38
+{"clients":16,"errors":0,"max_ms":600.279,"mean_ms":442.829,"op":"read","ops":1160,"p50_ms":440.868,"p95_ms":444.792,"p99_ms":500.673,"qps":19.333,"seconds":60,"tags":{"agents":"10","class":"moved","c
+{"clients":16,"errors":0,"max_ms":513.749,"mean_ms":354.513,"op":"update","ops":1259,"p50_ms":353.147,"p95_ms":356.192,"p99_ms":409.498,"qps":20.983,"seconds":60,"tags":{"agents":"10","class":"moved",
+{"clients":16,"errors":0,"max_ms":460.083,"mean_ms":441.699,"op":"read","ops":1169,"p50_ms":440.926,"p95_ms":447.429,"p99_ms":454.716,"qps":19.483,"seconds":60,"tags":{"agents":"10","class":"moved","c
+{"clients":16,"errors":0,"max_ms":370.673,"mean_ms":353.584,"op":"update","ops":1258,"p50_ms":353.165,"p95_ms":357.512,"p99_ms":364.184,"qps":20.967,"seconds":60,"tags":{"agents":"10","class":"moved",
+after the relay restarted, three agents of 10 back (first, middle, last) in: 59 s; relay rss_mb=24 threads=9 fds=38
+== 50 extra agents
+all 50 agents enrolled and connected: 190 s; relay rss_mb=29 threads=10 fds=119
+{"clients":16,"errors":0,"max_ms":467.395,"mean_ms":445.487,"op":"read","ops":1153,"p50_ms":444.633,"p95_ms":453.511,"p99_ms":458.746,"qps":19.217,"seconds":60,"tags":{"agents":"50","class":"moved","c
+{"clients":16,"errors":0,"max_ms":371.16,"mean_ms":356.758,"op":"update","ops":1251,"p50_ms":356.112,"p95_ms":363.098,"p99_ms":367.512,"qps":20.85,"seconds":60,"tags":{"agents":"50","class":"moved","c
+{"clients":16,"errors":0,"max_ms":468.706,"mean_ms":447.89,"op":"read","ops":1144,"p50_ms":447.649,"p95_ms":450.396,"p99_ms":456.264,"qps":19.067,"seconds":60,"tags":{"agents":"50","class":"moved","cl
+{"clients":16,"errors":0,"max_ms":378.891,"mean_ms":358.752,"op":"update","ops":1246,"p50_ms":358.573,"p95_ms":360.889,"p99_ms":364.006,"qps":20.767,"seconds":60,"tags":{"agents":"50","class":"moved",
+after the relay restarted, three agents of 50 back (first, middle, last) in: 77 s; relay rss_mb=27 threads=9 fds=119
+== 100 extra agents
+all 100 agents enrolled and connected: 566 s; relay rss_mb=34 threads=9 fds=219
+{"clients":16,"errors":0,"max_ms":472.084,"mean_ms":452.39,"op":"read","ops":1130,"p50_ms":451.771,"p95_ms":458.717,"p99_ms":467.298,"qps":18.833,"seconds":60,"tags":{"agents":"100","class":"moved","c
+{"clients":16,"errors":0,"max_ms":377.179,"mean_ms":362.172,"op":"update","ops":1238,"p50_ms":361.777,"p95_ms":366.707,"p99_ms":372.411,"qps":20.633,"seconds":60,"tags":{"agents":"100","class":"moved"
+{"clients":16,"errors":0,"max_ms":464.826,"mean_ms":451.435,"op":"read","ops":1131,"p50_ms":451.251,"p95_ms":453.989,"p99_ms":456.057,"qps":18.85,"seconds":60,"tags":{"agents":"100","class":"moved","c
+{"clients":16,"errors":0,"max_ms":384.047,"mean_ms":361.581,"op":"update","ops":1241,"p50_ms":361.4,"p95_ms":364.024,"p99_ms":366.554,"qps":20.683,"seconds":60,"tags":{"agents":"100","class":"moved","
+after the relay restarted, three agents of 100 back (first, middle, last) in: 63 s; relay rss_mb=31 threads=9 fds=218
+data check agents: ok: 100000 rows in 5 organizations (100000 before, +0: 0 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud
+finished 2026-10-27T14:14:19+03:00; results in /e/dev/lokadb/.claude/worktrees/block-14-load-85ba19/research/bench/2026-10-27-agents

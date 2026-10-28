@@ -1,0 +1,30 @@
+{"role": "connections", "connections": {"cloud": 8, "org1": 1, "org2": 1, "org3": 1, "org4": 3}, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "cloud", "tags": {"run": "rows300000-body200-trigger-batch10000"}, "BlockIO":"84.1GB / 582GB","CPUPerc":"16.85%","Container":"bb-cloud","ID":"b72273b46828","MemPerc":"21.75%","MemUsage":"6.817GiB / 31.34GiB","Name":"bb-cloud","NetIO":"0B / 0B","PIDs":"13"}
+{"role": "org1", "tags": {"run": "rows300000-body200-trigger-batch10000"}, "BlockIO":"0B / 29.7MB","CPUPerc":"0.00%","Container":"bb-org1","ID":"4adb8b389264","MemPerc":"2.61%","MemUsage":"207.3MiB / 7.754GiB","Name":"bb-org1","NetIO":"0B / 0B","PIDs":"9"}
+{"role": "org2", "tags": {"run": "rows300000-body200-trigger-batch10000"}, "BlockIO":"0B / 2.67GB","CPUPerc":"0.00%","Container":"bb-org2","ID":"6fbcf8013d22","MemPerc":"5.98%","MemUsage":"234MiB / 3.822GiB","Name":"bb-org2","NetIO":"0B / 0B","PIDs":"9"}
+{"role": "org3", "tags": {"run": "rows300000-body200-trigger-batch10000"}, "BlockIO":"0B / 1.81GB","CPUPerc":"0.00%","Container":"bb-org3","ID":"fe3e491e002f","MemPerc":"5.98%","MemUsage":"233.9MiB / 3.822GiB","Name":"bb-org3","NetIO":"0B / 0B","PIDs":"9"}
+{"role": "org4", "tags": {"run": "rows300000-body200-trigger-batch10000"}, "BlockIO":"2.56MB / 9.49GB","CPUPerc":"2.05%","Container":"bb-org4","ID":"5cadc84f3b58","MemPerc":"25.91%","MemUsage":"1014MiB / 3.822GiB","Name":"bb-org4","NetIO":"0B / 0B","PIDs":"11"}
+{"role": "proxy", "process": {"cpu_pct": 0.5, "rss_mb": 31}, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "relay", "process": {"cpu_pct": 0.5, "rss_mb": 28}, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "host", "host": "cloud", "cpu_busy_pct": 1.6, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "host", "host": "proxy+relay", "cpu_busy_pct": 0.7, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "host", "host": "load", "cpu_busy_pct": 0.6, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "host", "host": "org1", "cpu_busy_pct": 1.7, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "host", "host": "org2", "cpu_busy_pct": 4.5, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "host", "host": "org3", "cpu_busy_pct": 4.5, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "host", "host": "org4", "cpu_busy_pct": 1.7, "tags": {"run": "rows300000-body200-trigger-batch10000"}}
+{"role": "connections", "connections": {"cloud": 9, "org1": 1, "org2": 1, "org3": 1, "org4": 3}, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "cloud", "tags": {"run": "rows3000000-body200-trigger-batch10000"}, "BlockIO":"84.1GB / 595GB","CPUPerc":"70.83%","Container":"bb-cloud","ID":"b72273b46828","MemPerc":"22.21%","MemUsage":"6.961GiB / 31.34GiB","Name":"bb-cloud","NetIO":"0B / 0B","PIDs":"16"}
+{"role": "org1", "tags": {"run": "rows3000000-body200-trigger-batch10000"}, "BlockIO":"0B / 32MB","CPUPerc":"0.00%","Container":"bb-org1","ID":"4adb8b389264","MemPerc":"2.61%","MemUsage":"207.3MiB / 7.754GiB","Name":"bb-org1","NetIO":"0B / 0B","PIDs":"9"}
+{"role": "org2", "tags": {"run": "rows3000000-body200-trigger-batch10000"}, "BlockIO":"0B / 2.68GB","CPUPerc":"0.01%","Container":"bb-org2","ID":"6fbcf8013d22","MemPerc":"5.98%","MemUsage":"234MiB / 3.822GiB","Name":"bb-org2","NetIO":"0B / 0B","PIDs":"9"}
+{"role": "org3", "tags": {"run": "rows3000000-body200-trigger-batch10000"}, "BlockIO":"0B / 1.82GB","CPUPerc":"0.82%","Container":"bb-org3","ID":"fe3e491e002f","MemPerc":"5.98%","MemUsage":"233.9MiB / 3.822GiB","Name":"bb-org3","NetIO":"0B / 0B","PIDs":"9"}
+{"role": "org4", "tags": {"run": "rows3000000-body200-trigger-batch10000"}, "BlockIO":"2.56MB / 9.81GB","CPUPerc":"19.74%","Container":"bb-org4","ID":"5cadc84f3b58","MemPerc":"25.80%","MemUsage":"1010MiB / 3.822GiB","Name":"bb-org4","NetIO":"0B / 0B","PIDs":"11"}
+{"role": "proxy", "process": {"cpu_pct": 20.0, "rss_mb": 29}, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "relay", "process": {"cpu_pct": 0.5, "rss_mb": 27}, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "host", "host": "cloud", "cpu_busy_pct": 16.2, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "host", "host": "proxy+relay", "cpu_busy_pct": 6.2, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "host", "host": "load", "cpu_busy_pct": 3.2, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "host", "host": "org1", "cpu_busy_pct": 0.2, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "host", "host": "org2", "cpu_busy_pct": 0.2, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "host", "host": "org3", "cpu_busy_pct": 0.7, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}
+{"role": "host", "host": "org4", "cpu_busy_pct": 15.1, "tags": {"run": "rows3000000-body200-trigger-batch10000"}}

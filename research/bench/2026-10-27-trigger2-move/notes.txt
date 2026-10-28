@@ -1,0 +1,16 @@
+scenario move, started 2026-10-27T16:03:29+03:00
+== rows300000-body200-trigger-batch10000
+{"setup": true, "orgs": 5, "documents": 424000, "seconds": 3.9}
+enable: time=2026-10-27T13:05:23.353888275Z level=INFO msg="enable done"
+move-org exit 0 in 78.2 s; last_transaction=380ms last_transaction=604ms writes_paused=1.736045668s wait_last_changes=296.725424ms drop_subscription=179.790552ms 
+writer: longest gap with no commit 6 s; {"op":"insert","clients":2,"seconds":180.188,"ops":80984,"errors":0,"qps":449.442,"p50_ms":1.463,"p95_ms":2.018,"p99_ms":4.905,"max_ms":6246.117,"mean_ms":2.791}
+rows at the organization: 316292; through the cloud: 316292
+data check move rows300000-body200-trigger-batch10000: ok: 504984 rows in 5 organizations (424000 before, +80984: 80984 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud
+== rows3000000-body200-trigger-batch10000
+{"setup": true, "orgs": 5, "documents": 4204000, "seconds": 33.1}
+enable: time=2026-10-27T13:13:00.044943374Z level=INFO msg="enable done"
+move-org exit 0 in 464.2 s; last_transaction=6.076s last_transaction=7.224s writes_paused=2.322396629s wait_last_changes=296.4796ms drop_subscription=178.842834ms 
+writer: longest gap with no commit 66 s; {"op":"insert","clients":2,"seconds":497.985,"ops":337103,"errors":0,"qps":676.934,"p50_ms":1.556,"p95_ms":2.17,"p99_ms":5.09,"max_ms":730.622,"mean_ms":1.918}
+rows at the organization: 3067359; through the cloud: 3067359
+data check move rows3000000-body200-trigger-batch10000: ok: 4541103 rows in 5 organizations (4204000 before, +337103: 337103 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud
+finished 2026-10-27T16:26:37+03:00; results in /e/dev/lokadb/.claude/worktrees/block-14-load-85ba19/research/bench/2026-10-27-trigger2-move

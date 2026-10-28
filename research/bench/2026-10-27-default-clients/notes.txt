@@ -1,0 +1,42 @@
+scenario clients, started 2026-10-27T16:27:09+03:00
+max_connections: cloud 1500, organizations 1500, proxy 5000
+{"setup": true, "orgs": 20, "documents": 400000, "seconds": 4.1}
+{"setup": true, "orgs": 20, "documents": 400000, "seconds": 2.9}
+enable: time=2026-10-27T13:29:09.708412005Z level=INFO msg="index on the organization column" table="\"document_versions__cloud\"" index=document_versions__key took=99m
+move-org 1: time=2026-10-27T13:29:19.480444792Z level=INFO msg="move-org done"
+move-org 2: time=2026-10-27T13:29:28.930954046Z level=INFO msg="move-org done"
+move-org 3: time=2026-10-27T13:29:45.576241218Z level=INFO msg="move-org done"
+move-org 4: time=2026-10-27T13:30:01.887615413Z level=INFO msg="move-org done"
+{"clients":500,"errors":0,"max_ms":291.474,"mean_ms":3.732,"op":"read","ops":1989619,"p50_ms":2.821,"p95_ms":10.348,"p99_ms":16.904,"qps":33160.317,"seconds":60,"tags":{"class":"moved","clients":"500"
+{"clients":500,"errors":0,"max_ms":298.117,"mean_ms":11.36,"op":"update","ops":1988985,"p50_ms":10.172,"p95_ms":23.12,"p99_ms":34.821,"qps":33149.75,"seconds":60,"tags":{"class":"moved","clients":"500
+{"clients":500,"errors":0,"max_ms":186.23,"mean_ms":4.004,"op":"read","ops":2532861,"p50_ms":3.437,"p95_ms":9.128,"p99_ms":15.973,"qps":42214.35,"seconds":60,"tags":{"class":"moved","clients":"500","c
+{"clients":500,"errors":0,"max_ms":281.118,"mean_ms":7.853,"op":"update","ops":2529396,"p50_ms":6.415,"p95_ms":17.803,"p99_ms":27.867,"qps":42156.6,"seconds":60,"tags":{"class":"moved","clients":"500"
+{"clients":500,"errors":0,"max_ms":1195.356,"mean_ms":267.663,"op":"read","ops":61478,"p50_ms":436.671,"p95_ms":500.329,"p99_ms":553.258,"qps":1024.633,"seconds":60,"tags":{"class":"moved","clients":"
+{"clients":500,"error_kinds":{"ERROR: could not serialize access due to concurrent update (SQLSTATE )":134},"errors":134,"first_error":"ERROR: could not serialize access due to concurrent update (SQLS
+{"clients":500,"errors":0,"max_ms":1634.926,"mean_ms":262.259,"op":"read","ops":62691,"p50_ms":280.576,"p95_ms":498.457,"p99_ms":561.015,"qps":1044.85,"seconds":60,"tags":{"class":"moved","clients":"5
+{"clients":500,"error_kinds":{"ERROR: could not serialize access due to concurrent update (SQLSTATE )":133},"errors":133,"first_error":"ERROR: could not serialize access due to concurrent update (SQLS
+{"clients":500,"errors":0,"max_ms":413.746,"mean_ms":4.195,"op":"read","ops":2551274,"p50_ms":3.673,"p95_ms":9.256,"p99_ms":16.142,"qps":42521.233,"seconds":60,"tags":{"class":"cloud","clients":"500",
+{"clients":500,"errors":0,"max_ms":444.702,"mean_ms":7.58,"op":"update","ops":2547595,"p50_ms":6.235,"p95_ms":16.532,"p99_ms":26.228,"qps":42459.917,"seconds":60,"tags":{"class":"cloud","clients":"500
+{"clients":500,"errors":0,"max_ms":358.315,"mean_ms":4.301,"op":"read","ops":2582777,"p50_ms":3.878,"p95_ms":9.264,"p99_ms":15.711,"qps":43046.283,"seconds":60,"tags":{"class":"cloud","clients":"500",
+{"clients":500,"errors":0,"max_ms":492.057,"mean_ms":7.338,"op":"update","ops":2578859,"p50_ms":6.019,"p95_ms":15.87,"p99_ms":24.883,"qps":42980.983,"seconds":60,"tags":{"class":"cloud","clients":"500
+{"clients":500,"errors":0,"max_ms":466.322,"mean_ms":12.121,"op":"read","ops":807912,"p50_ms":9.76,"p95_ms":31.196,"p99_ms":49.415,"qps":13465.2,"seconds":60,"tags":{"class":"cloud","clients":"500","c
+{"clients":500,"errors":0,"max_ms":756.179,"mean_ms":24.989,"op":"update","ops":808636,"p50_ms":21.791,"p95_ms":47.786,"p99_ms":75.692,"qps":13477.267,"seconds":60,"tags":{"class":"cloud","clients":"5
+{"clients":500,"errors":0,"max_ms":299.846,"mean_ms":12.15,"op":"read","ops":806474,"p50_ms":9.781,"p95_ms":30.861,"p99_ms":49.108,"qps":13441.233,"seconds":60,"tags":{"class":"cloud","clients":"500",
+{"clients":500,"errors":0,"max_ms":593.562,"mean_ms":25.055,"op":"update","ops":807970,"p50_ms":21.401,"p95_ms":48.277,"p99_ms":85.726,"qps":13466.167,"seconds":60,"tags":{"class":"cloud","clients":"5
+{"clients":1000,"errors":0,"max_ms":360.479,"mean_ms":5.696,"op":"read","ops":2156613,"p50_ms":4.256,"p95_ms":16.054,"p99_ms":28.184,"qps":35943.55,"seconds":60,"tags":{"class":"moved","clients":"1000
+{"clients":1000,"errors":0,"max_ms":464.472,"mean_ms":22.157,"op":"update","ops":2157471,"p50_ms":18.205,"p95_ms":51.805,"p99_ms":84.765,"qps":35957.85,"seconds":60,"tags":{"class":"moved","clients":"
+{"clients":1000,"errors":0,"max_ms":343.857,"mean_ms":6.514,"op":"read","ops":2074455,"p50_ms":4.241,"p95_ms":20.665,"p99_ms":42.822,"qps":34574.25,"seconds":60,"tags":{"class":"moved","clients":"1000
+{"clients":1000,"errors":0,"max_ms":707.702,"mean_ms":22.456,"op":"update","ops":2074893,"p50_ms":18.429,"p95_ms":51.655,"p99_ms":84.421,"qps":34581.55,"seconds":60,"tags":{"class":"moved","clients":"
+{"clients":1000,"error_kinds":{"ERROR: could not connect to server \"lokadb_org\" (SQLSTATE )":282338},"errors":282338,"first_error":"ERROR: could not connect to server \"lokadb_org1\" (SQLSTATE 08001)"
+{"clients":1000,"error_kinds":{"ERROR: could not connect to server \"lokadb_org\" (SQLSTATE )":283042,"ERROR: could not serialize access due to concurrent update (SQLSTATE )":151},"errors":283193,"firs
+{"clients":1000,"error_kinds":{"ERROR: could not connect to server \"lokadb_org\" (SQLSTATE )":280319},"errors":280319,"first_error":"ERROR: could not connect to server \"lokadb_org3\" (SQLSTATE 08001)"
+{"clients":1000,"error_kinds":{"ERROR: could not connect to server \"lokadb_org\" (SQLSTATE )":281251,"ERROR: could not serialize access due to concurrent update (SQLSTATE )":184},"errors":281435,"firs
+{"clients":1000,"errors":0,"max_ms":883.018,"mean_ms":6.485,"op":"read","ops":2093974,"p50_ms":4.201,"p95_ms":22.407,"p99_ms":37.782,"qps":34899.567,"seconds":60,"tags":{"class":"cloud","clients":"100
+{"clients":1000,"errors":0,"max_ms":880.323,"mean_ms":22.231,"op":"update","ops":2094608,"p50_ms":18.443,"p95_ms":52.148,"p99_ms":83.811,"qps":34910.133,"seconds":60,"tags":{"class":"cloud","clients":
+{"clients":1000,"errors":0,"max_ms":403.867,"mean_ms":5.922,"op":"read","ops":2083724,"p50_ms":4.395,"p95_ms":16.638,"p99_ms":28.426,"qps":34728.733,"seconds":60,"tags":{"class":"cloud","clients":"100
+{"clients":1000,"errors":0,"max_ms":876.574,"mean_ms":22.888,"op":"update","ops":2084640,"p50_ms":18.97,"p95_ms":52.72,"p99_ms":87.642,"qps":34744,"seconds":60,"tags":{"class":"cloud","clients":"1000"
+{"clients":1000,"errors":0,"max_ms":733.646,"mean_ms":22.378,"op":"read","ops":715107,"p50_ms":17.414,"p95_ms":59.001,"p99_ms":97.994,"qps":11918.45,"seconds":60,"tags":{"class":"cloud","clients":"100
+{"clients":1000,"errors":0,"max_ms":2722.469,"mean_ms":61.71,"op":"update","ops":716471,"p50_ms":46.7,"p95_ms":126.23,"p99_ms":339.671,"qps":11941.183,"seconds":60,"tags":{"class":"cloud","clients":"1
+{"clients":1000,"errors":0,"max_ms":891.341,"mean_ms":22.63,"op":"read","ops":728036,"p50_ms":17.801,"p95_ms":59.3,"p99_ms":99.209,"qps":12133.933,"seconds":60,"tags":{"class":"cloud","clients":"1000"
+{"clients":1000,"errors":0,"max_ms":1697.002,"mean_ms":59.794,"op":"update","ops":729445,"p50_ms":47.91,"p95_ms":124.008,"p99_ms":265.357,"qps":12157.417,"seconds":60,"tags":{"class":"cloud","clients"
+finished 2026-10-27T17:03:24+03:00; results in /e/dev/lokadb/.claude/worktrees/block-14-load-85ba19/research/bench/2026-10-27-default-clients

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" font-family="sans-serif" font-size="12">
+<rect width="760" height="340" fill="#fff"/>
+<text x="64" y="22" font-size="14" font-weight="bold">p50 latency, organizations moved, 1 client(s) (ms)</text>
+<line x1="64" x2="752" y1="284.0" y2="284.0" stroke="#ddd"/>
+<text x="58" y="288.0" text-anchor="end">0</text>
+<line x1="64" x2="752" y1="223.0" y2="223.0" stroke="#ddd"/>
+<text x="58" y="227.0" text-anchor="end">122.4</text>
+<line x1="64" x2="752" y1="162.0" y2="162.0" stroke="#ddd"/>
+<text x="58" y="166.0" text-anchor="end">244.8</text>
+<line x1="64" x2="752" y1="101.0" y2="101.0" stroke="#ddd"/>
+<text x="58" y="105.0" text-anchor="end">367.2</text>
+<line x1="64" x2="752" y1="40.0" y2="40.0" stroke="#ddd"/>
+<text x="58" y="44.0" text-anchor="end">489.6</text>
+<rect x="81.0" y="283.9" width="12.5" height="0.1" fill="#3b7ea1"><title>plain read: 0.25</title></rect>
+<rect x="94.6" y="66.3" width="12.5" height="217.7" fill="#c1553a"><title>fdw read: 436.9</title></rect>
+<rect x="108.2" y="240.1" width="12.5" height="43.9" fill="#d79b2b"><title>fdw+direct read: 87.99</title></rect>
+<rect x="121.8" y="218.5" width="12.5" height="65.5" fill="#4f9d69"><title>direct read: 131.43</title></rect>
+<rect x="135.4" y="218.5" width="12.5" height="65.5" fill="#4f9d69"><title>direct (hot keys) read: 131.47</title></rect>
+<rect x="149.0" y="66.1" width="12.5" height="217.9" fill="#c1553a"><title>fdw (hot keys) read: 437.12</title></rect>
+<rect x="162.6" y="109.2" width="12.5" height="174.8" fill="#c1553a"><title>fdw (tx) read: 350.66</title></rect>
+<rect x="176.2" y="240.3" width="12.5" height="43.7" fill="#d79b2b"><title>fdw+direct (hot keys) read: 87.69</title></rect>
+<rect x="189.8" y="218.4" width="12.5" height="65.6" fill="#d79b2b"><title>fdw+direct (tx) read: 131.63</title></rect>
+<rect x="203.4" y="283.9" width="12.5" height="0.1" fill="#3b7ea1"><title>plain (hot keys) read: 0.21</title></rect>
+<text x="149.0" y="300" text-anchor="middle">read</text>
+<rect x="251.0" y="261.6" width="12.5" height="22.4" fill="#3b7ea1"><title>plain feed: 44.99</title></rect>
+<rect x="264.6" y="175.4" width="12.5" height="108.6" fill="#c1553a"><title>fdw feed: 217.9</title></rect>
+<rect x="278.2" y="262.1" width="12.5" height="21.9" fill="#d79b2b"><title>fdw+direct feed: 44.01</title></rect>
+<rect x="291.8" y="240.3" width="12.5" height="43.7" fill="#4f9d69"><title>direct feed: 87.62</title></rect>
+<rect x="332.6" y="174.9" width="12.5" height="109.1" fill="#c1553a"><title>fdw (tx) feed: 218.99</title></rect>
+<rect x="359.8" y="240.3" width="12.5" height="43.7" fill="#d79b2b"><title>fdw+direct (tx) feed: 87.62</title></rect>
+<text x="319.0" y="300" text-anchor="middle">feed</text>
+<rect x="421.0" y="283.6" width="12.5" height="0.4" fill="#3b7ea1"><title>plain insert: 0.71</title></rect>
+<rect x="434.6" y="108.3" width="12.5" height="175.7" fill="#c1553a"><title>fdw insert: 352.44</title></rect>
+<rect x="448.2" y="195.7" width="12.5" height="88.3" fill="#d79b2b"><title>fdw+direct insert: 177.27</title></rect>
+<rect x="461.8" y="195.9" width="12.5" height="88.1" fill="#4f9d69"><title>direct insert: 176.77</title></rect>
+<rect x="502.6" y="108.6" width="12.5" height="175.4" fill="#c1553a"><title>fdw (tx) insert: 351.95</title></rect>
+<rect x="529.8" y="195.8" width="12.5" height="88.2" fill="#d79b2b"><title>fdw+direct (tx) insert: 176.93</title></rect>
+<text x="489.0" y="300" text-anchor="middle">insert</text>
+<rect x="591.0" y="283.9" width="12.5" height="0.1" fill="#3b7ea1"><title>plain update: 0.25</title></rect>
+<rect x="604.6" y="109.1" width="12.5" height="174.9" fill="#c1553a"><title>fdw update: 350.83</title></rect>
+<rect x="618.2" y="261.7" width="12.5" height="22.3" fill="#d79b2b"><title>fdw+direct update: 44.79</title></rect>
+<rect x="631.8" y="239.9" width="12.5" height="44.1" fill="#4f9d69"><title>direct update: 88.52</title></rect>
+<rect x="672.6" y="108.8" width="12.5" height="175.2" fill="#c1553a"><title>fdw (tx) update: 351.5</title></rect>
+<rect x="699.8" y="239.8" width="12.5" height="44.2" fill="#d79b2b"><title>fdw+direct (tx) update: 88.61</title></rect>
+<text x="659.0" y="300" text-anchor="middle">update</text>
+<rect x="64" y="322" width="10" height="10" fill="#3b7ea1"/><text x="78" y="331">plain</text>
+<rect x="124" y="322" width="10" height="10" fill="#c1553a"/><text x="138" y="331">fdw</text>
+<rect x="168" y="322" width="10" height="10" fill="#d79b2b"/><text x="182" y="331">fdw+direct</text>
+<rect x="268" y="322" width="10" height="10" fill="#4f9d69"/><text x="282" y="331">direct</text>
+<rect x="336" y="322" width="10" height="10" fill="#4f9d69"/><text x="350" y="331">direct (hot keys)</text>
+<rect x="492" y="322" width="10" height="10" fill="#c1553a"/><text x="506" y="331">fdw (hot keys)</text>
+<rect x="624" y="322" width="10" height="10" fill="#c1553a"/><text x="638" y="331">fdw (tx)</text>
+<rect x="708" y="322" width="10" height="10" fill="#d79b2b"/><text x="722" y="331">fdw+direct (hot keys)</text>
+<rect x="896" y="322" width="10" height="10" fill="#d79b2b"/><text x="910" y="331">fdw+direct (tx)</text>
+<rect x="1036" y="322" width="10" height="10" fill="#3b7ea1"/><text x="1050" y="331">plain (hot keys)</text>
+</svg>

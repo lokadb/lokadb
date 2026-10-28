@@ -1,0 +1,2 @@
+{"op":"insert","clients":8,"seconds":194.847,"ops":575426,"errors":1,"qps":2953.211,"p50_ms":1.812,"p95_ms":2.66,"p99_ms":5.208,"max_ms":6489.145,"mean_ms":2.012,"first_error":"ERROR: lokadb: the organization of the new row is unknown: its parent row was not found (SQLSTATE 23503)","error_kinds":{"ERROR: lokadb: the organization of the new row is unknown: its parent row was not found (SQ":1}}
+{"op":"update","clients":8,"seconds":194.847,"ops":576513,"errors":0,"qps":2958.795,"p50_ms":0.579,"p95_ms":0.96,"p99_ms":2.069,"max_ms":6485.251,"mean_ms":0.694}

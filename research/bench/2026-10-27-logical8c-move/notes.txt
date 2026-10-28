@@ -1,0 +1,17 @@
+scenario move, started 2026-10-27T19:21:30+03:00
+== rows300000-body200-logical-batch10000
+{"setup": true, "orgs": 5, "documents": 424000, "seconds": 3.4}
+enable: time=2026-10-27T16:23:18.953711064Z level=INFO msg="enable done"
+move-org exit 1 in 24.3 s; last_transaction=393ms last_transaction=641ms 
+writer: longest gap with no commit 5 s; {"op":"insert","clients":8,"seconds":194.847,"ops":575426,"errors":1,"qps":2953.211,"p50_ms":1.812,"p95_ms":2.66,"p99_ms":5.208,"max_ms":6489.145,"mean_ms":2.012,"first_error":"ERROR: lokadb: the organization of the new r
+rows at the organization: ; through the cloud: 415384
+data check move rows300000-body200-logical-batch10000: ok: 999425 rows in 5 organizations (424000 before, +575425: 575425 inserts ok, 1 failed), no rows of another organization in any database, none of the moved left in the cloud
+== rows3000000-body200-logical-batch10000
+{"setup": true, "orgs": 5, "documents": 4204000, "seconds": 26.3}
+enable: time=2026-10-27T16:30:13.321860214Z level=INFO msg="enable done"
+move-org exit 1 in 71.0 s; last_transaction=6.119s last_transaction=7.759s 
+writer: longest gap with no commit 62 s; {"op":"insert","clients":8,"seconds":195.272,"ops":414895,"errors":0,"qps":2124.7,"p50_ms":1.75,"p95_ms":2.615,"p99_ms":4.159,"max_ms":63636.754,"mean_ms":2.672}
+rows at the organization: ; through the cloud: 3083394
+data check move rows3000000-body200-logical-batch10000: ok: 4618897 rows in 5 organizations (4204000 before, +414897: 414895 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud
+finished 2026-10-27T19:35:26+03:00; results in /e/dev/lokadb/.claude/worktrees/block-14-load-85ba19/research/bench/2026-10-27-logical8c-move
+!! the results of move still name a place or an address: fix before anything is committed

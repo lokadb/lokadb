@@ -1,0 +1,97 @@
+warning: -cp holds a password on the command line (ps and the shell's history show it): give -cp - (stdin) or -cp env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -customer holds a password on the command line (ps and the shell's history show it): give -customer - (stdin) or -customer env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -customer-app holds a password on the command line (ps and the shell's history show it): give -customer-app - (stdin) or -customer-app env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -db holds a password on the command line (ps and the shell's history show it): give -db - (stdin) or -db env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -publisher holds a password on the command line (ps and the shell's history show it): give -publisher - (stdin) or -publisher env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+time=2026-10-27T16:59:27.200945306Z level=WARN msg="LOGICAL REPLICATION: for the time of the move the organization's database can read the change stream of the WHOLE cloud database (a role with the REPLICATION attribute): the rows of every organization, not this one's only. Use it only if the cloud and the organization's database have one owner" org=4 cloud_logical=true customer_can_subscribe=true customer_cannot_because=""
+time=2026-10-27T16:59:27.20103286Z level=INFO msg="move mode" org=4 mode=logical
+time=2026-10-27T16:59:27.231743866Z level=INFO msg="step 1/6: organization partitions" org=4
+time=2026-10-27T16:59:27.250389041Z level=INFO msg="organization paused (its statements wait, the other organizations' do not)" org=4 attempt=1
+time=2026-10-27T16:59:27.458319817Z level=INFO msg=progress org=4 step=split table=documents rows=0 rows_total=3019139 bytes=0 elapsed=0s state=started
+time=2026-10-27T16:59:29.546141993Z level=INFO msg=progress org=4 step=split table=documents rows=160000 rows_total=3019139 bytes=35633634 elapsed=2s eta=37s
+time=2026-10-27T16:59:31.653539386Z level=INFO msg=progress org=4 step=split table=documents rows=330000 rows_total=3019139 bytes=73604070 elapsed=4s eta=34s
+time=2026-10-27T16:59:33.77310134Z level=INFO msg=progress org=4 step=split table=documents rows=500000 rows_total=3019139 bytes=111574485 elapsed=6s eta=32s
+time=2026-10-27T16:59:35.877654873Z level=INFO msg=progress org=4 step=split table=documents rows=670000 rows_total=3019139 bytes=149571043 elapsed=8s eta=30s
+time=2026-10-27T16:59:37.91622801Z level=INFO msg=progress org=4 step=split table=documents rows=840000 rows_total=3019139 bytes=187570174 elapsed=10s eta=27s
+time=2026-10-27T16:59:39.948888262Z level=INFO msg=progress org=4 step=split table=documents rows=1010000 rows_total=3019139 bytes=225569446 elapsed=12s eta=25s
+time=2026-10-27T16:59:42.125589096Z level=INFO msg=progress org=4 step=split table=documents rows=1190000 rows_total=3019139 bytes=265806751 elapsed=15s eta=23s
+time=2026-10-27T16:59:44.134715507Z level=INFO msg=progress org=4 step=split table=documents rows=1360000 rows_total=3019139 bytes=303777325 elapsed=17s eta=20s
+time=2026-10-27T16:59:46.23011019Z level=INFO msg=progress org=4 step=split table=documents rows=1550000 rows_total=3019139 bytes=346228101 elapsed=19s eta=18s
+time=2026-10-27T16:59:48.286294795Z level=INFO msg=progress org=4 step=split table=documents rows=1730000 rows_total=3019139 bytes=386438477 elapsed=21s eta=16s
+time=2026-10-27T16:59:50.37935172Z level=INFO msg=progress org=4 step=split table=documents rows=1910000 rows_total=3019139 bytes=426649185 elapsed=23s eta=13s
+time=2026-10-27T16:59:52.588152921Z level=INFO msg=progress org=4 step=split table=documents rows=2100000 rows_total=3019139 bytes=469099871 elapsed=25s eta=11s
+time=2026-10-27T16:59:54.702626242Z level=INFO msg=progress org=4 step=split table=documents rows=2270000 rows_total=3019139 bytes=507087181 elapsed=27s eta=9s
+time=2026-10-27T16:59:56.742193602Z level=INFO msg=progress org=4 step=split table=documents rows=2450000 rows_total=3019139 bytes=547316434 elapsed=29s eta=7s
+time=2026-10-27T16:59:58.808563786Z level=INFO msg=progress org=4 step=split table=documents rows=2620000 rows_total=3019139 bytes=585315890 elapsed=31s eta=5s
+time=2026-10-27T17:00:00.953476807Z level=INFO msg=progress org=4 step=split table=documents rows=2780000 rows_total=3019139 bytes=621092441 elapsed=33s eta=3s
+time=2026-10-27T17:00:03.068832253Z level=INFO msg=progress org=4 step=split table=documents rows=2920000 rows_total=3019139 bytes=652342890 elapsed=36s eta=1s
+time=2026-10-27T17:00:04.222382309Z level=INFO msg=progress org=4 step=split table=documents rows=3019139 rows_total=3019139 bytes=670816571 elapsed=37s state=done
+time=2026-10-27T17:00:08.706597846Z level=INFO msg="organization split out of DEFAULT (the others went on)" org=4 table=documents took=41.454s last_transaction=4.477s
+time=2026-10-27T17:00:08.809932598Z level=INFO msg=progress org=4 step=split table=document_versions rows=0 rows_total=3019139 bytes=0 elapsed=0s state=started
+time=2026-10-27T17:00:10.81831218Z level=INFO msg=progress org=4 step=split table=document_versions rows=460000 rows_total=3019139 bytes=9006002 elapsed=2s eta=11s
+time=2026-10-27T17:00:12.838408811Z level=INFO msg=progress org=4 step=split table=document_versions rows=940000 rows_total=3019139 bytes=18606002 elapsed=4s eta=9s
+time=2026-10-27T17:00:14.844626053Z level=INFO msg=progress org=4 step=split table=document_versions rows=1390000 rows_total=3019139 bytes=27606002 elapsed=6s eta=7s
+time=2026-10-27T17:00:16.861074758Z level=INFO msg=progress org=4 step=split table=document_versions rows=1840000 rows_total=3019139 bytes=36606002 elapsed=8s eta=5s
+time=2026-10-27T17:00:18.862417781Z level=INFO msg=progress org=4 step=split table=document_versions rows=2280000 rows_total=3019139 bytes=45406002 elapsed=10s eta=3s
+time=2026-10-27T17:00:20.888763837Z level=INFO msg=progress org=4 step=split table=document_versions rows=2730000 rows_total=3019139 bytes=54406002 elapsed=12s eta=1s
+time=2026-10-27T17:00:22.192792719Z level=INFO msg=progress org=4 step=split table=document_versions rows=3019139 rows_total=3019139 bytes=60188782 elapsed=13s state=done
+time=2026-10-27T17:00:28.912731439Z level=INFO msg="organization split out of DEFAULT (the others went on)" org=4 table=document_versions took=20.205s last_transaction=6.718s
+time=2026-10-27T17:00:28.913269299Z level=INFO msg="organization resumed" org=4 paused=1m1.663s
+time=2026-10-27T17:00:28.919282597Z level=INFO msg="step 2/6: customer schema" org=4 host=relay db=cust_bench
+time=2026-10-27T17:00:30.494980054Z level=INFO msg="step 3/6: publication, foreign tables, CHECK on DEFAULT" org=4
+time=2026-10-27T17:00:30.513635045Z level=INFO msg="step 4/6: subscription, initial copy" org=4
+time=2026-10-27T17:00:31.090203374Z level=INFO msg=progress org=4 step=copy table=documents rows=0 rows_total=3017889 bytes=0 bytes_total=821362688 elapsed=0s state=waiting
+time=2026-10-27T17:00:31.090223652Z level=INFO msg=progress org=4 step=copy table=document_versions rows=0 rows_total=1633088 bytes=0 bytes_total=182206464 elapsed=0s state=waiting
+time=2026-10-27T17:00:36.690304524Z level=INFO msg=progress org=4 step=copy table=document_versions rows=515000 rows_total=1633088 bytes=10126002 bytes_total=182206464 elapsed=6s eta=13s
+time=2026-10-27T17:00:36.690325824Z level=INFO msg=progress org=4 step=copy table=documents rows=126576 rows_total=3017889 bytes=28211860 bytes_total=821362688 elapsed=6s eta=2m12s
+time=2026-10-27T17:00:42.118936102Z level=INFO msg=progress org=4 step=copy table=document_versions rows=1098000 rows_total=1633088 bytes=21786002 bytes_total=182206464 elapsed=11s eta=5s
+time=2026-10-27T17:00:42.118954697Z level=INFO msg=progress org=4 step=copy table=documents rows=230611 rows_total=3017889 bytes=51415276 bytes_total=821362688 elapsed=11s eta=2m15s
+time=2026-10-27T17:00:47.969682014Z level=INFO msg=progress org=4 step=copy table=document_versions rows=1752000 rows_total=1633088 bytes=34866002 bytes_total=182206464 elapsed=17s
+time=2026-10-27T17:00:47.969708083Z level=INFO msg=progress org=4 step=copy table=documents rows=287739 rows_total=3017889 bytes=64170965 bytes_total=821362688 elapsed=17s eta=2m42s
+time=2026-10-27T17:00:53.361910964Z level=INFO msg=progress org=4 step=copy table=document_versions rows=2316000 rows_total=1633088 bytes=46146002 bytes_total=182206464 elapsed=22s
+time=2026-10-27T17:00:53.361930059Z level=INFO msg=progress org=4 step=copy table=documents rows=342199 rows_total=3017889 bytes=76357621 bytes_total=821362688 elapsed=22s eta=2m56s
+time=2026-10-27T17:00:58.432765592Z level=INFO msg=progress org=4 step=copy table=document_versions rows=2796000 rows_total=1633088 bytes=55746002 bytes_total=182206464 elapsed=28s
+time=2026-10-27T17:00:58.432786242Z level=INFO msg=progress org=4 step=copy table=documents rows=404306 rows_total=3017889 bytes=90293357 bytes_total=821362688 elapsed=28s eta=2m58s
+time=2026-10-27T17:01:03.75957189Z level=INFO msg=progress org=4 step=copy table=documents rows=490156 rows_total=3017889 bytes=109420630 bytes_total=821362688 elapsed=33s eta=2m49s
+time=2026-10-27T17:01:03.759592399Z level=INFO msg=progress org=4 step=copy table=document_versions rows=2796000 rows_total=1633088 bytes=55746002 bytes_total=182206464 elapsed=33s state=done
+time=2026-10-27T17:01:09.181243799Z level=INFO msg=progress org=4 step=copy table=documents rows=560467 rows_total=3017889 bytes=125132335 bytes_total=821362688 elapsed=38s eta=2m48s
+time=2026-10-27T17:01:15.234940579Z level=INFO msg=progress org=4 step=copy table=documents rows=626269 rows_total=3017889 bytes=139884109 bytes_total=821362688 elapsed=44s eta=2m49s
+time=2026-10-27T17:01:19.872740845Z level=INFO msg=progress org=4 step=copy table=documents rows=694645 rows_total=3017889 bytes=155132369 bytes_total=821362688 elapsed=49s eta=2m44s
+time=2026-10-27T17:01:25.76416725Z level=INFO msg=progress org=4 step=copy table=documents rows=788732 rows_total=3017889 bytes=176207182 bytes_total=821362688 elapsed=55s eta=2m35s
+time=2026-10-27T17:01:30.934623862Z level=INFO msg=progress org=4 step=copy table=documents rows=856808 rows_total=3017889 bytes=191346062 bytes_total=821362688 elapsed=1m0s eta=2m31s
+time=2026-10-27T17:01:36.602858232Z level=INFO msg=progress org=4 step=copy table=documents rows=932031 rows_total=3017889 bytes=208175559 bytes_total=821362688 elapsed=1m6s eta=2m27s
+time=2026-10-27T17:01:41.876666839Z level=INFO msg=progress org=4 step=copy table=documents rows=1018673 rows_total=3017889 bytes=227568922 bytes_total=821362688 elapsed=1m11s eta=2m19s
+time=2026-10-27T17:01:47.182543721Z level=INFO msg=progress org=4 step=copy table=documents rows=1155592 rows_total=3017889 bytes=258105627 bytes_total=821362688 elapsed=1m16s eta=2m3s
+time=2026-10-27T17:01:52.523530607Z level=INFO msg=progress org=4 step=copy table=documents rows=1319766 rows_total=3017889 bytes=294808867 bytes_total=821362688 elapsed=1m22s eta=1m45s
+time=2026-10-27T17:01:57.901486689Z level=INFO msg=progress org=4 step=copy table=documents rows=1478566 rows_total=3017889 bytes=330256790 bytes_total=821362688 elapsed=1m27s eta=1m31s
+time=2026-10-27T17:02:03.705093487Z level=INFO msg=progress org=4 step=copy table=documents rows=1616160 rows_total=3017889 bytes=361026345 bytes_total=821362688 elapsed=1m33s eta=1m20s
+time=2026-10-27T17:02:09.421208605Z level=INFO msg=progress org=4 step=copy table=documents rows=1717202 rows_total=3017889 bytes=383589728 bytes_total=821362688 elapsed=1m39s eta=1m15s
+time=2026-10-27T17:02:15.091447987Z level=INFO msg=progress org=4 step=copy table=documents rows=1785998 rows_total=3017889 bytes=399038966 bytes_total=821362688 elapsed=1m44s eta=1m12s
+time=2026-10-27T17:02:20.672119693Z level=INFO msg=progress org=4 step=copy table=documents rows=1882514 rows_total=3017889 bytes=420511935 bytes_total=821362688 elapsed=1m50s eta=1m6s
+time=2026-10-27T17:02:25.630584605Z level=INFO msg=progress org=4 step=copy table=documents rows=1982511 rows_total=3017889 bytes=442958081 bytes_total=821362688 elapsed=1m55s eta=1m0s
+time=2026-10-27T17:02:31.953038959Z level=INFO msg=progress org=4 step=copy table=documents rows=2079899 rows_total=3017889 bytes=464640005 bytes_total=821362688 elapsed=2m1s eta=55s
+time=2026-10-27T17:02:37.145947811Z level=INFO msg=progress org=4 step=copy table=documents rows=2166676 rows_total=3017889 bytes=484101605 bytes_total=821362688 elapsed=2m6s eta=50s
+time=2026-10-27T17:02:42.488662166Z level=INFO msg=progress org=4 step=copy table=documents rows=2267814 rows_total=3017889 bytes=506664556 bytes_total=821362688 elapsed=2m12s eta=44s
+time=2026-10-27T17:02:47.811073575Z level=INFO msg=progress org=4 step=copy table=documents rows=2359367 rows_total=3017889 bytes=527155224 bytes_total=821362688 elapsed=2m17s eta=38s
+time=2026-10-27T17:02:52.973564153Z level=INFO msg=progress org=4 step=copy table=documents rows=2479111 rows_total=3017889 bytes=553811264 bytes_total=821362688 elapsed=2m22s eta=31s
+time=2026-10-27T17:02:58.521426141Z level=INFO msg=progress org=4 step=copy table=documents rows=2616706 rows_total=3017889 bytes=584612626 bytes_total=821362688 elapsed=2m28s eta=23s
+time=2026-10-27T17:03:04.357289545Z level=INFO msg=progress org=4 step=copy table=documents rows=2754452 rows_total=3017889 bytes=615381665 bytes_total=821362688 elapsed=2m33s eta=15s
+time=2026-10-27T17:03:11.782424856Z level=INFO msg=progress org=4 step=copy table=documents rows=2830667 rows_total=3017889 bytes=632449337 bytes_total=821362688 elapsed=2m41s eta=11s
+time=2026-10-27T17:03:17.946290896Z level=INFO msg=progress org=4 step=copy table=documents rows=2866187 rows_total=3017889 bytes=640316624 bytes_total=821362688 elapsed=2m47s eta=9s
+time=2026-10-27T17:03:23.196980018Z level=INFO msg=progress org=4 step=copy table=documents rows=2931272 rows_total=3017889 bytes=654908013 bytes_total=821362688 elapsed=2m52s eta=5s
+time=2026-10-27T17:03:27.732382323Z level=INFO msg=progress org=4 step=copy table=documents rows=0 rows_total=3017889 bytes=0 bytes_total=821362688 elapsed=2m57s
+time=2026-10-27T17:03:33.675956868Z level=INFO msg=progress org=4 step=copy table=documents rows=3017889 rows_total=3017889 bytes=0 bytes_total=821362688 elapsed=3m3s state=done
+time=2026-10-27T17:03:39.722334967Z level=INFO msg="initial copy done" org=4 took=3m9.201s
+time=2026-10-27T17:03:39.722353742Z level=INFO msg="step 5/6: catching up (writes continue)" org=4
+time=2026-10-27T17:03:41.368191455Z level=INFO msg="replica still behind" org=4 lag=1.646s
+time=2026-10-27T17:03:41.651470401Z level=INFO msg="replica caught up" org=4 lag=283ms why="lag under 500ms" took=1.929s
+time=2026-10-27T17:03:41.651489017Z level=INFO msg="step 6/6: switch" org=4
+time=2026-10-27T17:03:44.159633034Z level=INFO msg="rows before the switch: not compared, too many to read under the pause (the comparison after the switch covers them)" table=documents
+time=2026-10-27T17:03:45.04259409Z level=INFO msg="rows before the switch: not compared, too many to read under the pause (the comparison after the switch covers them)" table=document_versions
+time=2026-10-27T17:03:45.058109415Z level=INFO msg=switched org=4 writes_paused=3.262826095s wait_last_changes=91.674747ms drop_subscription=1.34211463s swap_partitions=1.829036718s attempt=1
+time=2026-10-27T17:03:53.606692505Z level=INFO msg="verified: customer copy equals the detached source partitions" org=4
+time=2026-10-27T17:06:53.148870342Z level=INFO msg="statistics of the foreign partition" org=4 table=documents__org4 took=2m59.542s
+time=2026-10-27T17:06:54.935323055Z level=INFO msg="statistics of the foreign partition" org=4 table=document_versions__org4 took=1.786s
+time=2026-10-27T17:06:55.098963333Z level=INFO msg="source partitions dropped from the cloud database" org=4
+time=2026-10-27T17:06:55.114081701Z level=INFO msg="the moved organization's profile" org=4 profile=fdw
+time=2026-10-27T17:06:55.114092121Z level=INFO msg="move-org done"

@@ -1,0 +1,2 @@
+data check move rows300000-body200-trigger-batch10000: ok: 504984 rows in 5 organizations (424000 before, +80984: 80984 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud
+data check move rows3000000-body200-trigger-batch10000: ok: 4541103 rows in 5 organizations (4204000 before, +337103: 337103 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud

@@ -1,0 +1,24 @@
+warning: -cp holds a password on the command line (ps and the shell's history show it): give -cp - (stdin) or -cp env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -customer holds a password on the command line (ps and the shell's history show it): give -customer - (stdin) or -customer env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -customer-app holds a password on the command line (ps and the shell's history show it): give -customer-app - (stdin) or -customer-app env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -db holds a password on the command line (ps and the shell's history show it): give -db - (stdin) or -db env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -publisher holds a password on the command line (ps and the shell's history show it): give -publisher - (stdin) or -publisher env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+time=2026-10-27T12:50:58.924352426Z level=WARN msg="LOGICAL REPLICATION: for the time of the move the organization's database can read the change stream of the WHOLE cloud database (a role with the REPLICATION attribute): the rows of every organization, not this one's only. Use it only if the cloud and the organization's database have one owner" org=4 cloud_logical=true customer_can_subscribe=true customer_cannot_because=""
+time=2026-10-27T12:50:58.924404724Z level=INFO msg="move mode" org=4 mode=logical
+time=2026-10-27T12:50:58.948859419Z level=INFO msg="step 1/6: organization partitions" org=4
+time=2026-10-27T12:50:58.967538681Z level=INFO msg="organization paused (its statements wait, the other organizations' do not)" org=4 attempt=1
+time=2026-10-27T12:50:59.032998222Z level=INFO msg=progress org=4 step=split table=documents rows=0 rows_total=323534 bytes=0 elapsed=0s state=started
+time=2026-10-27T12:51:01.110583413Z level=INFO msg=progress org=4 step=split table=documents rows=200000 rows_total=323534 bytes=43851753 elapsed=2s eta=1s
+time=2026-10-27T12:51:02.258381569Z level=INFO msg=progress org=4 step=split table=documents rows=323534 rows_total=323534 bytes=67357018 elapsed=3s state=done
+time=2026-10-27T12:51:02.657116954Z level=INFO msg="organization split out of DEFAULT (the others went on)" org=4 table=documents took=3.688s last_transaction=397ms
+time=2026-10-27T12:51:02.687686229Z level=INFO msg=progress org=4 step=split table=document_versions rows=0 rows_total=323534 bytes=0 elapsed=0s state=started
+time=2026-10-27T12:51:04.09041935Z level=INFO msg=progress org=4 step=split table=document_versions rows=323534 rows_total=323534 bytes=5809614 elapsed=1s state=done
+time=2026-10-27T12:51:04.673994408Z level=INFO msg="organization split out of DEFAULT (the others went on)" org=4 table=document_versions took=2.016s last_transaction=582ms
+time=2026-10-27T12:51:04.674512462Z level=INFO msg="organization resumed" org=4 paused=5.707s
+time=2026-10-27T12:51:04.679051963Z level=INFO msg="step 2/6: customer schema" org=4 host=relay db=cust_bench
+time=2026-10-27T12:51:06.267053994Z level=INFO msg="step 3/6: publication, foreign tables, CHECK on DEFAULT" org=4
+time=2026-10-27T12:51:06.285040594Z level=INFO msg="step 4/6: subscription, initial copy" org=4
+error: customer database: ERROR: subscription "lokadb_org4" could not connect to the publisher: connection to server at "<ip>", port 5454 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request. (SQLSTATE 08006)
+  in: CREATE SUBSCRIPTION "lokadb_org4" CONNECTION 'host=<ip> port=5454 dbname=bench user=postgres password=*** sslmode=disable user=''lokadb_repl_308775_org4'' password=***' PUBLICATION "lokadb_org4" WITH (slot_name = 'lokadb_308775_org4')

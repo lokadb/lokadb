@@ -1,0 +1,6 @@
+state/
+dist/
+*.inv
+bench/*.inv
+state-archive/
+replay-out/

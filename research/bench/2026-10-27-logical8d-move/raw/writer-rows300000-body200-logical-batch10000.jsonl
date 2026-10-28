@@ -1,0 +1,2 @@
+{"op":"insert","clients":8,"seconds":141.568,"ops":107550,"errors":0,"qps":759.705,"p50_ms":1.775,"p95_ms":2.778,"p99_ms":356.4,"max_ms":5944.131,"mean_ms":6.057}
+{"op":"update","clients":8,"seconds":141.568,"ops":107420,"errors":0,"qps":758.787,"p50_ms":0.554,"p95_ms":0.912,"p99_ms":354.765,"max_ms":5943.037,"mean_ms":4.464}

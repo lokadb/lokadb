@@ -1,0 +1,8 @@
+{"tables": [
+  {"name": "conversations", "tenant_column": "account_id"},
+  {"name": "messages", "tenant_column": "account_id"},
+  {"name": "contacts", "tenant_column": "account_id"},
+  {"name": "notes", "tenant_column": "account_id"},
+  {"name": "attachments", "tenant_column": "account_id"},
+  {"name": "reporting_events", "tenant_column": "account_id"}
+]}

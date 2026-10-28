@@ -1,0 +1,24 @@
+metadata N=1000 meta_cache=off: SELECT (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE oid = ic.relnam | calls 660 | total ms 410575
+metadata N=1000 meta_cache=off: SELECT t.table_name, (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE o | calls 660 | total ms 81457
+metadata N=1000 meta_cache=off: SELECT t.table_name, bit_or(g.tgtype::int & $1)::text FROM lokadb.tables t JOIN pg_class p  | calls 660 | total ms 77333
+metadata N=1000 meta_cache=off: SELECT t.table_name, bit_or(g.tgtype::int & $1)::text FROM lokadb.tables t JOIN pg_class p  | calls 147 | total ms 1923
+metadata N=1000 meta_cache=off: SELECT DISTINCT t.table_name FROM pg_trigger g JOIN pg_class p ON p.oid = g.tgrelid JOIN b | calls 660 | total ms 998
+metadata N=1000 meta_cache=off: SELECT (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE oid = ic.relnam | calls 48 | total ms 486
+metadata N=1000 meta_cache=on: SELECT (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE oid = ic.relnam | calls 672 | total ms 412834
+metadata N=1000 meta_cache=on: SELECT t.table_name, (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE o | calls 672 | total ms 81913
+metadata N=1000 meta_cache=on: SELECT t.table_name, bit_or(g.tgtype::int & $1)::text FROM lokadb.tables t JOIN pg_class p  | calls 672 | total ms 77861
+metadata N=1000 meta_cache=on: SELECT t.table_name, bit_or(g.tgtype::int & $1)::text FROM lokadb.tables t JOIN pg_class p  | calls 147 | total ms 1923
+metadata N=1000 meta_cache=on: SELECT DISTINCT t.table_name FROM pg_trigger g JOIN pg_class p ON p.oid = g.tgrelid JOIN b | calls 672 | total ms 1013
+metadata N=1000 meta_cache=on: SELECT (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE oid = ic.relnam | calls 48 | total ms 486
+metadata N=3000 meta_cache=off: SELECT (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE oid = ic.relnam | calls 638 | total ms 2377658
+metadata N=3000 meta_cache=off: SELECT t.table_name, bit_or(g.tgtype::int & $1)::text FROM lokadb.tables t JOIN pg_class p  | calls 638 | total ms 1494779
+metadata N=3000 meta_cache=off: SELECT t.table_name, (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE o | calls 638 | total ms 497999
+metadata N=3000 meta_cache=off: SELECT (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE oid = ic.relnam | calls 672 | total ms 412834
+metadata N=3000 meta_cache=off: SELECT t.table_name, (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE o | calls 672 | total ms 81913
+metadata N=3000 meta_cache=off: SELECT t.table_name, bit_or(g.tgtype::int & $1)::text FROM lokadb.tables t JOIN pg_class p  | calls 672 | total ms 77861
+metadata N=3000 meta_cache=on: SELECT (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE oid = ic.relnam | calls 648 | total ms 2382817
+metadata N=3000 meta_cache=on: SELECT t.table_name, bit_or(g.tgtype::int & $1)::text FROM lokadb.tables t JOIN pg_class p  | calls 648 | total ms 1499444
+metadata N=3000 meta_cache=on: SELECT t.table_name, (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE o | calls 648 | total ms 499896
+metadata N=3000 meta_cache=on: SELECT (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE oid = ic.relnam | calls 672 | total ms 412834
+metadata N=3000 meta_cache=on: SELECT t.table_name, (CASE WHEN (SELECT nspname::text FROM pg_catalog.pg_namespace WHERE o | calls 672 | total ms 81913
+metadata N=3000 meta_cache=on: SELECT t.table_name, bit_or(g.tgtype::int & $1)::text FROM lokadb.tables t JOIN pg_class p  | calls 672 | total ms 77861

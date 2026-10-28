@@ -1,0 +1,15 @@
+{
+  "listen": ":7443",
+  "enroll_listen": ":7444",
+  "cert": "/certs/relay.crt",
+  "key": "/certs/relay.key",
+  "ca": "/certs/ca.crt",
+  "ca_key": "/certs/ca.key",
+  "cert_ttl": "2m",
+  "control_plane": "host=cloud dbname=controlplane user=postgres password=pw sslmode=disable",
+  "orgs": {"1": ":15001"},
+  "cloud": "cloud:5432",
+  "cloud_access": "window",
+  "health_listen": ":7446",
+  "org_allow": ["10.231.1.0/24"]
+}

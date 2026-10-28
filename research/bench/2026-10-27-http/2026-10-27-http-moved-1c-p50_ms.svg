@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" font-family="sans-serif" font-size="12">
+<rect width="760" height="340" fill="#fff"/>
+<text x="64" y="22" font-size="14" font-weight="bold">p50 latency, organizations moved, 1 client(s) (ms)</text>
+<line x1="64" x2="752" y1="284.0" y2="284.0" stroke="#ddd"/>
+<text x="58" y="288.0" text-anchor="end">0</text>
+<line x1="64" x2="752" y1="223.0" y2="223.0" stroke="#ddd"/>
+<text x="58" y="227.0" text-anchor="end">412.9</text>
+<line x1="64" x2="752" y1="162.0" y2="162.0" stroke="#ddd"/>
+<text x="58" y="166.0" text-anchor="end">825.8</text>
+<line x1="64" x2="752" y1="101.0" y2="101.0" stroke="#ddd"/>
+<text x="58" y="105.0" text-anchor="end">1 239</text>
+<line x1="64" x2="752" y1="40.0" y2="40.0" stroke="#ddd"/>
+<text x="58" y="44.0" text-anchor="end">1 652</text>
+<rect x="81.0" y="268.2" width="13.9" height="15.8" fill="#c1553a"><title>django fdw read: 107.01</title></rect>
+<rect x="96.1" y="268.6" width="13.9" height="15.4" fill="#c1553a"><title>django fdw (hot keys) read: 104.31</title></rect>
+<rect x="111.2" y="273.5" width="13.9" height="10.5" fill="#d79b2b"><title>django fdw+direct read: 71.06</title></rect>
+<rect x="126.3" y="275.4" width="13.9" height="8.6" fill="#d79b2b"><title>django fdw+direct (hot keys) read: 57.9</title></rect>
+<rect x="141.4" y="283.7" width="13.9" height="0.3" fill="#3b7ea1"><title>django plain read: 1.81</title></rect>
+<rect x="156.6" y="283.7" width="13.9" height="0.3" fill="#3b7ea1"><title>django plain (hot keys) read: 1.85</title></rect>
+<rect x="186.8" y="282.4" width="13.9" height="1.6" fill="#3b7ea1"><title>laravel plain read: 10.78</title></rect>
+<rect x="201.9" y="282.4" width="13.9" height="1.6" fill="#3b7ea1"><title>laravel plain (hot keys) read: 10.78</title></rect>
+<text x="149.0" y="300" text-anchor="middle">read</text>
+<rect x="251.0" y="79.9" width="13.9" height="204.1" fill="#c1553a"><title>django fdw feed: 1 381</title></rect>
+<rect x="281.2" y="66.1" width="13.9" height="217.9" fill="#d79b2b"><title>django fdw+direct feed: 1 475</title></rect>
+<rect x="311.4" y="278.6" width="13.9" height="5.4" fill="#3b7ea1"><title>django plain feed: 36.66</title></rect>
+<rect x="356.8" y="276.9" width="13.9" height="7.1" fill="#3b7ea1"><title>laravel plain feed: 48.38</title></rect>
+<text x="319.0" y="300" text-anchor="middle">feed</text>
+<rect x="421.0" y="270.9" width="13.9" height="13.1" fill="#c1553a"><title>django fdw insert: 88.7</title></rect>
+<rect x="451.2" y="270.5" width="13.9" height="13.5" fill="#d79b2b"><title>django fdw+direct insert: 91.17</title></rect>
+<rect x="481.4" y="283.7" width="13.9" height="0.3" fill="#3b7ea1"><title>django plain insert: 1.96</title></rect>
+<rect x="526.8" y="282.2" width="13.9" height="1.8" fill="#3b7ea1"><title>laravel plain insert: 12.51</title></rect>
+<text x="489.0" y="300" text-anchor="middle">insert</text>
+<rect x="591.0" y="211.9" width="13.9" height="72.1" fill="#c1553a"><title>django fdw update: 488.01</title></rect>
+<rect x="621.2" y="211.8" width="13.9" height="72.2" fill="#d79b2b"><title>django fdw+direct update: 488.42</title></rect>
+<rect x="651.4" y="283.7" width="13.9" height="0.3" fill="#3b7ea1"><title>django plain update: 1.77</title></rect>
+<rect x="696.8" y="282.4" width="13.9" height="1.6" fill="#3b7ea1"><title>laravel plain update: 10.51</title></rect>
+<text x="659.0" y="300" text-anchor="middle">update</text>
+<rect x="64" y="322" width="10" height="10" fill="#c1553a"/><text x="78" y="331">django fdw</text>
+<rect x="164" y="322" width="10" height="10" fill="#c1553a"/><text x="178" y="331">django fdw (hot keys)</text>
+<rect x="352" y="322" width="10" height="10" fill="#d79b2b"/><text x="366" y="331">django fdw+direct</text>
+<rect x="508" y="322" width="10" height="10" fill="#d79b2b"/><text x="522" y="331">django fdw+direct (hot keys)</text>
+<rect x="752" y="322" width="10" height="10" fill="#3b7ea1"/><text x="766" y="331">django plain</text>
+<rect x="868" y="322" width="10" height="10" fill="#3b7ea1"/><text x="882" y="331">django plain (hot keys)</text>
+<rect x="1072" y="322" width="10" height="10" fill="#c1553a"/><text x="1086" y="331">laravel fdw</text>
+<rect x="1180" y="322" width="10" height="10" fill="#3b7ea1"/><text x="1194" y="331">laravel plain</text>
+<rect x="1304" y="322" width="10" height="10" fill="#3b7ea1"/><text x="1318" y="331">laravel plain (hot keys)</text>
+</svg>

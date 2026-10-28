@@ -1,0 +1,37 @@
+warning: -cp holds a password on the command line (ps and the shell's history show it): give -cp - (stdin) or -cp env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -customer holds a password on the command line (ps and the shell's history show it): give -customer - (stdin) or -customer env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -customer-app holds a password on the command line (ps and the shell's history show it): give -customer-app - (stdin) or -customer-app env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -db holds a password on the command line (ps and the shell's history show it): give -db - (stdin) or -db env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+warning: -publisher holds a password on the command line (ps and the shell's history show it): give -publisher - (stdin) or -publisher env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)
+time=2026-10-27T16:52:16.242182676Z level=WARN msg="LOGICAL REPLICATION: for the time of the move the organization's database can read the change stream of the WHOLE cloud database (a role with the REPLICATION attribute): the rows of every organization, not this one's only. Use it only if the cloud and the organization's database have one owner" org=4 cloud_logical=true customer_can_subscribe=true customer_cannot_because=""
+time=2026-10-27T16:52:16.242255974Z level=INFO msg="move mode" org=4 mode=logical
+time=2026-10-27T16:52:16.265829038Z level=INFO msg="step 1/6: organization partitions" org=4
+time=2026-10-27T16:52:16.284623858Z level=INFO msg="organization paused (its statements wait, the other organizations' do not)" org=4 attempt=1
+time=2026-10-27T16:52:16.338805479Z level=INFO msg=progress org=4 step=split table=documents rows=0 rows_total=315762 bytes=0 elapsed=0s state=started
+time=2026-10-27T16:52:18.373380613Z level=INFO msg=progress org=4 step=split table=documents rows=160000 rows_total=315762 bytes=35607159 elapsed=2s eta=2s
+time=2026-10-27T16:52:19.836879783Z level=INFO msg=progress org=4 step=split table=documents rows=315762 rows_total=315762 bytes=67132994 elapsed=3s state=done
+time=2026-10-27T16:52:20.217801575Z level=INFO msg="organization split out of DEFAULT (the others went on)" org=4 table=documents took=3.931s last_transaction=379ms
+time=2026-10-27T16:52:20.242214556Z level=INFO msg=progress org=4 step=split table=document_versions rows=0 rows_total=315762 bytes=0 elapsed=0s state=started
+time=2026-10-27T16:52:21.638949215Z level=INFO msg=progress org=4 step=split table=document_versions rows=315762 rows_total=315762 bytes=5669718 elapsed=1s state=done
+time=2026-10-27T16:52:22.224305305Z level=INFO msg="organization split out of DEFAULT (the others went on)" org=4 table=document_versions took=2.006s last_transaction=583ms
+time=2026-10-27T16:52:22.224801386Z level=INFO msg="organization resumed" org=4 paused=5.94s
+time=2026-10-27T16:52:22.230987564Z level=INFO msg="step 2/6: customer schema" org=4 host=relay db=cust_bench
+time=2026-10-27T16:52:23.807165337Z level=INFO msg="step 3/6: publication, foreign tables, CHECK on DEFAULT" org=4
+time=2026-10-27T16:52:23.825306659Z level=INFO msg="step 4/6: subscription, initial copy" org=4
+time=2026-10-27T16:52:24.423967023Z level=INFO msg=progress org=4 step=copy table=documents rows=0 rows_total=317052 bytes=0 bytes_total=83525632 elapsed=0s state=waiting
+time=2026-10-27T16:52:24.423985599Z level=INFO msg=progress org=4 step=copy table=document_versions rows=0 rows_total=317060 bytes=0 bytes_total=19210240 elapsed=0s state=waiting
+time=2026-10-27T16:52:29.63114389Z level=INFO msg=progress org=4 step=copy table=documents rows=180964 rows_total=317052 bytes=40320102 bytes_total=83525632 elapsed=5s eta=4s
+time=2026-10-27T16:52:29.631163176Z level=INFO msg=progress org=4 step=copy table=document_versions rows=317060 rows_total=317060 bytes=0 bytes_total=19210240 elapsed=5s state=done
+time=2026-10-27T16:52:32.662681554Z level=INFO msg=progress org=4 step=copy table=documents rows=317052 rows_total=317052 bytes=40320102 bytes_total=83525632 elapsed=8s state=done
+time=2026-10-27T16:52:32.662719866Z level=INFO msg="initial copy done" org=4 took=8.831s
+time=2026-10-27T16:52:32.662731568Z level=INFO msg="step 5/6: catching up (writes continue)" org=4
+time=2026-10-27T16:52:32.753276234Z level=INFO msg="replica caught up" org=4 lag=91ms why="lag under 500ms" took=91ms
+time=2026-10-27T16:52:32.753295209Z level=INFO msg="step 6/6: switch" org=4
+time=2026-10-27T16:52:34.045636017Z level=INFO msg="rows before the switch: not compared, too many to read under the pause (the comparison after the switch covers them)" table=documents
+time=2026-10-27T16:52:34.561229204Z level=INFO msg=switched org=4 writes_paused=1.661224136s wait_last_changes=91.372239ms drop_subscription=314.457601ms swap_partitions=1.255394296s attempt=1
+time=2026-10-27T16:52:35.470501177Z level=INFO msg="verified: customer copy equals the detached source partitions" org=4
+time=2026-10-27T16:52:54.757020418Z level=INFO msg="statistics of the foreign partition" org=4 table=documents__org4 took=19.286s
+time=2026-10-27T16:53:09.931020006Z level=INFO msg="statistics of the foreign partition" org=4 table=document_versions__org4 took=15.174s
+time=2026-10-27T16:53:09.958347388Z level=INFO msg="source partitions dropped from the cloud database" org=4
+time=2026-10-27T16:53:09.971552508Z level=INFO msg="the moved organization's profile" org=4 profile=fdw
+time=2026-10-27T16:53:09.971564721Z level=INFO msg="move-org done"

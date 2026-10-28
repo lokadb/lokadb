@@ -1,0 +1,19 @@
+# run outputs of the e2e stand and the defects harness
+e2e/*.log
+e2e/defects/*.log
+e2e/catalog_*.txt
+e2e/par/
+e2e/workload/*
+!e2e/workload/.gitkeep
+# one-time enrollment tokens the stand writes for the agent
+e2e/secrets/*
+!e2e/secrets/.gitkeep
+# measurement state, inventories and secrets
+bench/state*/
+research/bench/trial*/
+*.inv
+# the closed extension lives in another repository
+private/
+# local build output
+/lokadb
+*.test

@@ -1,0 +1,74 @@
+scenario sessions, started 2026-10-27T04:52:28+03:00
+== N = 1000 organizations
+{"setup": true, "orgs": 1000, "documents": 20000, "seconds": 0.5}
+enable: time=2026-10-27T01:53:34.636697397Z level=INFO msg="index on the organization column" table="\"docum
+-- meta_cache off
+{"clients":10,"errors":0,"max_ms":247.677,"mean_ms":1.132,"op":"read","ops":285261,"p50_ms":1.011,"p95_ms":1.646,"p99_ms":3.987,"qps":4754.35,"seconds":60,"tags":{"clients":"10","meta_cache":"off","op
+{"clients":10,"errors":0,"max_ms":314.677,"mean_ms":0.972,"op":"update","ops":284403,"p50_ms":0.835,"p95_ms":1.54,"p99_ms":4.096,"qps":4740.05,"seconds":60,"tags":{"clients":"10","meta_cache":"off","o
+{"clients":10,"errors":0,"max_ms":247.677,"mean_ms":1.132,"op":"read","ops":285261,"p50_ms":1.011,"p95_ms":1.646,"p99_ms":3.987,"qps":4754.35,"seconds":60,"tags":{"clients":"10","meta_cache":"off","op
+{"clients":10,"errors":0,"max_ms":314.677,"mean_ms":0.972,"op":"update","ops":284403,"p50_ms":0.835,"p95_ms":1.54,"p99_ms":4.096,"qps":4740.05,"seconds":60,"tags":{"clients":"10","meta_cache":"off","o
+{"clients":10,"errors":0,"max_ms":215.415,"mean_ms":1.512,"op":"read","ops":228267,"p50_ms":1.438,"p95_ms":1.979,"p99_ms":2.721,"qps":3804.45,"seconds":60,"tags":{"clients":"10","meta_cache":"off","op
+{"clients":10,"errors":0,"max_ms":257.467,"mean_ms":1.117,"op":"update","ops":227608,"p50_ms":1.029,"p95_ms":1.59,"p99_ms":2.644,"qps":3793.467,"seconds":60,"tags":{"clients":"10","meta_cache":"off","
+{"clients":10,"errors":0,"max_ms":215.415,"mean_ms":1.512,"op":"read","ops":228267,"p50_ms":1.438,"p95_ms":1.979,"p99_ms":2.721,"qps":3804.45,"seconds":60,"tags":{"clients":"10","meta_cache":"off","op
+{"clients":10,"errors":0,"max_ms":257.467,"mean_ms":1.117,"op":"update","ops":227608,"p50_ms":1.029,"p95_ms":1.59,"p99_ms":2.644,"qps":3793.467,"seconds":60,"tags":{"clients":"10","meta_cache":"off","
+{"clients":100,"errors":0,"max_ms":1802.275,"mean_ms":6.04,"op":"read","ops":423705,"p50_ms":4.875,"p95_ms":12.804,"p99_ms":19.016,"qps":7061.75,"seconds":60,"tags":{"clients":"100","meta_cache":"off"
+{"clients":100,"errors":0,"max_ms":1756.104,"mean_ms":8.122,"op":"update","ops":423640,"p50_ms":7.171,"p95_ms":14.355,"p99_ms":20.551,"qps":7060.667,"seconds":60,"tags":{"clients":"100","meta_cache":"
+{"clients":100,"errors":0,"max_ms":1802.275,"mean_ms":6.04,"op":"read","ops":423705,"p50_ms":4.875,"p95_ms":12.804,"p99_ms":19.016,"qps":7061.75,"seconds":60,"tags":{"clients":"100","meta_cache":"off"
+{"clients":100,"errors":0,"max_ms":1756.104,"mean_ms":8.122,"op":"update","ops":423640,"p50_ms":7.171,"p95_ms":14.355,"p99_ms":20.551,"qps":7060.667,"seconds":60,"tags":{"clients":"100","meta_cache":"
+{"clients":100,"errors":0,"max_ms":2388.725,"mean_ms":8.652,"op":"read","ops":354132,"p50_ms":7.15,"p95_ms":17.103,"p99_ms":23.831,"qps":5902.2,"seconds":60,"tags":{"clients":"100","meta_cache":"off",
+{"clients":100,"errors":0,"max_ms":2340.068,"mean_ms":8.298,"op":"update","ops":353788,"p50_ms":7.25,"p95_ms":15.127,"p99_ms":21.775,"qps":5896.467,"seconds":60,"tags":{"clients":"100","meta_cache":"o
+-- meta_cache on
+{"clients":100,"errors":0,"max_ms":2388.725,"mean_ms":8.652,"op":"read","ops":354132,"p50_ms":7.15,"p95_ms":17.103,"p99_ms":23.831,"qps":5902.2,"seconds":60,"tags":{"clients":"100","meta_cache":"off",
+{"clients":100,"errors":0,"max_ms":2340.068,"mean_ms":8.298,"op":"update","ops":353788,"p50_ms":7.25,"p95_ms":15.127,"p99_ms":21.775,"qps":5896.467,"seconds":60,"tags":{"clients":"100","meta_cache":"o
+{"clients":10,"errors":0,"max_ms":184.778,"mean_ms":1.036,"op":"read","ops":306651,"p50_ms":0.979,"p95_ms":1.524,"p99_ms":1.989,"qps":5110.85,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op"
+{"clients":10,"errors":0,"max_ms":207.527,"mean_ms":0.92,"op":"update","ops":306111,"p50_ms":0.842,"p95_ms":1.427,"p99_ms":2.154,"qps":5101.85,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op
+{"clients":10,"errors":0,"max_ms":184.778,"mean_ms":1.036,"op":"read","ops":306651,"p50_ms":0.979,"p95_ms":1.524,"p99_ms":1.989,"qps":5110.85,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op"
+{"clients":10,"errors":0,"max_ms":207.527,"mean_ms":0.92,"op":"update","ops":306111,"p50_ms":0.842,"p95_ms":1.427,"p99_ms":2.154,"qps":5101.85,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op
+{"clients":10,"errors":0,"max_ms":189.695,"mean_ms":1.562,"op":"read","ops":219704,"p50_ms":1.435,"p95_ms":2.138,"p99_ms":4.821,"qps":3661.733,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op
+{"clients":10,"errors":0,"max_ms":23.062,"mean_ms":1.17,"op":"update","ops":219044,"p50_ms":1.025,"p95_ms":1.661,"p99_ms":5.096,"qps":3650.733,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op
+{"clients":10,"errors":0,"max_ms":189.695,"mean_ms":1.562,"op":"read","ops":219704,"p50_ms":1.435,"p95_ms":2.138,"p99_ms":4.821,"qps":3661.733,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op
+{"clients":10,"errors":0,"max_ms":23.062,"mean_ms":1.17,"op":"update","ops":219044,"p50_ms":1.025,"p95_ms":1.661,"p99_ms":5.096,"qps":3650.733,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op
+{"clients":100,"errors":0,"max_ms":116.503,"mean_ms":5.225,"op":"read","ops":496192,"p50_ms":4.557,"p95_ms":11.367,"p99_ms":15.877,"qps":8269.867,"seconds":60,"tags":{"clients":"100","meta_cache":"on"
+{"clients":100,"errors":0,"max_ms":859.79,"mean_ms":6.866,"op":"update","ops":496274,"p50_ms":6.419,"p95_ms":11.632,"p99_ms":16.379,"qps":8271.233,"seconds":60,"tags":{"clients":"100","meta_cache":"on
+{"clients":100,"errors":0,"max_ms":116.503,"mean_ms":5.225,"op":"read","ops":496192,"p50_ms":4.557,"p95_ms":11.367,"p99_ms":15.877,"qps":8269.867,"seconds":60,"tags":{"clients":"100","meta_cache":"on"
+{"clients":100,"errors":0,"max_ms":859.79,"mean_ms":6.866,"op":"update","ops":496274,"p50_ms":6.419,"p95_ms":11.632,"p99_ms":16.379,"qps":8271.233,"seconds":60,"tags":{"clients":"100","meta_cache":"on
+{"clients":100,"errors":0,"max_ms":589.04,"mean_ms":8.588,"op":"read","ops":382359,"p50_ms":7.712,"p95_ms":16.212,"p99_ms":22.258,"qps":6372.65,"seconds":60,"tags":{"clients":"100","meta_cache":"on","
+{"clients":100,"errors":0,"max_ms":54.913,"mean_ms":7.103,"op":"update","ops":382389,"p50_ms":6.561,"p95_ms":12.824,"p99_ms":18.199,"qps":6373.15,"seconds":60,"tags":{"clients":"100","meta_cache":"on"
+== N = 3000 organizations
+{"setup": true, "orgs": 3000, "documents": 60000, "seconds": 1.9}
+enable: time=2026-10-27T02:10:29.916439862Z level=INFO msg="index on the organization column" table="\"docum
+-- meta_cache off
+{"clients":100,"errors":0,"max_ms":589.04,"mean_ms":8.588,"op":"read","ops":382359,"p50_ms":7.712,"p95_ms":16.212,"p99_ms":22.258,"qps":6372.65,"seconds":60,"tags":{"clients":"100","meta_cache":"on","
+{"clients":100,"errors":0,"max_ms":54.913,"mean_ms":7.103,"op":"update","ops":382389,"p50_ms":6.561,"p95_ms":12.824,"p99_ms":18.199,"qps":6373.15,"seconds":60,"tags":{"clients":"100","meta_cache":"on"
+{"clients":10,"errors":0,"max_ms":960.693,"mean_ms":1.358,"op":"read","ops":253198,"p50_ms":1.271,"p95_ms":1.797,"p99_ms":2.32,"qps":4219.967,"seconds":60,"tags":{"clients":"10","meta_cache":"off","op
+{"clients":10,"errors":0,"max_ms":810.734,"mean_ms":1.014,"op":"update","ops":252231,"p50_ms":0.928,"p95_ms":1.423,"p99_ms":2.315,"qps":4203.85,"seconds":60,"tags":{"clients":"10","meta_cache":"off","
+{"clients":10,"errors":0,"max_ms":960.693,"mean_ms":1.358,"op":"read","ops":253198,"p50_ms":1.271,"p95_ms":1.797,"p99_ms":2.32,"qps":4219.967,"seconds":60,"tags":{"clients":"10","meta_cache":"off","op
+{"clients":10,"errors":0,"max_ms":810.734,"mean_ms":1.014,"op":"update","ops":252231,"p50_ms":0.928,"p95_ms":1.423,"p99_ms":2.315,"qps":4203.85,"seconds":60,"tags":{"clients":"10","meta_cache":"off","
+{"clients":10,"errors":0,"max_ms":1127.383,"mean_ms":1.762,"op":"read","ops":197511,"p50_ms":1.659,"p95_ms":2.353,"p99_ms":3.008,"qps":3291.85,"seconds":60,"tags":{"clients":"10","meta_cache":"off","o
+{"clients":10,"errors":0,"max_ms":998.158,"mean_ms":1.279,"op":"update","ops":196758,"p50_ms":1.159,"p95_ms":1.79,"p99_ms":2.843,"qps":3279.3,"seconds":60,"tags":{"clients":"10","meta_cache":"off","op
+{"clients":10,"errors":0,"max_ms":1127.383,"mean_ms":1.762,"op":"read","ops":197511,"p50_ms":1.659,"p95_ms":2.353,"p99_ms":3.008,"qps":3291.85,"seconds":60,"tags":{"clients":"10","meta_cache":"off","o
+{"clients":10,"errors":0,"max_ms":998.158,"mean_ms":1.279,"op":"update","ops":196758,"p50_ms":1.159,"p95_ms":1.79,"p99_ms":2.843,"qps":3279.3,"seconds":60,"tags":{"clients":"10","meta_cache":"off","op
+{"clients":100,"errors":0,"max_ms":12065.873,"mean_ms":15.087,"op":"read","ops":190790,"p50_ms":8.687,"p95_ms":25.97,"p99_ms":36.695,"qps":3179.833,"seconds":60,"tags":{"clients":"100","meta_cache":"o
+{"clients":100,"errors":0,"max_ms":11641.22,"mean_ms":16.446,"op":"update","ops":191683,"p50_ms":12.654,"p95_ms":27.755,"p99_ms":39.96,"qps":3194.717,"seconds":60,"tags":{"clients":"100","meta_cache":
+{"clients":100,"errors":0,"max_ms":12065.873,"mean_ms":15.087,"op":"read","ops":190790,"p50_ms":8.687,"p95_ms":25.97,"p99_ms":36.695,"qps":3179.833,"seconds":60,"tags":{"clients":"100","meta_cache":"o
+{"clients":100,"errors":0,"max_ms":11641.22,"mean_ms":16.446,"op":"update","ops":191683,"p50_ms":12.654,"p95_ms":27.755,"p99_ms":39.96,"qps":3194.717,"seconds":60,"tags":{"clients":"100","meta_cache":
+{"clients":100,"errors":0,"max_ms":12569.297,"mean_ms":17.133,"op":"read","ops":163664,"p50_ms":10.222,"p95_ms":28.692,"p99_ms":39.311,"qps":2727.733,"seconds":60,"tags":{"clients":"100","meta_cache":
+{"clients":100,"errors":0,"max_ms":12603.45,"mean_ms":20.171,"op":"update","ops":164499,"p50_ms":14.433,"p95_ms":29.529,"p99_ms":40.051,"qps":2741.65,"seconds":60,"tags":{"clients":"100","meta_cache":
+-- meta_cache on
+{"clients":100,"errors":0,"max_ms":12569.297,"mean_ms":17.133,"op":"read","ops":163664,"p50_ms":10.222,"p95_ms":28.692,"p99_ms":39.311,"qps":2727.733,"seconds":60,"tags":{"clients":"100","meta_cache":
+{"clients":100,"errors":0,"max_ms":12603.45,"mean_ms":20.171,"op":"update","ops":164499,"p50_ms":14.433,"p95_ms":29.529,"p99_ms":40.051,"qps":2741.65,"seconds":60,"tags":{"clients":"100","meta_cache":
+{"clients":10,"errors":0,"max_ms":895.616,"mean_ms":1.375,"op":"read","ops":248854,"p50_ms":1.321,"p95_ms":1.923,"p99_ms":2.435,"qps":4147.567,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op
+{"clients":10,"errors":0,"max_ms":22.297,"mean_ms":1.038,"op":"update","ops":248015,"p50_ms":0.963,"p95_ms":1.511,"p99_ms":2.446,"qps":4133.583,"seconds":60,"tags":{"clients":"10","meta_cache":"on","o
+{"clients":10,"errors":0,"max_ms":895.616,"mean_ms":1.375,"op":"read","ops":248854,"p50_ms":1.321,"p95_ms":1.923,"p99_ms":2.435,"qps":4147.567,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op
+{"clients":10,"errors":0,"max_ms":22.297,"mean_ms":1.038,"op":"update","ops":248015,"p50_ms":0.963,"p95_ms":1.511,"p99_ms":2.446,"qps":4133.583,"seconds":60,"tags":{"clients":"10","meta_cache":"on","o
+{"clients":10,"errors":0,"max_ms":14.863,"mean_ms":1.771,"op":"read","ops":196986,"p50_ms":1.598,"p95_ms":2.626,"p99_ms":5.911,"qps":3283.1,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op":"
+{"clients":10,"errors":0,"max_ms":692.547,"mean_ms":1.277,"op":"update","ops":196263,"p50_ms":1.092,"p95_ms":1.968,"p99_ms":5.751,"qps":3271.05,"seconds":60,"tags":{"clients":"10","meta_cache":"on","o
+{"clients":10,"errors":0,"max_ms":14.863,"mean_ms":1.771,"op":"read","ops":196986,"p50_ms":1.598,"p95_ms":2.626,"p99_ms":5.911,"qps":3283.1,"seconds":60,"tags":{"clients":"10","meta_cache":"on","op":"
+{"clients":10,"errors":0,"max_ms":692.547,"mean_ms":1.277,"op":"update","ops":196263,"p50_ms":1.092,"p95_ms":1.968,"p99_ms":5.751,"qps":3271.05,"seconds":60,"tags":{"clients":"10","meta_cache":"on","o
+{"clients":100,"errors":0,"max_ms":2582.822,"mean_ms":6.589,"op":"read","ops":395678,"p50_ms":5.767,"p95_ms":13.881,"p99_ms":20.25,"qps":6594.633,"seconds":60,"tags":{"clients":"100","meta_cache":"on"
+{"clients":100,"errors":0,"max_ms":2396.594,"mean_ms":8.572,"op":"update","ops":395785,"p50_ms":8.005,"p95_ms":14.671,"p99_ms":20.518,"qps":6596.417,"seconds":60,"tags":{"clients":"100","meta_cache":"
+{"clients":100,"errors":0,"max_ms":2582.822,"mean_ms":6.589,"op":"read","ops":395678,"p50_ms":5.767,"p95_ms":13.881,"p99_ms":20.25,"qps":6594.633,"seconds":60,"tags":{"clients":"100","meta_cache":"on"
+{"clients":100,"errors":0,"max_ms":2396.594,"mean_ms":8.572,"op":"update","ops":395785,"p50_ms":8.005,"p95_ms":14.671,"p99_ms":20.518,"qps":6596.417,"seconds":60,"tags":{"clients":"100","meta_cache":"
+{"clients":100,"errors":0,"max_ms":2822.779,"mean_ms":8.554,"op":"read","ops":351426,"p50_ms":7.404,"p95_ms":17.524,"p99_ms":24.1,"qps":5857.1,"seconds":60,"tags":{"clients":"100","meta_cache":"on","o
+{"clients":100,"errors":0,"max_ms":56.583,"mean_ms":8.52,"op":"update","ops":351423,"p50_ms":7.9,"p95_ms":15.192,"p99_ms":21.269,"qps":5857.05,"seconds":60,"tags":{"clients":"100","meta_cache":"on","o
+finished 2026-10-27T05:30:19+03:00; results in /e/dev/lokadb/.claude/worktrees/block-14-load-85ba19/research/bench/2026-10-27-sessions

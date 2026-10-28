@@ -1,0 +1,7 @@
+time=2026-10-23T20:09:22.515Z level=INFO msg=converting table=conversations tenant_column=account_id
+time=2026-10-23T20:09:22.532Z level=INFO msg=converting table=messages tenant_column=account_id
+time=2026-10-23T20:09:22.541Z level=INFO msg=converting table=contacts tenant_column=account_id
+time=2026-10-23T20:09:22.550Z level=INFO msg=converting table=notes tenant_column=account_id
+time=2026-10-23T20:09:22.559Z level=INFO msg=converting table=attachments tenant_column=account_id
+time=2026-10-23T20:09:22.566Z level=INFO msg=converting table=reporting_events tenant_column=account_id
+time=2026-10-23T20:09:22.917Z level=INFO msg="enable done"

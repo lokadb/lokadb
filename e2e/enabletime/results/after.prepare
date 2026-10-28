@@ -1,0 +1,50 @@
+time=2026-10-23T20:04:50.602Z level=INFO msg="enable -prepare" table=conversations stage=refs rows=30000 "of about"=180005 left=41s
+time=2026-10-23T20:04:57.267Z level=INFO msg="enable -prepare" table=conversations stage=refs rows=60000 "of about"=180005 left=29s
+time=2026-10-23T20:05:04.665Z level=INFO msg="enable -prepare" table=conversations stage=refs rows=90000 "of about"=180005 left=22s
+time=2026-10-23T20:05:10.109Z level=INFO msg="enable -prepare" table=conversations stage=refs rows=120000 "of about"=180005 left=13s
+time=2026-10-23T20:05:16.280Z level=INFO msg="enable -prepare" table=conversations stage=refs rows=150000 "of about"=180005 left=6s
+time=2026-10-23T20:05:20.899Z level=INFO msg="enable -prepare" table=conversations stage=refs rows=180005 changed=180005 took=38.63s
+time=2026-10-23T20:05:26.963Z level=INFO msg="enable -prepare" table=messages stage=refs rows=70000 "of about"=1350055 left=1m39s
+time=2026-10-23T20:05:32.418Z level=INFO msg="enable -prepare" table=messages stage=refs rows=110000 "of about"=1350055 left=2m2s
+time=2026-10-23T20:05:42.773Z level=INFO msg="enable -prepare" table=messages stage=refs rows=140000 "of about"=1350055 left=3m3s
+time=2026-10-23T20:05:48.429Z level=INFO msg="enable -prepare" table=messages stage=refs rows=200000 "of about"=1350055 left=2m34s
+time=2026-10-23T20:05:56.164Z level=INFO msg="enable -prepare" table=messages stage=refs rows=250000 "of about"=1350055 left=2m32s
+time=2026-10-23T20:06:01.401Z level=INFO msg="enable -prepare" table=messages stage=refs rows=300000 "of about"=1350055 left=2m19s
+time=2026-10-23T20:06:06.567Z level=INFO msg="enable -prepare" table=messages stage=refs rows=330000 "of about"=1350055 left=2m19s
+time=2026-10-23T20:06:11.910Z level=INFO msg="enable -prepare" table=messages stage=refs rows=350000 "of about"=1350055 left=2m23s
+time=2026-10-23T20:06:17.656Z level=INFO msg="enable -prepare" table=messages stage=refs rows=440000 "of about"=1350055 left=1m56s
+time=2026-10-23T20:06:23.890Z level=INFO msg="enable -prepare" table=messages stage=refs rows=540000 "of about"=1350055 left=1m33s
+time=2026-10-23T20:06:29.445Z level=INFO msg="enable -prepare" table=messages stage=refs rows=600000 "of about"=1350055 left=1m24s
+time=2026-10-23T20:06:34.780Z level=INFO msg="enable -prepare" table=messages stage=refs rows=680000 "of about"=1350055 left=1m12s
+time=2026-10-23T20:06:39.907Z level=INFO msg="enable -prepare" table=messages stage=refs rows=770000 "of about"=1350055 left=59s
+time=2026-10-23T20:06:45.287Z level=INFO msg="enable -prepare" table=messages stage=refs rows=880000 "of about"=1350055 left=44s
+time=2026-10-23T20:06:50.658Z level=INFO msg="enable -prepare" table=messages stage=refs rows=950000 "of about"=1350055 left=37s
+time=2026-10-23T20:06:55.956Z level=INFO msg="enable -prepare" table=messages stage=refs rows=1040000 "of about"=1350055 left=28s
+time=2026-10-23T20:07:01.300Z level=INFO msg="enable -prepare" table=messages stage=refs rows=1150000 "of about"=1350055 left=17s
+time=2026-10-23T20:07:06.541Z level=INFO msg="enable -prepare" table=messages stage=refs rows=1200000 "of about"=1350055 left=13s
+time=2026-10-23T20:07:13.833Z level=INFO msg="enable -prepare" table=messages stage=refs rows=1260000 "of about"=1350055 left=8s
+time=2026-10-23T20:07:19.582Z level=INFO msg="enable -prepare" table=messages stage=refs rows=1320000 "of about"=1350055 left=2s
+time=2026-10-23T20:07:23.252Z level=INFO msg="enable -prepare" table=messages stage=refs rows=1350055 changed=1350055 took=2m1.73s
+time=2026-10-23T20:07:37.345Z level=INFO msg="enable -prepare" table=contacts stage=refs rows=50000 "of about"=144007 left=11s
+time=2026-10-23T20:07:43.127Z level=INFO msg="enable -prepare" table=contacts stage=refs rows=100000 "of about"=144007 left=5s
+time=2026-10-23T20:07:48.483Z level=INFO msg="enable -prepare" table=contacts stage=refs rows=144007 "of about"=144007
+time=2026-10-23T20:07:48.484Z level=INFO msg="enable -prepare" table=contacts stage=refs rows=144007 changed=144007 took=17.302s
+time=2026-10-23T20:07:52.280Z level=INFO msg="enable -prepare" table=notes stage=refs rows=19651 changed=19651 took=2.281s
+time=2026-10-23T20:07:58.947Z level=INFO msg="enable -prepare" table=attachments stage=refs rows=30000 "of about"=79415 left=9s
+time=2026-10-23T20:08:03.982Z level=INFO msg="enable -prepare" table=attachments stage=refs rows=70000 "of about"=79415 left=1s
+time=2026-10-23T20:08:04.749Z level=INFO msg="enable -prepare" table=attachments stage=refs rows=79415 changed=79415 took=11.542s
+time=2026-10-23T20:08:10.797Z level=INFO msg="enable -prepare" table=reporting_events stage=refs rows=80000 "of about"=385903 left=21s
+time=2026-10-23T20:08:16.200Z level=INFO msg="enable -prepare" table=reporting_events stage=refs rows=150000 "of about"=385903 left=17s
+time=2026-10-23T20:08:23.245Z level=INFO msg="enable -prepare" table=reporting_events stage=refs rows=210000 "of about"=385903 left=15s
+time=2026-10-23T20:08:28.296Z level=INFO msg="enable -prepare" table=reporting_events stage=refs rows=260000 "of about"=385903 left=11s
+time=2026-10-23T20:08:33.986Z level=INFO msg="enable -prepare" table=reporting_events stage=refs rows=300000 "of about"=385903 left=8s
+time=2026-10-23T20:08:39.594Z level=INFO msg="enable -prepare" table=reporting_events stage=refs rows=350000 "of about"=385903 left=3s
+time=2026-10-23T20:08:44.261Z level=INFO msg="enable -prepare" table=reporting_events stage=refs rows=385903 changed=385903 took=39.2s
+time=2026-10-23T20:08:46.127Z level=INFO msg="index on the organization column" table="\"conversations\"" index=conversations__key took=1.201s
+time=2026-10-23T20:08:59.061Z level=INFO msg="index on the organization column" table="\"messages\"" index=messages__key took=11.239s
+time=2026-10-23T20:09:01.285Z level=INFO msg="index on the organization column" table="\"contacts\"" index=contacts__key took=1.504s
+time=2026-10-23T20:09:04.380Z level=INFO msg="index on the organization column" table="\"notes\"" index=notes__key took=2.068s
+time=2026-10-23T20:09:05.896Z level=INFO msg="index on the organization column" table="\"attachments\"" index=attachments__key took=858ms
+time=2026-10-23T20:09:07.142Z level=INFO msg="index on the organization column" table="\"reporting_events\"" index=reporting_events__key took=736ms
+time=2026-10-23T20:09:07.562Z level=INFO msg="prepared: run lokadb enable to switch" tables="conversations, messages, contacts, notes, attachments, reporting_events"
+time=2026-10-23T20:09:07.565Z level=INFO msg="enable done"

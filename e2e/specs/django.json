@@ -1,0 +1,4 @@
+{"tables": [
+  {"name": "docs_document", "tenant_column": "organization_id"},
+  {"name": "docs_documentversion", "parent_table": "docs_document", "parent_column": "document_id"}
+]}

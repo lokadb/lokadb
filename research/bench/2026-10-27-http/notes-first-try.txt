@@ -1,0 +1,123 @@
+scenario http, started 2026-10-27T00:15:35+03:00
+== laravel plain
+{"clients":1,"errors":0,"max_ms":25.287,"mean_ms":10.831,"op":"read","ops":5539,"p50_ms":10.64,"p95_ms":12.607,"p99_ms":14.374,"qps":92.317,"seconds":60,"tags":{"app":"laravel","class":"moved","client
+{"clients":1,"errors":0,"max_ms":18.285,"mean_ms":11.212,"op":"read","ops":5350,"p50_ms":10.92,"p95_ms":13.595,"p99_ms":15.434,"qps":89.167,"seconds":60,"tags":{"app":"laravel","class":"moved","client
+{"clients":1,"errors":0,"max_ms":25.287,"mean_ms":10.831,"op":"read","ops":5539,"p50_ms":10.64,"p95_ms":12.607,"p99_ms":14.374,"qps":92.317,"seconds":60,"tags":{"app":"laravel","class":"moved","client
+{"clients":1,"errors":0,"max_ms":18.285,"mean_ms":11.212,"op":"read","ops":5350,"p50_ms":10.92,"p95_ms":13.595,"p99_ms":15.434,"qps":89.167,"seconds":60,"tags":{"app":"laravel","class":"moved","client
+{"clients":1,"errors":0,"max_ms":80.128,"mean_ms":51.416,"op":"feed","ops":1167,"p50_ms":50.107,"p95_ms":66.613,"p99_ms":74.461,"qps":19.45,"seconds":60,"tags":{"app":"laravel","class":"moved","client
+{"clients":1,"errors":0,"max_ms":58.358,"mean_ms":46.542,"op":"feed","ops":1289,"p50_ms":46.65,"p95_ms":52.716,"p99_ms":55.55,"qps":21.483,"seconds":60,"tags":{"app":"laravel","class":"moved","clients
+{"clients":1,"errors":0,"max_ms":80.128,"mean_ms":51.416,"op":"feed","ops":1167,"p50_ms":50.107,"p95_ms":66.613,"p99_ms":74.461,"qps":19.45,"seconds":60,"tags":{"app":"laravel","class":"moved","client
+{"clients":1,"errors":0,"max_ms":58.358,"mean_ms":46.542,"op":"feed","ops":1289,"p50_ms":46.65,"p95_ms":52.716,"p99_ms":55.55,"qps":21.483,"seconds":60,"tags":{"app":"laravel","class":"moved","clients
+{"clients":1,"errors":0,"max_ms":37.698,"mean_ms":13,"op":"insert","ops":4615,"p50_ms":12.289,"p95_ms":16.775,"p99_ms":26.432,"qps":76.917,"seconds":60,"tags":{"app":"laravel","class":"moved","clients
+{"clients":1,"errors":0,"max_ms":26.002,"mean_ms":13.074,"op":"insert","ops":4588,"p50_ms":12.736,"p95_ms":16.073,"p99_ms":18.114,"qps":76.467,"seconds":60,"tags":{"app":"laravel","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":37.698,"mean_ms":13,"op":"insert","ops":4615,"p50_ms":12.289,"p95_ms":16.775,"p99_ms":26.432,"qps":76.917,"seconds":60,"tags":{"app":"laravel","class":"moved","clients
+{"clients":1,"errors":0,"max_ms":26.002,"mean_ms":13.074,"op":"insert","ops":4588,"p50_ms":12.736,"p95_ms":16.073,"p99_ms":18.114,"qps":76.467,"seconds":60,"tags":{"app":"laravel","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":24.275,"mean_ms":11.442,"op":"update","ops":5243,"p50_ms":11.062,"p95_ms":14.22,"p99_ms":16.273,"qps":87.383,"seconds":60,"tags":{"app":"laravel","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":19.631,"mean_ms":10.21,"op":"update","ops":5876,"p50_ms":9.957,"p95_ms":12.473,"p99_ms":14.479,"qps":97.933,"seconds":60,"tags":{"app":"laravel","class":"moved","clien
+{"clients":1,"errors":0,"max_ms":24.275,"mean_ms":11.442,"op":"update","ops":5243,"p50_ms":11.062,"p95_ms":14.22,"p99_ms":16.273,"qps":87.383,"seconds":60,"tags":{"app":"laravel","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":19.631,"mean_ms":10.21,"op":"update","ops":5876,"p50_ms":9.957,"p95_ms":12.473,"p99_ms":14.479,"qps":97.933,"seconds":60,"tags":{"app":"laravel","class":"moved","clien
+{"clients":1,"errors":0,"max_ms":22.225,"mean_ms":11.261,"op":"read","ops":5326,"p50_ms":10.982,"p95_ms":13.364,"p99_ms":16.19,"qps":88.767,"seconds":60,"tags":{"app":"laravel","class":"moved","client
+{"clients":1,"errors":0,"max_ms":23.5,"mean_ms":10.875,"op":"read","ops":5516,"p50_ms":10.58,"p95_ms":13.035,"p99_ms":14.609,"qps":91.933,"seconds":60,"tags":{"app":"laravel","class":"moved","clients"
+{"clients":1,"errors":0,"max_ms":22.225,"mean_ms":11.261,"op":"read","ops":5326,"p50_ms":10.982,"p95_ms":13.364,"p99_ms":16.19,"qps":88.767,"seconds":60,"tags":{"app":"laravel","class":"moved","client
+{"clients":1,"errors":0,"max_ms":23.5,"mean_ms":10.875,"op":"read","ops":5516,"p50_ms":10.58,"p95_ms":13.035,"p99_ms":14.609,"qps":91.933,"seconds":60,"tags":{"app":"laravel","class":"moved","clients"
+{"clients":16,"errors":0,"max_ms":132.6,"mean_ms":27.665,"op":"read","ops":34698,"p50_ms":25.487,"p95_ms":47.408,"p99_ms":61.019,"qps":578.3,"seconds":60,"tags":{"app":"laravel","class":"moved","clien
+{"clients":16,"errors":0,"max_ms":139.191,"mean_ms":28.939,"op":"read","ops":33161,"p50_ms":26.457,"p95_ms":49.628,"p99_ms":64.514,"qps":552.683,"seconds":60,"tags":{"app":"laravel","class":"moved","c
+{"clients":16,"errors":0,"max_ms":132.6,"mean_ms":27.665,"op":"read","ops":34698,"p50_ms":25.487,"p95_ms":47.408,"p99_ms":61.019,"qps":578.3,"seconds":60,"tags":{"app":"laravel","class":"moved","clien
+{"clients":16,"errors":0,"max_ms":139.191,"mean_ms":28.939,"op":"read","ops":33161,"p50_ms":26.457,"p95_ms":49.628,"p99_ms":64.514,"qps":552.683,"seconds":60,"tags":{"app":"laravel","class":"moved","c
+{"clients":16,"errors":0,"max_ms":117.574,"mean_ms":28.028,"op":"feed","ops":34245,"p50_ms":25.599,"p95_ms":49.162,"p99_ms":63.11,"qps":570.75,"seconds":60,"tags":{"app":"laravel","class":"moved","cli
+{"clients":16,"errors":0,"max_ms":134.409,"mean_ms":27.893,"op":"feed","ops":34407,"p50_ms":25.457,"p95_ms":49.111,"p99_ms":62.872,"qps":573.45,"seconds":60,"tags":{"app":"laravel","class":"moved","cl
+{"clients":16,"errors":0,"max_ms":117.574,"mean_ms":28.028,"op":"feed","ops":34245,"p50_ms":25.599,"p95_ms":49.162,"p99_ms":63.11,"qps":570.75,"seconds":60,"tags":{"app":"laravel","class":"moved","cli
+{"clients":16,"errors":0,"max_ms":134.409,"mean_ms":27.893,"op":"feed","ops":34407,"p50_ms":25.457,"p95_ms":49.111,"p99_ms":62.872,"qps":573.45,"seconds":60,"tags":{"app":"laravel","class":"moved","cl
+{"clients":16,"error_kinds":{"HTTP : \u003c!DOCTYPE html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"utf-\"\u003e \u003cmeta name=\"viewp":2},"errors":2,"first_error":"HTT
+{"clients":16,"error_kinds":{"HTTP : \u003c!DOCTYPE html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"utf-\"\u003e \u003cmeta name=\"viewp":1},"errors":1,"first_error":"HTT
+{"clients":16,"error_kinds":{"HTTP : \u003c!DOCTYPE html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"utf-\"\u003e \u003cmeta name=\"viewp":2},"errors":2,"first_error":"HTT
+{"clients":16,"error_kinds":{"HTTP : \u003c!DOCTYPE html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"utf-\"\u003e \u003cmeta name=\"viewp":1},"errors":1,"first_error":"HTT
+{"clients":16,"errors":0,"max_ms":145.296,"mean_ms":27.083,"op":"update","ops":35444,"p50_ms":24.861,"p95_ms":46.662,"p99_ms":60.305,"qps":590.733,"seconds":60,"tags":{"app":"laravel","class":"moved",
+{"clients":16,"errors":0,"max_ms":143.173,"mean_ms":26.046,"op":"update","ops":36852,"p50_ms":23.859,"p95_ms":45.273,"p99_ms":58.684,"qps":614.2,"seconds":60,"tags":{"app":"laravel","class":"moved","c
+{"clients":16,"errors":0,"max_ms":145.296,"mean_ms":27.083,"op":"update","ops":35444,"p50_ms":24.861,"p95_ms":46.662,"p99_ms":60.305,"qps":590.733,"seconds":60,"tags":{"app":"laravel","class":"moved",
+{"clients":16,"errors":0,"max_ms":143.173,"mean_ms":26.046,"op":"update","ops":36852,"p50_ms":23.859,"p95_ms":45.273,"p99_ms":58.684,"qps":614.2,"seconds":60,"tags":{"app":"laravel","class":"moved","c
+{"clients":16,"errors":0,"max_ms":150.989,"mean_ms":27.615,"op":"read","ops":34755,"p50_ms":25.454,"p95_ms":47.384,"p99_ms":60.794,"qps":579.25,"seconds":60,"tags":{"app":"laravel","class":"moved","cl
+{"clients":16,"errors":0,"max_ms":149.121,"mean_ms":27.942,"op":"read","ops":34352,"p50_ms":25.665,"p95_ms":48.081,"p99_ms":62.555,"qps":572.533,"seconds":60,"tags":{"app":"laravel","class":"moved","c
+== laravel fdw
+enable: time=2026-10-26T21:51:03.563052087Z level=INFO msg="index on the organization column" table="\"document_versions__cloud\"" index=document_versions__key took=78ms time=2026-10-26T21:51:03.563112881Z le
+move-org 1: time=2026-10-26T21:51:10.906032513Z level=INFO msg="move-org done"
+move-org 2: time=2026-10-26T21:51:28.413046503Z level=INFO msg="move-org done"
+move-org 3: time=2026-10-26T21:51:49.657932918Z level=INFO msg="move-org done"
+move-org 4: time=2026-10-26T21:52:11.089020127Z level=INFO msg="move-org done"
+move-org 5: time=2026-10-26T21:52:34.922444636Z level=INFO msg="move-org done"
+{"clients":16,"errors":0,"max_ms":150.989,"mean_ms":27.615,"op":"read","ops":34755,"p50_ms":25.454,"p95_ms":47.384,"p99_ms":60.794,"qps":579.25,"seconds":60,"tags":{"app":"laravel","class":"moved","cl
+{"clients":16,"errors":0,"max_ms":149.121,"mean_ms":27.942,"op":"read","ops":34352,"p50_ms":25.665,"p95_ms":48.081,"p99_ms":62.555,"qps":572.533,"seconds":60,"tags":{"app":"laravel","class":"moved","c
+{"clients":1,"errors":0,"max_ms":912.13,"mean_ms":582.578,"op":"read","ops":103,"p50_ms":853.752,"p95_ms":909.984,"p99_ms":911.048,"qps":1.717,"seconds":60,"tags":{"app":"laravel","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":958.99,"mean_ms":584.21,"op":"read","ops":103,"p50_ms":853.797,"p95_ms":910.821,"p99_ms":915.771,"qps":1.717,"seconds":60,"tags":{"app":"laravel","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":912.13,"mean_ms":582.578,"op":"read","ops":103,"p50_ms":853.752,"p95_ms":909.984,"p99_ms":911.048,"qps":1.717,"seconds":60,"tags":{"app":"laravel","class":"moved","cli
+{"clients":1,"errors":0,"max_ms":958.99,"mean_ms":584.21,"op":"read","ops":103,"p50_ms":853.797,"p95_ms":910.821,"p99_ms":915.771,"qps":1.717,"seconds":60,"tags":{"app":"laravel","class":"moved","clie
+{"clients":1,"errors":0,"max_ms":690.117,"mean_ms":431.565,"op":"feed","ops":140,"p50_ms":622.967,"p95_ms":664.304,"p99_ms":667.004,"qps":2.333,"seconds":60,"tags":{"app":"laravel","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":712.034,"mean_ms":431.966,"op":"feed","ops":139,"p50_ms":621.301,"p95_ms":677.616,"p99_ms":685.317,"qps":2.317,"seconds":60,"tags":{"app":"laravel","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":690.117,"mean_ms":431.565,"op":"feed","ops":140,"p50_ms":622.967,"p95_ms":664.304,"p99_ms":667.004,"qps":2.333,"seconds":60,"tags":{"app":"laravel","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":712.034,"mean_ms":431.966,"op":"feed","ops":139,"p50_ms":621.301,"p95_ms":677.616,"p99_ms":685.317,"qps":2.317,"seconds":60,"tags":{"app":"laravel","class":"moved","cl
+{"clients":1,"errors":0,"max_ms":886.442,"mean_ms":549.852,"op":"insert","ops":109,"p50_ms":761.334,"p95_ms":842.165,"p99_ms":854.381,"qps":1.817,"seconds":60,"tags":{"app":"laravel","class":"moved","
+{"clients":1,"errors":0,"max_ms":871.009,"mean_ms":544.751,"op":"insert","ops":111,"p50_ms":761.573,"p95_ms":836.963,"p99_ms":838.616,"qps":1.85,"seconds":60,"tags":{"app":"laravel","class":"moved","c
+{"clients":1,"errors":0,"max_ms":886.442,"mean_ms":549.852,"op":"insert","ops":109,"p50_ms":761.334,"p95_ms":842.165,"p99_ms":854.381,"qps":1.817,"seconds":60,"tags":{"app":"laravel","class":"moved","
+{"clients":1,"errors":0,"max_ms":871.009,"mean_ms":544.751,"op":"insert","ops":111,"p50_ms":761.573,"p95_ms":836.963,"p99_ms":838.616,"qps":1.85,"seconds":60,"tags":{"app":"laravel","class":"moved","c
+{"clients":1,"errors":0,"max_ms":979.546,"mean_ms":601.988,"op":"update","ops":100,"p50_ms":887.541,"p95_ms":977.234,"p99_ms":978.535,"qps":1.667,"seconds":60,"tags":{"app":"laravel","class":"moved","
+{"clients":1,"errors":0,"max_ms":958.693,"mean_ms":454.167,"op":"update","ops":133,"p50_ms":612.166,"p95_ms":908.561,"p99_ms":957.003,"qps":2.217,"seconds":60,"tags":{"app":"laravel","class":"moved","
+{"clients":1,"errors":0,"max_ms":979.546,"mean_ms":601.988,"op":"update","ops":100,"p50_ms":887.541,"p95_ms":977.234,"p99_ms":978.535,"qps":1.667,"seconds":60,"tags":{"app":"laravel","class":"moved","
+{"clients":1,"errors":0,"max_ms":958.693,"mean_ms":454.167,"op":"update","ops":133,"p50_ms":612.166,"p95_ms":908.561,"p99_ms":957.003,"qps":2.217,"seconds":60,"tags":{"app":"laravel","class":"moved","
+{"clients":1,"error_kinds":{"HTTP : \u003c!DOCTYPE html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"utf-\"\u003e \u003cmeta name=\"viewp":1},"errors":1,"first_error":"HTTP
+{"clients":1,"error_kinds":{"HTTP : \u003c!DOCTYPE html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"utf-\"\u003e \u003cmeta name=\"viewp":33},"errors":33,"first_error":"HT
+{"clients":1,"error_kinds":{"HTTP : \u003c!DOCTYPE html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"utf-\"\u003e \u003cmeta name=\"viewp":1},"errors":1,"first_error":"HTTP
+{"clients":1,"error_kinds":{"HTTP : \u003c!DOCTYPE html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"utf-\"\u003e \u003cmeta name=\"viewp":33},"errors":33,"first_error":"HT
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":79,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refu":6541066,"Get \"http://...:/doc/
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":64,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refu":6224284,"Get \"http://...:/doc/
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":79,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refu":6541066,"Get \"http://...:/doc/
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":64,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refu":6224284,"Get \"http://...:/doc/
+{"clients":16,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":7022803},"errors":7022803,"first_error":"Get \"http://127.0.0.1:8000/feed/1\": dial tcp 127.0.0.1:8
+{"clients":16,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":6701247},"errors":6701247,"first_error":"Get \"http://127.0.0.1:8000/feed/2\": dial tcp 127.0.0.1:8
+{"clients":16,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":7022803},"errors":7022803,"first_error":"Get \"http://127.0.0.1:8000/feed/1\": dial tcp 127.0.0.1:8
+{"clients":16,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":6701247},"errors":6701247,"first_error":"Get \"http://127.0.0.1:8000/feed/2\": dial tcp 127.0.0.1:8
+{"clients":16,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":6579740},"errors":6579740,"first_error":"Post \"http://127.0.0.1:8000/doc/5\": dial tcp 127.0.0.1:8
+{"clients":16,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":6595937},"errors":6595937,"first_error":"Post \"http://127.0.0.1:8000/doc/5\": dial tcp 127.0.0.1:8
+{"clients":16,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":6579740},"errors":6579740,"first_error":"Post \"http://127.0.0.1:8000/doc/5\": dial tcp 127.0.0.1:8
+{"clients":16,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":6595937},"errors":6595937,"first_error":"Post \"http://127.0.0.1:8000/doc/5\": dial tcp 127.0.0.1:8
+{"clients":16,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":70,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection refu":6148713,"Put \"http://...:/doc/
+{"clients":16,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":69,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection refu":5937041,"Put \"http://...:/doc/
+{"clients":16,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":70,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection refu":6148713,"Put \"http://...:/doc/
+{"clients":16,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":69,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection refu":5937041,"Put \"http://...:/doc/
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refu":5813446,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refused":1454030},"errors":7267
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refu":5694008,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refused":1424163},"errors":7118
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refu":5813446,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refused":1454030},"errors":7267
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refu":5694008,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection refused":1424163},"errors":7118
+{"clients":1,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":1143196,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":415819},"errors":1559015,"fir
+{"clients":1,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":1083425,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":393998},"errors":1477423,"fir
+{"clients":1,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":1143196,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":415819},"errors":1559015,"fir
+{"clients":1,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":1083425,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":393998},"errors":1477423,"fir
+{"clients":1,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":1480380},"errors":1480380,"first_error":"Get \"http://127.0.0.1:8000/feed/6\": dial tcp 127.0.0.1:80
+{"clients":1,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":1432843},"errors":1432843,"first_error":"Get \"http://127.0.0.1:8000/feed/20\": dial tcp 127.0.0.1:8
+{"clients":1,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":1480380},"errors":1480380,"first_error":"Get \"http://127.0.0.1:8000/feed/6\": dial tcp 127.0.0.1:80
+{"clients":1,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":1432843},"errors":1432843,"first_error":"Get \"http://127.0.0.1:8000/feed/20\": dial tcp 127.0.0.1:8
+{"clients":1,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":1352734},"errors":1352734,"first_error":"Post \"http://127.0.0.1:8000/doc/12\": dial tcp 127.0.0.1:8
+{"clients":1,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":1446949},"errors":1446949,"first_error":"Post \"http://127.0.0.1:8000/doc/6\": dial tcp 127.0.0.1:80
+{"clients":1,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":1352734},"errors":1352734,"first_error":"Post \"http://127.0.0.1:8000/doc/12\": dial tcp 127.0.0.1:8
+{"clients":1,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":1446949},"errors":1446949,"first_error":"Post \"http://127.0.0.1:8000/doc/6\": dial tcp 127.0.0.1:80
+{"clients":1,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection re":1073528,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":389224},"errors":1462752,"fir
+{"clients":1,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection re":1092359,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":396195},"errors":1488554,"fir
+{"clients":1,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection re":1073528,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":389224},"errors":1462752,"fir
+{"clients":1,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection re":1092359,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":396195},"errors":1488554,"fir
+{"clients":1,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":1136770,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":413467},"errors":1550237,"fir
+{"clients":1,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":1037991,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":377576},"errors":1415567,"fir
+{"clients":1,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":1136770,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":413467},"errors":1550237,"fir
+{"clients":1,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":1037991,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":377576},"errors":1415567,"fir
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":5200983,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":1890103},"errors":7091086,"f
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":5013998,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":1822169},"errors":6836167,"f
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":5200983,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":1890103},"errors":7091086,"f
+{"clients":16,"error_kinds":{"Get \"http://...:/doc//\": dial tcp ...:: connect: connection re":5013998,"Get \"http://...:/doc//\": dial tcp ...:: connect: connection ref":1822169},"errors":6836167,"f
+{"clients":16,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":7195391},"errors":7195391,"first_error":"Get \"http://127.0.0.1:8000/feed/20\": dial tcp 127.0.0.1:
+{"clients":16,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":6935295},"errors":6935295,"first_error":"Get \"http://127.0.0.1:8000/feed/13\": dial tcp 127.0.0.1:
+{"clients":16,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":7195391},"errors":7195391,"first_error":"Get \"http://127.0.0.1:8000/feed/20\": dial tcp 127.0.0.1:
+{"clients":16,"error_kinds":{"Get \"http://...:/feed/\": dial tcp ...:: connect: connection refused":6935295},"errors":6935295,"first_error":"Get \"http://127.0.0.1:8000/feed/13\": dial tcp 127.0.0.1:
+{"clients":16,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":6626107},"errors":6626107,"first_error":"Post \"http://127.0.0.1:8000/doc/13\": dial tcp 127.0.0.1:
+{"clients":16,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":6356649},"errors":6356649,"first_error":"Post \"http://127.0.0.1:8000/doc/17\": dial tcp 127.0.0.1:
+{"clients":16,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":6626107},"errors":6626107,"first_error":"Post \"http://127.0.0.1:8000/doc/13\": dial tcp 127.0.0.1:
+{"clients":16,"error_kinds":{"Post \"http://...:/doc/\": dial tcp ...:: connect: connection refused":6356649},"errors":6356649,"first_error":"Post \"http://127.0.0.1:8000/doc/17\": dial tcp 127.0.0.1:
+{"clients":16,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection re":4822924,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":1753693},"errors":6576617,"f
+{"clients":16,"error_kinds":{"Put \"http://...:/doc//\": dial tcp ...:: connect: connection re":4811812,"Put \"http://...:/doc//\": dial tcp ...:: connect: connection ref":1750215},"errors":6562027,"f

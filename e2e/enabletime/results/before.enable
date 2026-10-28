@@ -1,0 +1,13 @@
+time=2026-10-23T16:33:52.564Z level=INFO msg=converting table=conversations tenant_column=account_id
+time=2026-10-23T16:34:00.062Z level=INFO msg=converting table=messages tenant_column=account_id
+time=2026-10-23T16:34:17.841Z level=INFO msg=converting table=contacts tenant_column=account_id
+time=2026-10-23T16:34:18.975Z level=INFO msg=converting table=notes tenant_column=account_id
+time=2026-10-23T16:34:19.022Z level=INFO msg=converting table=attachments tenant_column=account_id
+time=2026-10-23T16:34:20.287Z level=INFO msg=converting table=reporting_events tenant_column=account_id
+time=2026-10-23T16:34:35.512Z level=INFO msg="index on the organization column of DEFAULT" table=conversations index=conversations__key took=1.344s
+time=2026-10-23T16:34:38.009Z level=INFO msg="index on the organization column of DEFAULT" table=messages index=messages__key took=2.496s
+time=2026-10-23T16:34:43.218Z level=INFO msg="index on the organization column of DEFAULT" table=contacts index=contacts__key took=5.208s
+time=2026-10-23T16:34:46.119Z level=INFO msg="index on the organization column of DEFAULT" table=notes index=notes__key took=2.899s
+time=2026-10-23T16:34:47.230Z level=INFO msg="index on the organization column of DEFAULT" table=attachments index=attachments__key took=1.11s
+time=2026-10-23T16:34:48.825Z level=INFO msg="index on the organization column of DEFAULT" table=reporting_events index=reporting_events__key took=1.595s
+time=2026-10-23T16:34:49.062Z level=INFO msg="enable done"

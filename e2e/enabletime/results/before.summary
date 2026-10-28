@@ -1,0 +1,1 @@
+before: enable rc=0, took 60.3 s; under load before: 25 tps; during enable: 61 s, 39 of them with 0 tps, 5 tps on average, worst per-second latency 28626 ms

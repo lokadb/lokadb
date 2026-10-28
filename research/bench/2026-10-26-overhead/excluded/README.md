@@ -1,0 +1,3 @@
+# Excluded from the results
+
+`overhead-reconnect-ports.jsonl`: four runs of 26 October with a new connection for every request (`-reconnect`), 16 clients: straight to the cloud database (plain) and lokadb-direct, two repeats each. The load generator ran out of local ports (sockets in TIME_WAIT; "cannot assign requested address"): of about 21-23 thousand attempts 8.7-9.8 thousand failed. This is a failure of the stand, not a result. The settings `tcp_tw_reuse=1` and `ip_local_port_range=1024 65000` were put on the servers during the run and are in `deploy.sh` and METHOD.md; the following variants (the proxy) ran without errors. These variants were measured again separately (`research/bench/2026-10-27-after`).

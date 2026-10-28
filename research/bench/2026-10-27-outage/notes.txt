@@ -1,0 +1,17 @@
+scenario outage, started 2026-10-27T13:28:52+03:00
+{"setup": true, "orgs": 20, "documents": 400000, "seconds": 2.6}
+enable: time=2026-10-27T10:31:20.558220942Z level=INFO msg="enable done"
+move-org 1: time=2026-10-27T10:31:27.27470123Z level=INFO msg="move-org done"
+move-org 2: time=2026-10-27T10:31:34.48938427Z level=INFO msg="move-org done"
+move-org 3: time=2026-10-27T10:31:47.975226745Z level=INFO msg="move-org done"
+move-org 4: time=2026-10-27T10:32:00.623560313Z level=INFO msg="move-org done"
+== db_down
+outage begins 13:33:00
+outage ends 13:33:32
+db_down: moved1 ok=1442 err=1191; moved2 ok=2703 err=0; moved3 ok=2598 err=0; moved4 ok=2764 err=1; cloud ok=42465 err=0; 
+== agent_down
+outage begins 13:34:48
+outage ends 13:35:56
+agent_down: moved1 ok=1980 err=631; moved2 ok=2663 err=0; moved3 ok=2572 err=0; moved4 ok=2731 err=1; cloud ok=42024 err=0; 
+data check outage: ok: 400000 rows in 20 organizations (400000 before, +0: 0 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud
+finished 2026-10-27T13:38:22+03:00; results in /e/dev/lokadb/.claude/worktrees/block-14-load-85ba19/research/bench/2026-10-27-outage

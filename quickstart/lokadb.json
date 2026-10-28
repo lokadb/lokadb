@@ -1,0 +1,8 @@
+{
+  "listen": ":6432",
+  "upstream": "host=cloud port=5432 sslmode=disable",
+  "customers_app": {
+    "demo": {"1": "host=relay port=15001 dbname=cust_demo user=lokadb_dml password=lokadb_dml sslmode=disable"}
+  },
+  "fanout": {"*": {"mode": "reject"}}
+}

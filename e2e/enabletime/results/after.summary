@@ -1,0 +1,2 @@
+after enable -prepare: rc=0, took 271.8 s; under load before: 15 tps; during it: 273 s, 28 of them with 0 tps, 17 tps on average, worst per-second latency 5276 ms
+after enable: rc=0, took 10.2 s; under load before: 17 tps; during it: 10 s, 0 of them with 0 tps, 16 tps on average, worst per-second latency 2569 ms

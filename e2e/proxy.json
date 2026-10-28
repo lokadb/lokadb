@@ -1,0 +1,43 @@
+{
+  "listen": ":6432",
+  "route_log": true,
+  "metrics_listen": ":7447",
+  "upstream": "host=cloud port=5432 sslmode=disable",
+  "customers": {
+    "laravel": {"1": "host=relay port=15001 dbname=cust_laravel user=lokadb_app password=lokadb_app sslmode=disable"},
+    "django":  {"1": "host=relay port=15001 dbname=cust_django user=lokadb_app password=lokadb_app sslmode=disable"},
+    "goapp":   {"1": "host=relay port=15001 dbname=cust_goapp user=lokadb_app password=lokadb_app sslmode=disable"},
+    "uuidapp": {"1": "host=relay port=15001 dbname=cust_uuidapp user=lokadb_app password=lokadb_app sslmode=disable"}
+  },
+  "customers_app": {
+    "laravel": {"1": "host=relay port=15001 dbname=cust_laravel user=lokadb_dml password=lokadb_dml sslmode=disable"},
+    "django":  {"1": "host=relay port=15001 dbname=cust_django user=lokadb_dml password=lokadb_dml sslmode=disable"},
+    "goapp":   {"1": "host=relay port=15001 dbname=cust_goapp user=lokadb_dml password=lokadb_dml sslmode=disable"},
+    "uuidapp": {"1": "host=relay port=15001 dbname=cust_uuidapp user=lokadb_dml password=lokadb_dml sslmode=disable"}
+  },
+  "fanout": {
+    "laravel": {"mode": "reject", "allow": [
+      "select * from \"documents\" where \"slug\" = $1 limit $2",
+      "SELECT d.title, (SELECT count(*) FROM document_versions v WHERE v.document_id = d.id) FROM documents d WHERE d.id = $1",
+      "INSERT INTO documents (organization_id, project_id, slug, title, body) SELECT $1::bigint, $2::bigint, $4 || $1::text || $5 || g, $6, repeat($7, $8) FROM generate_series($9, $3::int) g",
+      "DELETE FROM document_versions WHERE document_id IN (SELECT id FROM documents WHERE slug LIKE $1)",
+      "DELETE FROM documents WHERE slug LIKE $1"
+    ]},
+    "django": {"mode": "reject", "allow": [
+      "SELECT \"docs_document\".\"id\", \"docs_document\".\"organization_id\", \"docs_document\".\"project_id\", \"docs_document\".\"slug\", \"docs_document\".\"title\", \"docs_document\".\"body\" FROM \"docs_document\" WHERE \"docs_document\".\"slug\" = $1 LIMIT $2",
+      "SELECT d.title, (SELECT count(*) FROM docs_documentversion v WHERE v.document_id = d.id) FROM docs_document d WHERE d.id = $1",
+      "INSERT INTO docs_document (organization_id, project_id, slug, title, body) SELECT $1::bigint, $2::bigint, $4 || $1::text || $5 || g, $6, repeat($7, $8) FROM generate_series($9, $3::int) g",
+      "DELETE FROM docs_documentversion WHERE document_id IN (SELECT id FROM docs_document WHERE slug LIKE $1)",
+      "DELETE FROM docs_document WHERE slug LIKE $1"
+    ]},
+    "goapp": {"mode": "reject", "allow": [
+      "SELECT * FROM \"documents\" WHERE slug = $1 ORDER BY \"documents\".\"id\" LIMIT $2",
+      "SELECT d.title, (SELECT count(*) FROM document_versions v WHERE v.document_id = d.id) FROM documents d WHERE d.id = $1",
+      "INSERT INTO documents (organization_id, project_id, slug, title, body) SELECT $1::bigint, $2::bigint, $4 || $1::text || $5 || g, $6, repeat($7, $8) FROM generate_series($9, $3::int) g",
+      "DELETE FROM document_versions WHERE document_id IN (SELECT id FROM documents WHERE slug LIKE $1)",
+      "DELETE FROM documents WHERE slug LIKE $1"
+    ]},
+    "guardapp": {"mode": "log"},
+    "uuidapp": {"mode": "reject"}
+  }
+}

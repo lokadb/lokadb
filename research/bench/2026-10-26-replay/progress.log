@@ -1,0 +1,8 @@
+== paths 2026-10-26T12:40:35+03:00
+   ok 2026-10-26T15:31:07+03:00
+== http 2026-10-26T15:31:09+03:00
+   FAILED 2026-10-26T15:34:22+03:00: the Laravel image did not build (composer: timeout reaching the package repository)
+== overhead 2026-10-26T15:34:24+03:00
+   ok 2026-10-26T20:06:24+03:00
+== clients 2026-10-26T20:06:25+03:00
+   ok (stopped after the 100-client step) 2026-10-26T21:34:56+03:00

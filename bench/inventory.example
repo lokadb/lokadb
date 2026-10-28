@@ -1,0 +1,10 @@
+# role   name   ssh target      address the other hosts reach it at   (see bench/lib.sh)
+# Copy to a file outside the repository (my.inv: *.inv is ignored), put the real hosts in it.
+cloud    cloud  root@CLOUD_SSH  CLOUD_ADDR
+proxy    proxy  root@PROXY_SSH  PROXY_ADDR
+relay    relay  root@PROXY_SSH  PROXY_ADDR
+load     load   root@LOAD_SSH   LOAD_ADDR
+org      org1   root@ORG1_SSH   ORG1_ADDR
+org      org2   root@ORG2_SSH   ORG2_ADDR
+org      org3   root@ORG3_SSH   ORG3_ADDR
+org      org4   root@ORG4_SSH   ORG4_ADDR

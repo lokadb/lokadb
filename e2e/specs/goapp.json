@@ -1,0 +1,6 @@
+{"tables": [
+  {"name": "documents", "tenant_column": "organization_id"},
+  {"name": "document_versions", "parent_table": "documents", "parent_column": "document_id"},
+  {"name": "shares", "tenant_column": "organization_id"},
+  {"name": "share_visits", "parent_table": "shares", "parent_column": "share_id"}
+]}

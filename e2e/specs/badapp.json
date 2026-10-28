@@ -1,0 +1,6 @@
+{"tables": [
+  {"name": "users", "tenant_column": "organization_id"},
+  {"name": "documents", "tenant_column": "organization_id"},
+  {"name": "document_versions", "parent_table": "documents", "parent_column": "document_id"},
+  {"name": "attachments", "tenant_column": "organization_id"}
+]}

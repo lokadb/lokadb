@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" font-family="sans-serif" font-size="12">
+<rect width="760" height="340" fill="#fff"/>
+<text x="64" y="22" font-size="14" font-weight="bold">throughput, organizations cloud, 1 client(s) (req/s)</text>
+<line x1="64" x2="752" y1="284.0" y2="284.0" stroke="#ddd"/>
+<text x="58" y="288.0" text-anchor="end">0</text>
+<line x1="64" x2="752" y1="223.0" y2="223.0" stroke="#ddd"/>
+<text x="58" y="227.0" text-anchor="end">552.9</text>
+<line x1="64" x2="752" y1="162.0" y2="162.0" stroke="#ddd"/>
+<text x="58" y="166.0" text-anchor="end">1 106</text>
+<line x1="64" x2="752" y1="101.0" y2="101.0" stroke="#ddd"/>
+<text x="58" y="105.0" text-anchor="end">1 659</text>
+<line x1="64" x2="752" y1="40.0" y2="40.0" stroke="#ddd"/>
+<text x="58" y="44.0" text-anchor="end">2 212</text>
+<rect x="94.6" y="151.5" width="12.5" height="132.5" fill="#c1553a"><title>fdw read: 1 201</title></rect>
+<rect x="149.0" y="110.4" width="12.5" height="173.6" fill="#c1553a"><title>fdw (hot keys) read: 1 573</title></rect>
+<text x="149.0" y="300" text-anchor="middle">read</text>
+<rect x="264.6" y="263.1" width="12.5" height="20.9" fill="#c1553a"><title>fdw feed: 189.76</title></rect>
+<text x="319.0" y="300" text-anchor="middle">feed</text>
+<rect x="434.6" y="216.5" width="12.5" height="67.5" fill="#c1553a"><title>fdw insert: 611.92</title></rect>
+<text x="489.0" y="300" text-anchor="middle">insert</text>
+<rect x="604.6" y="66.1" width="12.5" height="217.9" fill="#c1553a"><title>fdw update: 1 975</title></rect>
+<text x="659.0" y="300" text-anchor="middle">update</text>
+<rect x="64" y="322" width="10" height="10" fill="#3b7ea1"/><text x="78" y="331">plain</text>
+<rect x="124" y="322" width="10" height="10" fill="#c1553a"/><text x="138" y="331">fdw</text>
+<rect x="168" y="322" width="10" height="10" fill="#d79b2b"/><text x="182" y="331">fdw+direct</text>
+<rect x="268" y="322" width="10" height="10" fill="#4f9d69"/><text x="282" y="331">direct</text>
+<rect x="336" y="322" width="10" height="10" fill="#4f9d69"/><text x="350" y="331">direct (hot keys)</text>
+<rect x="492" y="322" width="10" height="10" fill="#c1553a"/><text x="506" y="331">fdw (hot keys)</text>
+<rect x="624" y="322" width="10" height="10" fill="#c1553a"/><text x="638" y="331">fdw (tx)</text>
+<rect x="708" y="322" width="10" height="10" fill="#d79b2b"/><text x="722" y="331">fdw+direct (hot keys)</text>
+<rect x="896" y="322" width="10" height="10" fill="#d79b2b"/><text x="910" y="331">fdw+direct (tx)</text>
+<rect x="1036" y="322" width="10" height="10" fill="#3b7ea1"/><text x="1050" y="331">plain (hot keys)</text>
+</svg>

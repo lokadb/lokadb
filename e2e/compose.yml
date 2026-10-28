@@ -1,0 +1,124 @@
+name: lokadb-e2e
+
+# Three networks model the deployment:
+#   cloudnet  - the SaaS (cloud Postgres, proxy, relay, applications, admin tools)
+#   custnet   - the organization's network (its Postgres, the agent)
+#   internet  - the only shared network: the agent dials the relay over it
+# Nothing in cloudnet can reach custnet: the tunnel is the only way in.
+# Fixed subnets: the relay lets only cloudnet reach the organizations' endpoints (org_allow).
+# E2E_NET (default 231) is the second octet: a second stand on the same machine runs with
+# E2E_NET=232 COMPOSE_PROJECT_NAME=lokadb-e2e2. relay.json says 10.231.; the relay's
+# entrypoint rewrites it to the stand's subnet.
+networks:
+  cloudnet: {ipam: {config: [{subnet: "10.${E2E_NET:-231}.1.0/24"}]}}
+  custnet: {ipam: {config: [{subnet: "10.${E2E_NET:-231}.2.0/24"}]}}
+  internet: {ipam: {config: [{subnet: "10.${E2E_NET:-231}.3.0/24"}]}}
+
+volumes:
+  certs: {}      # cloud only: CA key, relay key
+  capub: {}      # the CA certificate (public), the only thing the agent gets in advance
+  agentstate: {} # the agent's own key and certificate
+
+# Test stands run Postgres with fsync, synchronous_commit and full_page_writes off (PG_FSYNC, default off):
+# the data is thrown away after every run, and waiting on the disk was most of the run time.
+# The data directory is a tmpfs as well (PG_DATA_TMPFS), except for the e2e customer, which run.sh restarts:
+# with fsync off the stands still spent a third of their time waiting on the Docker disk (IO pressure
+# 33 % full, 24.10), and nothing there is kept.
+# The bench*.sh scripts set PG_FSYNC=on and move the tmpfs aside: their numbers must come from a durable
+# Postgres on a real disk.
+# E2E_IMAGES names the images the services below are built into (default: the project name, as compose
+# names them anyway). e2e/vm/e2e-par.sh builds once and runs every part of the run, each a project of its
+# own, on the same images.
+services:
+  cloud:
+    image: postgres:18
+    tmpfs: ["${PG_DATA_TMPFS:-/var/lib/postgresql}"] # the data in memory, see the note above services
+    # CLOUD_APP_HOSTS (run.sh): the application's role only from the proxies (initdb/cloud-hba.sh)
+    environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600", CLOUD_APP_HOSTS: "${CLOUD_APP_HOSTS:-}"}
+    # run.sh sets CLOUD_PRELOAD=pg_stat_statements for lokadb check; bench.sh measures without it
+    command: ["postgres", "-c", "wal_level=logical", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}", "-c", "recovery_init_sync_method=syncfs", "-c", "shared_preload_libraries=${CLOUD_PRELOAD:-}"]
+    volumes: [./initdb/cloud.sql:/docker-entrypoint-initdb.d/init.sql:ro, ./initdb/cloud-hba.sh:/docker-entrypoint-initdb.d/zz-hba.sh:ro]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
+    networks: [cloudnet]
+  customer:
+    image: postgres:18
+    # no tmpfs: run.sh stops and starts customer (the organization's database goes away and comes back), a tmpfs
+    # would come back empty
+    environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
+    command: ["postgres", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}", "-c", "recovery_init_sync_method=syncfs"]
+    volumes: [./initdb/customer.sql:/docker-entrypoint-initdb.d/init.sql:ro]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
+    networks: [custnet]
+  certs:
+    build: ../proxy
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-certs
+    entrypoint: ["sh", "-c", "lokadb certs -dir /certs -relay-host relay && cp /certs/ca.crt /capub/ca.crt"]
+    volumes: [certs:/certs, capub:/capub]
+    network_mode: none
+  relay:
+    build: ../proxy
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-relay
+    entrypoint: ["sh", "-c", "sed \"s/10\\.231\\./10.$$E2E_NET./\" /etc/relay.json >/tmp/relay.json && exec lokadb relay -config /tmp/relay.json"]
+    environment: {LOKADB_MUX_WINDOW_KB: "${MUX_WINDOW_KB:-}", E2E_NET: "${E2E_NET:-231}"}
+    volumes: [./relay.json:/etc/relay.json:ro, certs:/certs:ro]
+    depends_on: {certs: {condition: service_completed_successfully}, cloud: {condition: service_healthy}}
+    networks: [cloudnet, internet]
+  agent:
+    build: ../proxy
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-agent
+    # Runs in the organization's network; its only outbound connection is to the relay.
+    # It creates its own key and enrolls with the one-time token in secrets/token.
+    command: ["agent", "-relay", "relay:7443", "-ca", "/ca/ca.crt", "-state", "/state",
+              "-token-file", "/secrets/token", "-db", "customer:5432", "-cloud-listen", ":5433", "-sessions", "2"]
+    environment: {LOKADB_MUX_WINDOW_KB: "${MUX_WINDOW_KB:-}"}
+    volumes: [capub:/ca:ro, agentstate:/state, ./secrets:/secrets:ro]
+    depends_on: {certs: {condition: service_completed_successfully}}
+    networks: [custnet, internet]
+  proxy:
+    build: ../proxy
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-proxy
+    # LOKADB_RECORD (set by run.sh): the workload recording lokadb check reads; empty = off
+    command: ["proxy", "-config", "/etc/lokadb.json", "-record", "${LOKADB_RECORD:-}"]
+    volumes: [./proxy.json:/etc/lokadb.json:ro, ./workload:/workload]
+    depends_on: {cloud: {condition: service_healthy}}
+    # a fixed address: the cloud's pg_hba lets the application's role in from it only (run.sh)
+    networks: {cloudnet: {ipv4_address: "10.${E2E_NET:-231}.1.250"}}
+  lokadb:
+    build: ../proxy
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-lokadb
+    profiles: [tools]
+    volumes: [./specs:/specs:ro, ./workload:/workload:ro, ./proxy.json:/etc/lokadb.json:ro]
+    networks: [cloudnet]
+  loadgen:
+    build: ./loadgen
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-loadgen
+    profiles: [tools]
+    networks: [cloudnet]
+  bench:
+    build: ./bench
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-bench
+    profiles: [tools]
+    networks: [cloudnet]
+  bench-cust: # the same tool inside the organization's network (its database's own speed)
+    build: ./bench
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-bench-cust
+    profiles: [tools]
+    networks: [custnet]
+  laravel:
+    build: ./laravel
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-laravel
+    profiles: [apps]
+    environment: {DB_CONNECTION: pgsql, DB_HOST: proxy, DB_PORT: "6432", DB_DATABASE: laravel, DB_USERNAME: app, DB_PASSWORD: app}
+    networks: [cloudnet]
+  django:
+    build: ./django
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-django
+    profiles: [apps]
+    environment: {DB_HOST: proxy, DB_PORT: "6432", DB_NAME: django, DB_USER: app, DB_PASSWORD: app}
+    networks: [cloudnet]
+  goapp:
+    build: ./goapp
+    image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-goapp
+    profiles: [apps]
+    environment: {DATABASE_URL: "host=proxy port=6432 dbname=goapp user=app password=app sslmode=disable"}
+    networks: [cloudnet]

@@ -1,0 +1,4 @@
+{"tables": [
+  {"name": "projects", "tenant_column": "account_id"},
+  {"name": "tasks", "parent_table": "projects", "parent_column": "project_id"}
+]}

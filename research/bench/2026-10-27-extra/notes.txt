@@ -1,0 +1,39 @@
+scenario extra, started 2026-10-27T18:54:44+03:00
+organizations 20 x 20000 documents; moved: 1 2 3 4; rates: 15000 25000 35000 with 256 workers, timeout 1s; pgbouncer edoburu/pgbouncer:v1.24.1-p1
+{"setup": true, "orgs": 20, "documents": 400000, "seconds": 2.4}
+{"clients":16,"errors":0,"max_ms":43.807,"mean_ms":11.212,"op":"read","ops":85606,"p50_ms":10.865,"p95_ms":15.736,"p99_ms":19.137,"qps":1426.767,"seconds":60,"tags":{"class":"cloud","clients":"16","co
+{"clients":16,"errors":0,"max_ms":126.365,"mean_ms":11.848,"op":"read","ops":81019,"p50_ms":11.4,"p95_ms":16.795,"p99_ms":20.905,"qps":1350.317,"seconds":60,"tags":{"class":"cloud","clients":"16","con
+pgbouncer transaction: PgBouncer 1.24.1
+{"clients":16,"errors":0,"max_ms":43.807,"mean_ms":11.212,"op":"read","ops":85606,"p50_ms":10.865,"p95_ms":15.736,"p99_ms":19.137,"qps":1426.767,"seconds":60,"tags":{"class":"cloud","clients":"16","co
+{"clients":16,"errors":0,"max_ms":126.365,"mean_ms":11.848,"op":"read","ops":81019,"p50_ms":11.4,"p95_ms":16.795,"p99_ms":20.905,"qps":1350.317,"seconds":60,"tags":{"class":"cloud","clients":"16","con
+{"clients":16,"errors":0,"max_ms":123.066,"mean_ms":57.42,"op":"read","ops":16717,"p50_ms":56.011,"p95_ms":76.4,"p99_ms":88.976,"qps":278.617,"seconds":60,"tags":{"class":"cloud","clients":"16","confi
+{"clients":16,"errors":0,"max_ms":108.064,"mean_ms":58.765,"op":"read","ops":16333,"p50_ms":58.398,"p95_ms":76.446,"p99_ms":87.015,"qps":272.217,"seconds":60,"tags":{"class":"cloud","clients":"16","co
+pgbouncer session: PgBouncer 1.24.1
+{"clients":16,"errors":0,"max_ms":123.066,"mean_ms":57.42,"op":"read","ops":16717,"p50_ms":56.011,"p95_ms":76.4,"p99_ms":88.976,"qps":278.617,"seconds":60,"tags":{"class":"cloud","clients":"16","confi
+{"clients":16,"errors":0,"max_ms":108.064,"mean_ms":58.765,"op":"read","ops":16333,"p50_ms":58.398,"p95_ms":76.446,"p99_ms":87.015,"qps":272.217,"seconds":60,"tags":{"class":"cloud","clients":"16","co
+{"clients":16,"errors":0,"max_ms":105.719,"mean_ms":61.088,"op":"read","ops":15709,"p50_ms":61.046,"p95_ms":76.52,"p99_ms":85.611,"qps":261.817,"seconds":60,"tags":{"class":"cloud","clients":"16","con
+{"clients":16,"errors":0,"max_ms":111.9,"mean_ms":60.959,"op":"read","ops":15750,"p50_ms":61.637,"p95_ms":75.268,"p99_ms":86.178,"qps":262.5,"seconds":60,"tags":{"class":"cloud","clients":"16","config
+{"setup": true, "orgs": 20, "documents": 400000, "seconds": 2.8}
+enable: time=2026-10-27T16:05:41.045596674Z level=INFO msg="index on the organization column" table="\"document_versions__cloud\
+move-org 1: time=2026-10-27T16:05:45.841261737Z level=INFO msg="move-org done"
+move-org 2: time=2026-10-27T16:05:52.872559464Z level=INFO msg="move-org done"
+move-org 3: time=2026-10-27T16:06:05.906524225Z level=INFO msg="move-org done"
+move-org 4: time=2026-10-27T16:06:17.816937745Z level=INFO msg="move-org done"
+{"clients":256,"errors":0,"max_ms":112.741,"mean_ms":1.678,"op":"read","ops":449544,"p50_ms":0.943,"p95_ms":6.058,"p99_ms":13.216,"qps":7492.4,"seconds":60,"tags":{"class":"cloud","clients":"256","con
+{"clients":256,"errors":0,"max_ms":86.529,"mean_ms":1.856,"op":"update","ops":450465,"p50_ms":0.91,"p95_ms":6.912,"p99_ms":17.681,"qps":7507.75,"seconds":60,"tags":{"class":"cloud","clients":"256","co
+{"clients":256,"errors":0,"max_ms":60.479,"mean_ms":1.292,"op":"read","ops":449520,"p50_ms":0.806,"p95_ms":3.6,"p99_ms":10.49,"qps":7492,"seconds":60,"tags":{"class":"cloud","clients":"256","config":"
+{"clients":256,"errors":0,"max_ms":64.143,"mean_ms":1.285,"op":"update","ops":450489,"p50_ms":0.757,"p95_ms":3.76,"p99_ms":11.408,"qps":7508.15,"seconds":60,"tags":{"class":"cloud","clients":"256","co
+{"clients":256,"error_kinds":{"timeout: not answered within the timeout":146248},"errors":146248,"first_error":"timeout: not answered within the timeout","max_ms":1000.783,"mean_ms":986.625,"op":"upda
+{"clients":256,"error_kinds":{"timeout: not answered within the timeout":145230},"errors":145230,"first_error":"timeout: not answered within the timeout","max_ms":1000.38,"mean_ms":991.314,"op":"read"
+{"clients":256,"error_kinds":{"timeout: not started within the timeout (all workers busy)":1201386,"timeout: the queue of due operations was full":7145},"errors":1208531,"first_error":"timeout: not st
+{"clients":256,"error_kinds":{"timeout: not answered within the timeout":145853},"errors":145853,"first_error":"timeout: not answered within the timeout","max_ms":1000.658,"mean_ms":990.735,"op":"upda
+{"clients":256,"error_kinds":{"timeout: not answered within the timeout":150788},"errors":150788,"first_error":"timeout: not answered within the timeout","max_ms":1000.121,"mean_ms":985.665,"op":"upda
+{"clients":256,"error_kinds":{"timeout: not answered within the timeout":138180},"errors":138180,"first_error":"timeout: not answered within the timeout","max_ms":1000.512,"mean_ms":984.648,"op":"read
+{"clients":256,"error_kinds":{"timeout: not started within the timeout (all workers busy)":1813710,"timeout: the queue of due operations was full":8848},"errors":1822558,"first_error":"timeout: not st
+{"clients":256,"error_kinds":{"timeout: not answered within the timeout":139020},"errors":139020,"first_error":"timeout: not answered within the timeout","max_ms":1000.556,"mean_ms":984.954,"op":"upda
+{"clients":256,"errors":0,"max_ms":54.626,"mean_ms":0.764,"op":"read","ops":1049731,"p50_ms":0.422,"p95_ms":1.649,"p99_ms":7.443,"qps":17495.517,"seconds":60,"tags":{"class":"cloud","clients":"256","c
+{"clients":256,"errors":0,"max_ms":113.832,"mean_ms":0.989,"op":"update","ops":1050301,"p50_ms":0.572,"p95_ms":2.301,"p99_ms":9.223,"qps":17505.017,"seconds":60,"tags":{"class":"cloud","clients":"256"
+{"clients":256,"errors":0,"max_ms":68.17,"mean_ms":0.94,"op":"read","ops":1049628,"p50_ms":0.467,"p95_ms":2.149,"p99_ms":10.467,"qps":17493.8,"seconds":60,"tags":{"class":"cloud","clients":"256","conf
+{"clients":256,"errors":0,"max_ms":70.642,"mean_ms":1.246,"op":"update","ops":1050404,"p50_ms":0.631,"p95_ms":3.141,"p99_ms":14.32,"qps":17506.733,"seconds":60,"tags":{"class":"cloud","clients":"256",
+data check extra (open model): ok: 400000 rows in 20 organizations (400000 before, +0: 0 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud
+the run ended at its end, on a change of the script under it (dropdb and meta only)

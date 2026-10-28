@@ -1,0 +1,31 @@
+scenario extra, started 2026-10-27T20:11:19+03:00
+organizations 20 x 20000 documents; moved: 1 2 3 4; rates: 17500 20000 22500 25000 with 256 workers, timeout 1s; pgbouncer edoburu/pgbouncer:v1.24.1-p1
+{"setup": true, "orgs": 20, "documents": 400000, "seconds": 2.4}
+{"setup": true, "orgs": 20, "documents": 400000, "seconds": 2.5}
+enable: time=2026-10-27T17:13:35.828863093Z level=INFO msg="index on the organization column" table="\"document_versions__cloud\
+move-org 1: time=2026-10-27T17:13:39.943246947Z level=INFO msg="move-org done"
+move-org 2: time=2026-10-27T17:13:46.137286631Z level=INFO msg="move-org done"
+move-org 3: time=2026-10-27T17:13:59.482626506Z level=INFO msg="move-org done"
+move-org 4: time=2026-10-27T17:14:13.986196172Z level=INFO msg="move-org done"
+{"clients":256,"error_kinds":{"timeout: not started within the timeout (all workers busy)":8650},"errors":8650,"first_error":"timeout: not started within the timeout (all workers busy)","max_ms":0,"me
+{"clients":256,"errors":0,"max_ms":1043.981,"mean_ms":76.33,"op":"update","ops":521252,"p50_ms":1.331,"p95_ms":770.783,"p99_ms":1019.092,"qps":8687.533,"seconds":60,"tags":{"class":"cloud","clients":"
+{"clients":256,"errors":0,"max_ms":72.234,"mean_ms":2.157,"op":"read","ops":524395,"p50_ms":0.961,"p95_ms":7.839,"p99_ms":16.393,"qps":8739.917,"seconds":60,"tags":{"class":"cloud","clients":"256","co
+{"clients":256,"errors":0,"max_ms":135.928,"mean_ms":2.369,"op":"update","ops":525621,"p50_ms":0.98,"p95_ms":8.831,"p99_ms":21.177,"qps":8760.35,"seconds":60,"tags":{"class":"cloud","clients":"256","c
+{"clients":256,"errors":0,"max_ms":181.452,"mean_ms":4.486,"op":"update","ops":600182,"p50_ms":1.3,"p95_ms":17.034,"p99_ms":57.36,"qps":10003.033,"seconds":60,"tags":{"class":"cloud","clients":"256","
+{"clients":256,"errors":0,"max_ms":1070.838,"mean_ms":84.349,"op":"read","ops":588916,"p50_ms":1.864,"p95_ms":818.192,"p99_ms":1021.67,"qps":9815.267,"seconds":60,"tags":{"class":"cloud","clients":"25
+{"clients":256,"error_kinds":{"timeout: not started within the timeout (all workers busy)":21549,"timeout: the queue of due operations was full":186},"errors":21735,"first_error":"timeout: not started
+{"clients":256,"errors":0,"max_ms":1066.704,"mean_ms":85.683,"op":"update","ops":589349,"p50_ms":1.884,"p95_ms":819.317,"p99_ms":1020.695,"qps":9822.483,"seconds":60,"tags":{"class":"cloud","clients":
+{"clients":256,"errors":0,"max_ms":549.323,"mean_ms":50.756,"op":"update","ops":675178,"p50_ms":7.217,"p95_ms":350.77,"p99_ms":428.592,"qps":11252.967,"seconds":60,"tags":{"class":"cloud","clients":"2
+{"clients":256,"errors":0,"max_ms":1076.513,"mean_ms":202.093,"op":"read","ops":668326,"p50_ms":8.287,"p95_ms":1005.181,"p99_ms":1014.671,"qps":11138.767,"seconds":60,"tags":{"class":"cloud","clients"
+{"clients":256,"error_kinds":{"timeout: not started within the timeout (all workers busy)":12956},"errors":12956,"first_error":"timeout: not started within the timeout (all workers busy)","max_ms":0,"
+{"clients":256,"errors":0,"max_ms":1285.315,"mean_ms":206.412,"op":"update","ops":668731,"p50_ms":12.991,"p95_ms":1012.71,"p99_ms":1023.434,"qps":11145.517,"seconds":60,"tags":{"class":"cloud","client
+{"clients":256,"errors":0,"max_ms":1214.859,"mean_ms":556.842,"op":"update","ops":703825,"p50_ms":511.738,"p95_ms":1018.945,"p99_ms":1030.642,"qps":11730.417,"seconds":60,"tags":{"class":"cloud","clie
+{"clients":256,"errors":0,"max_ms":1068.021,"mean_ms":420.053,"op":"read","ops":743360,"p50_ms":172.553,"p95_ms":1005.061,"p99_ms":1013.892,"qps":12389.333,"seconds":60,"tags":{"class":"cloud","client
+{"clients":256,"error_kinds":{"timeout: not started within the timeout (all workers busy)":12086},"errors":12086,"first_error":"timeout: not started within the timeout (all workers busy)","max_ms":0,"
+{"clients":256,"errors":0,"max_ms":1213.128,"mean_ms":424.736,"op":"update","ops":744554,"p50_ms":178.214,"p95_ms":1011.405,"p99_ms":1021.174,"qps":12409.233,"seconds":60,"tags":{"class":"cloud","clie
+{"clients":256,"errors":0,"max_ms":95.895,"mean_ms":0.615,"op":"read","ops":749578,"p50_ms":0.414,"p95_ms":1.286,"p99_ms":5.451,"qps":12492.967,"seconds":60,"tags":{"class":"cloud","clients":"256","co
+{"clients":256,"errors":0,"max_ms":27.024,"mean_ms":0.839,"op":"update","ops":750422,"p50_ms":0.58,"p95_ms":1.796,"p99_ms":6.907,"qps":12507.033,"seconds":60,"tags":{"class":"cloud","clients":"256","c
+{"clients":256,"errors":0,"max_ms":912.238,"mean_ms":47.178,"op":"read","ops":749546,"p50_ms":0.429,"p95_ms":518.905,"p99_ms":852.401,"qps":12492.433,"seconds":60,"tags":{"class":"cloud","clients":"25
+{"clients":256,"errors":0,"max_ms":909.451,"mean_ms":47.356,"op":"update","ops":750454,"p50_ms":0.598,"p95_ms":518.143,"p99_ms":856.551,"qps":12507.567,"seconds":60,"tags":{"class":"cloud","clients":"
+data check extra (open model): ok: 400000 rows in 20 organizations (400000 before, +0: 0 inserts ok, 0 failed), no rows of another organization in any database, none of the moved left in the cloud
+finished 2026-10-27T20:31:43+03:00; results in /e/dev/lokadb/.claude/worktrees/block-14-load-85ba19/research/bench/2026-10-27-open-extra

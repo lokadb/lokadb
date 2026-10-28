@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proxy:
+    name: proxy (vet, build, test, race)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proxy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: proxy/go.sum
+      - name: vet
+        run: go vet ./...
+      - name: build
+        run: CGO_ENABLED=1 go build -o /tmp/lokadb ./cmd/lokadb
+      - name: test
+        run: go test ./...
+      - name: test -race
+        run: go test -race ./...
+
+  # The end-to-end stand and the defect checks need Docker Compose, several GB of memory and from
+  # twenty minutes to hours: they run on request (workflow_dispatch) or by a maintainer, not on
+  # every pull request.
+  e2e:
+    name: e2e (on request)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash e2e/run.sh
