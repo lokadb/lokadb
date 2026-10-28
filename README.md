@@ -11,7 +11,7 @@ Enterprise customers increasingly ask a multi-tenant SaaS for the same thing: *"
 LokaDB is a Postgres wire-protocol proxy that takes a third way. Your application keeps one database connection string and keeps sending the SQL it sends today. LokaDB stores the rows of the tables you choose, for the organizations you choose, in **each organization's own Postgres**, and leaves everything else in your cloud database. Moving an organization out, and back, happens online while the application writes.
 
 
-> **Status:** early. LokaDB runs three unmodified demo applications (Laravel, Django, Go) end to end and is suitable for **a limited pilot on a compatible application**. It is not a drop-in for every schema or every workload: see [What's supported](#whats-supported) and [the roadmap](ROADMAP.md).
+> **Status:** early, ready for a pilot. LokaDB works with any application that talks to Postgres over its protocol, in any language and with any ORM: only the connection string changes. What decides is your schema and your queries, not the framework, and `lokadb check` tells you before anything is changed. Every build is tested end to end under load with three unmodified applications (Laravel, Django, Go) and against more than 300 failure scenarios. See [What's supported](#whats-supported), [Limits](docs/limits.md) and [the roadmap](ROADMAP.md).
 
 ---
 
@@ -78,7 +78,7 @@ The application only changes its connection string to point at the proxy (`host`
 
 ## What's supported
 
-- **Applications:** tested end to end with unmodified **Laravel** (Eloquent, artisan migrate), **Django** (ORM, migrate) and **Go** (GORM over pgx), plus extended-protocol clients (pgx, psycopg, JDBC, PDO).
+- **Applications:** any application over the Postgres protocol, simple and extended (prepared statements, binary parameters), whatever the language or ORM. Tested end to end with unmodified **Laravel** (Eloquent, artisan migrate), **Django** (ORM, migrate) and **Go** (GORM over pgx); drivers tested: pgx, psycopg, JDBC, PDO.
 - **Finding the organization:** equality, `IN` and `= ANY(array)` on the tenant column, the row key or a foreign key, in literals and in bound parameters (text and binary); `INSERT … VALUES` and `UNNEST` (Django `bulk_create`); joins through equal columns; subqueries that name the organization. Relations without a foreign key, cloud tables that know the organization, and unique keys can be declared.
 - **Statement forms:** upsert (`ON CONFLICT`), `MERGE` (one matched and one not-matched branch), `COPY FROM STDIN` and `COPY TO`, cursors including `WITH HOLD`, `LISTEN`/`NOTIFY`, prepared statements surviving `enable` and migrations.
 - **Schemas:** keys of type `smallint`, `integer`, `bigint`, `uuid`, `text`/`varchar` (deterministic collation) and composite keys; tenant column of integer or `uuid` type; tables in any schema; materialized views, views, rules, functions over the row type, row-level security of the application, identity columns, publications; extensions, enums, domains, collations and functions are created in the customer database when needed.
