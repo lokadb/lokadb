@@ -110,6 +110,9 @@ type Config struct {
 	found                           *Found               // the application's database and role, from its environment
 	adminDSN                        string               // the DSN the runner works as (the application's, or LOKADB_DB's)
 	settings                        *cloudproto.Settings // the panel's, as last applied
+	public                          *cloudproto.PublicProxy
+	publicKnown                     bool // the panel's settings have arrived: until then proxy.json (what was applied last) stands
+	restart                         bool
 	info                            map[string]string
 	Log                             *slog.Logger
 	willMake                        map[string]bool // files a dry Provision found it would create
@@ -182,10 +185,12 @@ func (c *Config) finish() error {
 	if c.Relay.CloudHost == "" {
 		c.Relay.CloudHost = RelayName
 		if c.Embedded {
-			// the compose service of the paste: the container's own name; the program on a plain host
-			// (a systemd service) reaches its own relay at the loopback
+			// the name the paste gives the container (a compose service, a Service of Kubernetes, the
+			// name of docker run) resolves to itself, and the database's own container reaches the
+			// relay by it; where it does not resolve (a plain host, or a container that runs
+			// systemd), the loopback is the relay's address
 			c.Relay.CloudHost = "127.0.0.1"
-			if _, _, inContainer := hostPath("/"); inContainer {
+			if resolves("lokadb") {
 				c.Relay.CloudHost = "lokadb"
 			}
 		}
@@ -340,6 +345,8 @@ func (c *Config) Check(ctx context.Context) []cloudproto.Problem {
 	if dbOK {
 		if err := pingErr(ctx, c.DB); err != nil {
 			out = append(out, c.embeddedDBProblem(connProblem("db", "the SaaS database", c.DB, err), err))
+		} else if c.Embedded {
+			c.probeDB(ctx)
 		}
 	}
 	if cpOK {
@@ -615,4 +622,12 @@ func humanize(ps []cloudproto.Problem) []cloudproto.Problem {
 		}
 	}
 	return ps
+}
+
+// resolves: the name has an address from here (a test replaces it).
+var resolves = func(name string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, name)
+	return err == nil && len(addrs) > 0
 }

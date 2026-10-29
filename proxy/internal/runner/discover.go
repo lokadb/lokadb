@@ -21,7 +21,7 @@ type Found struct {
 
 // Describe: "pgsql:5432/coders_talk as forge" (from DATABASE_URL): no password.
 func (f Found) Describe() string {
-	return fmt.Sprintf("%s:%s/%s as %s (from %s)", f.Host, f.Port, f.DBName, f.User, f.Source)
+	return fmt.Sprintf("%s:%s/%s as %s", f.Host, f.Port, f.DBName, f.User)
 }
 
 // Upstream: the proxy's upstream: the server, not the application's user or password.
@@ -72,9 +72,12 @@ func DiscoverDB(get func(string) string) (Found, error) {
 
 func (f *Found) finish(pass string) {
 	if f.SSL == "" {
-		if !strings.Contains(f.Host, ".") && !strings.Contains(f.Host, ":") && f.Host != "localhost" {
+		switch {
+		case !strings.Contains(f.Host, ".") && !strings.Contains(f.Host, ":") && f.Host != "localhost":
 			f.SSL = "disable" // a compose service name
-		} else {
+		case ManagedProvider(f.Host) != "":
+			f.SSL = "require" // a managed service: never in clear text over the internet
+		default:
 			f.SSL = "prefer"
 		}
 	}

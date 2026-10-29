@@ -5,6 +5,8 @@ package cloudproto
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 )
@@ -94,11 +96,21 @@ type Settings struct {
 	Spec json.RawMessage `json:"spec,omitempty"`
 	// OnlyKeys: the organizations list shows keys only, no names (strict SaaSes).
 	OnlyKeys bool `json:"only_keys,omitempty"`
+	// ProxyPublic: the proxy listens to the internet, for an application on a platform: TLS is
+	// required, and only the addresses in Allow may connect (never the whole internet).
+	ProxyPublic *PublicProxy `json:"proxy_public,omitempty"`
 	// OrgTable and OrgKey: the table of customers and its key column (what the person chose in
 	// step 2); OrgLabel: the column to show as the customer's name (found by name when empty).
 	OrgTable string `json:"org_table,omitempty"`
 	OrgKey   string `json:"org_key,omitempty"`
 	OrgLabel string `json:"org_label,omitempty"`
+}
+
+// PublicProxy: Name is the public name of this server (the certificate is made for it), Allow the
+// addresses or CIDR ranges of the platform's outgoing traffic.
+type PublicProxy struct {
+	Name  string   `json:"name"`
+	Allow []string `json:"allow"`
 }
 
 // OrgListArgs asks for a page of the customers table, read live; the service keeps nothing of
@@ -407,4 +419,31 @@ type Probe struct {
 // Quote: a value of a libpq key=value DSN.
 func Quote(v string) string {
 	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
+}
+
+// Validate: a public proxy needs a name (a DNS name or an IP address, no port), and addresses that
+// may connect, none of which is the whole internet.
+func (p *PublicProxy) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if strings.TrimSpace(p.Name) == "" || strings.ContainsAny(p.Name, " /@:") {
+		return fmt.Errorf("the public name of this server: a DNS name or an IP address, without a port")
+	}
+	if len(p.Allow) == 0 {
+		return fmt.Errorf("name the addresses that may connect: a proxy open to every address is not offered")
+	}
+	for _, e := range p.Allow {
+		e = strings.TrimSpace(e)
+		if pfx, err := netip.ParsePrefix(e); err == nil {
+			if pfx.Bits() == 0 {
+				return fmt.Errorf("%q is the whole internet: name the addresses that may connect", e)
+			}
+			continue
+		}
+		if _, err := netip.ParseAddr(e); err != nil {
+			return fmt.Errorf("%q is not an IP address or a CIDR range", e)
+		}
+	}
+	return nil
 }

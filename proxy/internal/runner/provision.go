@@ -134,8 +134,14 @@ func writable(dir string) error {
 func (c *Config) Prepare(ctx context.Context) []cloudproto.Problem {
 	var probs []cloudproto.Problem
 	if _, err := c.Provision(ctx, false, os.Stdout); err != nil {
-		probs = append(probs, cloudproto.Problem{Key: "provision", Message: "the LokaDB directory's files could not be made: " + Redact(err.Error()),
-			Fix: "LOKADB_DB must be a role that may create roles and databases, and " + Dir + " must be mounted writable (docker run -v HOSTDIR:" + Dir + "); or make the files yourself: lokadb init -dir HOSTDIR -admin \"$LOKADB_DB\" -relay-host NAME"})
+		p := cloudproto.Problem{Key: "provision", Message: "the LokaDB directory's files could not be made: " + Redact(err.Error()),
+			Fix: "LOKADB_DB must be a role that may create roles and databases, and " + Dir + " must be mounted writable (docker run -v HOSTDIR:" + Dir + "); or make the files yourself: lokadb init -dir HOSTDIR -admin \"$LOKADB_DB\" -relay-host NAME"}
+		if strings.Contains(err.Error(), "permission denied to create") {
+			// the usual case with a managed service: the application's own role is all LokaDB found
+			p.Message = "LokaDB needs an administrator role once, to make its own role and database, and the role your application connects as is not one."
+			p.Fix = "Give LokaDB an administrator of your Postgres in the variable LOKADB_DB (host=… dbname=… user=… password=… sslmode=require): on a managed service the role the provider made for you (postgres on Amazon RDS, doadmin on DigitalOcean, cloudsqlsuperuser members on Google Cloud SQL…). The password stays on your server. The table on the setup page lists the role of each provider."
+		}
+		probs = append(probs, p)
 	}
 	if c.Embedded {
 		if err := c.startEmbedded(ctx); err != nil {

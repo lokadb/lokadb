@@ -2,15 +2,25 @@ package runner
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -117,6 +127,10 @@ func (c *Config) ApplySettings(s *cloudproto.Settings) (bool, error) {
 			*dst, changed = v, true
 		}
 	}
+	c.public, c.publicKnown = s.ProxyPublic, true
+	if c.applyPublicProxy() {
+		changed = true
+	}
 	set(&c.Relay.Agent, s.RelayPublic)
 	set(&c.Relay.CloudHost, s.RelayName)
 	set(&c.Owner, s.Owner)
@@ -174,7 +188,8 @@ func (c *Config) startEmbedded(ctx context.Context) error {
 		}
 	}
 	var err error
-	embeddedOnce.Do(func() { err = c.runEmbedded(ctx) })
+	c.applyPublicProxy() // before the proxy reads its file
+	embeddedOnce.Do(func() { err = c.runEmbedded(ctx); embeddedDone.Store(err == nil) })
 	return err
 }
 
@@ -266,6 +281,10 @@ func (r *Runner) applySettings() {
 	}
 	if changed {
 		r.Log.Info("the panel's settings applied", "relay", s.RelayPublic, "owner", s.Owner, "spec", len(s.Spec) > 0)
+	}
+	if r.Cfg.RestartRequested() && r.Stop != nil {
+		r.Log.Warn("ending the process to start it again with the new proxy setting")
+		r.Stop()
 	}
 }
 
@@ -384,6 +403,24 @@ func (c *Config) embeddedDBProblem(p cloudproto.Problem, cause error) cloudproto
 			"Postgres must listen on that address and its pg_hba.conf must let the container in. Or use the server's own address. LokaDB reads the same settings file as your application, so if the application itself runs outside Docker, give the container its own LOKADB_DB with the address it can reach."
 		return p
 	}
+	if m := pgHBA.FindStringSubmatch(cause.Error()); m != nil {
+		p.Message = fmt.Sprintf("The database refused LokaDB: it sees it at the address %s and has no rule for it.", m[1])
+		p.Fix = fmt.Sprintf("Allow %s: in the provider's firewall or security group, and in pg_hba.conf if you run the server (a host line for this address, user and database, scram-sha-256, and a reload).", m[1])
+		if strings.Contains(cause.Error(), "no encryption") {
+			// the server says the same for an unlisted address and for a plain connection to a server that wants TLS
+			if cfg, err := pgconn.ParseConfig(c.DB); err == nil && cfg.TLSConfig == nil {
+				p.Message = fmt.Sprintf("The database has no rule for LokaDB (it sees it at %s) for a connection that is not encrypted. Either it accepts only TLS, or that address is not allowed.", m[1])
+				p.Fix = "First add sslmode=require to the database settings (DATABASE_URL gets ?sslmode=require; or DB_SSLMODE=require, or sslmode=require in LOKADB_DB): most managed services accept nothing else. If it still refuses, allow " + m[1] + " in the provider's firewall or security group, and in pg_hba.conf if you run the server. A host name without dots is taken for a Docker service, which has no TLS."
+			}
+		}
+		return p
+	}
+	if cfg, err := pgconn.ParseConfig(c.DB); err == nil && ManagedProvider(cfg.Host) != "" && (strings.Contains(cause.Error(), "timeout") || strings.Contains(cause.Error(), "deadline") || strings.Contains(cause.Error(), "i/o timeout")) {
+		p.Message = fmt.Sprintf("%s did not answer in time. Usually its firewall does not let this server in.", ManagedProvider(cfg.Host))
+		p.Fix = "Allow this server's outgoing address in the provider's firewall (an RDS security group, Cloud SQL authorized networks, an Azure firewall rule, Supabase network restrictions...). " +
+			"This server's own addresses are " + localAddresses() + "; behind a NAT (most cloud servers) the one the database sees is the public address of the NAT or of the server, which your cloud console shows as the instance's public IP (or run curl https://checkip.amazonaws.com on the server yourself). When LokaDB can connect, this page shows the address the database sees."
+		return p
+	}
 	if strings.Contains(p.Message, "cannot be resolved") || strings.Contains(Redact(cause.Error()), "no such host") {
 		p.Fix = "LokaDB's container is on your application's docker-compose network only. If Postgres runs in another docker-compose project, put the lokadb service on that project's network too: " +
 			"networks: [default, DBPROJECT_default] under lokadb, and at the bottom of the file networks: { DBPROJECT_default: { external: true } } (docker network ls shows the network's name). " +
@@ -427,4 +464,218 @@ func loadFound() (Found, error) {
 		return f, err
 	}
 	return f, json.Unmarshal(b, &f)
+}
+
+// managedHosts: the name endings of the managed Postgres services, and what the provider calls
+// the administrator role (the panel says which one to use).
+var managedHosts = []struct{ suffix, provider string }{
+	{".rds.amazonaws.com", "Amazon RDS or Aurora"},
+	{".rds.amazonaws.com.cn", "Amazon RDS or Aurora"},
+	{".database.azure.com", "Azure Database for PostgreSQL"},
+	{".postgres.database.azure.com", "Azure Database for PostgreSQL"},
+	{".supabase.co", "Supabase"},
+	{".pooler.supabase.com", "Supabase"},
+	{".neon.tech", "Neon"},
+	{".db.ondigitalocean.com", "DigitalOcean"},
+	{".cloudsql.google.com", "Google Cloud SQL"},
+	{".aivencloud.com", "Aiven"},
+	{".render.com", "Render"},
+	{".railway.app", "Railway"},
+	{".rlwy.net", "Railway"},
+	{".crunchybridge.com", "Crunchy Bridge"},
+}
+
+// ManagedProvider: the managed service a host name belongs to, "" for any other.
+func ManagedProvider(host string) string {
+	h := strings.ToLower(host)
+	for _, m := range managedHosts {
+		if strings.HasSuffix(h, m.suffix) {
+			return m.provider
+		}
+	}
+	return ""
+}
+
+var pgHBA = regexp.MustCompile(`no pg_hba\.conf entry for host "([^"]+)"`)
+
+// probeDB tells the panel two facts about the database the runner is connected to: the address the
+// database sees LokaDB at (what a firewall or allowlist of a managed service must let in: from the
+// database itself, no third party is asked), and whether the role LokaDB works as is an
+// administrator (enable needs to create an extension and roles).
+func (c *Config) probeDB(ctx context.Context) {
+	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	conn, err := ownsql.Connect(cctx, c.DB)
+	if err != nil {
+		return
+	}
+	defer conn.Close(context.Background())
+	var addr *string
+	var admin bool
+	err = conn.QueryRow(cctx, `SELECT host(inet_client_addr()),
+		coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false) OR EXISTS (
+		  SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member
+		  WHERE u.rolname = current_user AND r.rolname IN ('rds_superuser', 'cloudsqlsuperuser', 'azure_pg_admin', 'supabase_admin', 'neon_superuser', 'doadmin'))`).Scan(&addr, &admin)
+	if err != nil {
+		return
+	}
+	if addr != nil {
+		c.setInfo("outgoing_address", *addr)
+	}
+	if admin {
+		c.setInfo("rights", "administrator")
+	} else {
+		c.setInfo("rights", "limited")
+	}
+	if cfg, err := pgconn.ParseConfig(c.DB); err == nil {
+		c.setInfo("db_user", cfg.User)
+		if p := ManagedProvider(cfg.Host); p != "" {
+			c.setInfo("managed", p)
+		}
+	}
+	var addrs []string
+	if ifs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range ifs {
+			if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() && !ipn.IP.IsLinkLocalUnicast() {
+				addrs = append(addrs, ipn.IP.String())
+			}
+		}
+	}
+	c.setInfo("local_addresses", strings.Join(addrs, ", "))
+}
+
+func localAddresses() string {
+	var addrs []string
+	if ifs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range ifs {
+			if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() && !ipn.IP.IsLinkLocalUnicast() {
+				addrs = append(addrs, ipn.IP.String())
+			}
+		}
+	}
+	if len(addrs) == 0 {
+		return "not known here"
+	}
+	return strings.Join(addrs, ", ")
+}
+
+// publicProxyJSON: the keys of proxy.json that the public proxy owns.
+type publicKeys struct {
+	TLS   json.RawMessage `json:"tls,omitempty"`
+	Allow []string        `json:"allow,omitempty"`
+}
+
+// ValidatePublicProxy: see cloudproto.PublicProxy.Validate.
+func ValidatePublicProxy(p *cloudproto.PublicProxy) error { return p.Validate() }
+
+// applyPublicProxy makes proxy.json say what the panel chose: TLS required with a certificate for the
+// public name (made once, self-signed, in the directory; a certificate of your own put there as
+// proxy.crt and proxy.key is used) and the allow list; or neither, when the panel turned the public
+// proxy off. It reports a change. A proxy that is already running is restarted (the process exits,
+// and its supervisor starts it again: a second of reconnecting for the application).
+func (c *Config) applyPublicProxy() bool {
+	if !c.publicKnown {
+		return false // a restart must not wipe what was applied before the panel's settings come
+	}
+	path := filepath.Join(Dir, "proxy.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false // not made yet: Prepare calls this again after it is
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	want := map[string]json.RawMessage{}
+	if p := c.public; p != nil {
+		if err := ValidatePublicProxy(p); err != nil {
+			if c.Log != nil {
+				c.Log.Warn("the public proxy's settings are not used", "err", err)
+			}
+			return false
+		}
+		crt, key := filepath.Join(Dir, "proxy.crt"), filepath.Join(Dir, "proxy.key")
+		if err := ensureSelfSigned(crt, key, strings.TrimSpace(p.Name)); err != nil {
+			if c.Log != nil {
+				c.Log.Warn("the proxy's certificate could not be made", "err", err)
+			}
+			return false
+		}
+		want["tls"], _ = json.Marshal(map[string]any{"cert": crt, "key": key, "require": true})
+		allow := make([]string, 0, len(p.Allow))
+		for _, e := range p.Allow {
+			allow = append(allow, strings.TrimSpace(e))
+		}
+		sort.Strings(allow)
+		want["allow"], _ = json.Marshal(allow)
+	}
+	same := true
+	for _, k := range []string{"tls", "allow"} {
+		if !jsonEqual(m[k], want[k]) && !(m[k] == nil && want[k] == nil) {
+			same = false
+		}
+	}
+	if same {
+		return false
+	}
+	for _, k := range []string{"tls", "allow"} {
+		if v, ok := want[k]; ok {
+			m[k] = v
+		} else {
+			delete(m, k)
+		}
+	}
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return false
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, append(out, '\n'), 0o644) != nil || os.Rename(tmp, path) != nil {
+		return false
+	}
+	if c.Log != nil {
+		c.Log.Warn("the proxy's public setting changed: LokaDB restarts to apply it", "public", c.public != nil)
+	}
+	c.restart = embeddedStarted()
+	return true
+}
+
+// RestartRequested: a setting that needs a new process was applied (the caller ends the process).
+func (c *Config) RestartRequested() bool { return c.restart }
+
+var embeddedDone atomic.Bool
+
+func embeddedStarted() bool { return embeddedDone.Load() }
+
+// ensureSelfSigned makes a certificate and key for name if neither file is there.
+func ensureSelfSigned(crt, key, name string) error {
+	if _, err := os.Stat(crt); err == nil {
+		if _, err := os.Stat(key); err == nil {
+			return nil
+		}
+	}
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
+	tmpl := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: name}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(1, 0, 0),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	if ip := net.ParseIP(name); ip != nil {
+		tmpl.IPAddresses = []net.IP{ip}
+	} else {
+		tmpl.DNSNames = []string{name}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	if err != nil {
+		return err
+	}
+	kd, err := x509.MarshalECPrivateKey(k)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(crt, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile(key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kd}), 0o600)
 }

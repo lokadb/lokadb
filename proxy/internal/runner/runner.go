@@ -49,6 +49,9 @@ type Runner struct {
 	ops     *Ops
 	started time.Time
 
+	// Stop ends the process (set by the command): a setting that needs a new process asks for it
+	Stop context.CancelFunc
+
 	settings   *cloudproto.Settings // the panel's, from the last poll answer
 	recheckNow chan struct{}        // new settings: check again now, not in 30 s
 

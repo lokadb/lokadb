@@ -109,7 +109,11 @@ type Config struct {
 	// tenant_session.go); nil: lokadb.tenant only, a statement naming another organization fails.
 	Tenant *TenantConfig `json:"tenant,omitempty"`
 	// TLS between the applications and the proxy (tls.go); nil: none, SSLRequest answered 'N'.
-	TLS *TLSConfig `json:"tls,omitempty"`
+	// Allow: the addresses (IPs or CIDR ranges) that may connect; others are closed at once, before a
+	// byte is read. Empty: any address (a proxy on a private network). A proxy that listens on the
+	// internet, for an application on a platform, needs it, and tls with require.
+	Allow []string   `json:"allow,omitempty"`
+	TLS   *TLSConfig `json:"tls,omitempty"`
 }
 
 type Server struct {
@@ -143,6 +147,7 @@ type Server struct {
 	metaCache  *metaCache             // the shared cache of the metadata (meta_cache.go); nil: off
 	types      typeCache              // the statements' types of the direct path, for every session (direct_types.go)
 	creds      credStore              // the organizations' credentials of the control plane (credentials.go)
+	allow      *allowList             // the addresses that may connect (allow.go); nil: any
 	seen       roleSeen               // the roles that connected (seen.go)
 }
 
@@ -169,6 +174,9 @@ func (s *Server) ListenAndServe() error {
 		s.fanout["*"], _ = s.cfg.FanoutFor("*")
 	}
 	var err error
+	if s.allow, err = parseAllow(s.cfg.Allow); err != nil {
+		return err
+	}
 	if s.tls, err = s.cfg.TLS.load(s.log); err != nil {
 		return err
 	}
@@ -236,6 +244,13 @@ func (s *Server) ListenAndServe() error {
 			continue
 		}
 		backoff = 5 * time.Millisecond
+		if ip, ok := s.allow.allows(c); !ok {
+			c.Close() // not on the list: nothing is read, nothing is answered
+			if s.allow.shouldTell(ip) {
+				s.log.Warn("refused: this address is not in the allow list", "addr", ip.String())
+			}
+			continue
+		}
 		select {
 		case s.slots <- struct{}{}:
 			go func() {

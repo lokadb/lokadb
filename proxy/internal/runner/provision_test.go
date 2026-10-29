@@ -3,6 +3,8 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"github.com/lokadb/lokadb/proxy/internal/cloudproto"
 	"os"
 	"path/filepath"
@@ -158,7 +160,9 @@ func read(t *testing.T, p string) []byte {
 // environment and takes the rest from the panel's settings; the spec lands in the volume once.
 func TestEmbeddedSettings(t *testing.T) {
 	dir := useDir(t)
-	mountInfo = write(t, dir+"/mountinfo", "1 0 0:50 / / rw - overlay overlay rw\n") // in a container
+	old := resolves
+	t.Cleanup(func() { resolves = old })
+	resolves = func(string) bool { return true } // in a container its own name resolves
 	t.Setenv("LOKADB_DB", "")
 	c, err := NewEmbedded(env(map[string]string{"LOKADB_TOKEN": "lrr_x", "DB_HOST": "pgsql", "DB_DATABASE": "coders", "DB_USERNAME": "forge", "DB_PASSWORD": "pw"}), nil)
 	if err != nil {
@@ -242,16 +246,16 @@ func TestDirFromEnv(t *testing.T) {
 	}
 }
 
-// The relay's name in the runner's own network: the compose service in a container, the loopback
-// on a plain host (no Docker, a systemd service).
+// The relay's name in the runner's own network: the container's name where it resolves (compose,
+// Kubernetes, docker run), the loopback where it does not (a plain host).
 func TestEmbeddedRelayName(t *testing.T) {
-	dir := t.TempDir()
-	t.Cleanup(func() { mountInfo = "/proc/self/mountinfo" })
-	for root, want := range map[string]string{"overlay": "lokadb", "ext4": "127.0.0.1"} {
-		mountInfo = write(t, filepath.Join(dir, root), "1 0 0:50 / / rw - "+root+" x rw\n")
+	old := resolves
+	t.Cleanup(func() { resolves = old })
+	for want, ok := range map[string]bool{"lokadb": true, "127.0.0.1": false} {
+		resolves = func(string) bool { return ok }
 		c := &Config{Service: "https://x", Embedded: true}
 		if err := c.finish(); err != nil || c.Relay.CloudHost != want {
-			t.Errorf("%s: %q %v, want %s", root, c.Relay.CloudHost, err, want)
+			t.Errorf("resolves=%v: %q %v, want %s", ok, c.Relay.CloudHost, err, want)
 		}
 	}
 }
@@ -277,5 +281,105 @@ func TestEmbeddedRestartAfterPointing(t *testing.T) {
 	useDir(t)
 	if _, err := NewEmbedded(after, nil); err == nil || !strings.Contains(err.Error(), "LOKADB_DB") {
 		t.Fatalf("no record: %v", err)
+	}
+}
+
+// A managed database: TLS is required by default, a refused connection names the address the
+// database sees (it is in its own error), a silent one says to look at the provider's firewall.
+func TestManagedDatabase(t *testing.T) {
+	if p := ManagedProvider("mydb.abc123.eu-west-1.rds.amazonaws.com"); p != "Amazon RDS or Aurora" {
+		t.Fatalf("rds: %q", p)
+	}
+	if ManagedProvider("db.internal") != "" || ManagedProvider("postgres") != "" {
+		t.Fatal("a private name taken for a managed service")
+	}
+	f, err := DiscoverDB(env(map[string]string{"DATABASE_URL": "postgres://u:p@proj.db.ondigitalocean.com:25060/app"}))
+	if err != nil || f.SSL != "require" {
+		t.Fatalf("managed host sslmode: %+v %v", f, err)
+	}
+	if f, _ := DiscoverDB(env(map[string]string{"DATABASE_URL": "postgres://u:p@db.mycompany.example/app"})); f.SSL != "prefer" {
+		t.Fatalf("another server: %s", f.SSL)
+	}
+	if f, _ := DiscoverDB(env(map[string]string{"DATABASE_URL": "postgres://u:p@proj.db.ondigitalocean.com:25060/app?sslmode=verify-full"})); f.SSL != "verify-full" {
+		t.Fatalf("an explicit sslmode is kept: %s", f.SSL)
+	}
+	c := &Config{Embedded: true, DB: "host=mydb.abc.eu-west-1.rds.amazonaws.com port=5432 dbname=d user=u password=pw sslmode=require"}
+	plain := &Config{Embedded: true, DB: "host=mydb.abc.eu-west-1.rds.amazonaws.com port=5432 dbname=d user=u password=pw sslmode=disable"}
+	if p := plain.embeddedDBProblem(cloudproto.Problem{Key: "db"}, errors.New(`failed to connect: server error (FATAL: no pg_hba.conf entry for host "10.0.0.5", user "u", database "d", no encryption (SQLSTATE 28000))`)); !strings.Contains(p.Message, "accepts only TLS") || !strings.Contains(p.Fix, "sslmode=require") || !strings.Contains(p.Fix, "10.0.0.5") {
+		t.Fatalf("a server that wants TLS: %+v", p)
+	}
+	p := c.embeddedDBProblem(cloudproto.Problem{Key: "db"}, errors.New(`failed to connect: server error (FATAL: no pg_hba.conf entry for host "203.0.113.7", user "u", database "d", no encryption (SQLSTATE 28000))`))
+	if !strings.Contains(p.Message, "203.0.113.7") || !strings.Contains(p.Fix, "203.0.113.7") || strings.Contains(p.Message+p.Fix, "pw") {
+		t.Fatalf("pg_hba: %+v", p)
+	}
+	p = c.embeddedDBProblem(cloudproto.Problem{Key: "db"}, errors.New("failed to connect: dial tcp 10.1.2.3:5432: i/o timeout"))
+	if !strings.Contains(p.Message, "Amazon RDS or Aurora") || !strings.Contains(p.Fix, "security group") || !strings.Contains(p.Fix, "checkip.amazonaws.com") {
+		t.Fatalf("timeout: %+v", p)
+	}
+}
+
+// The public proxy (an application on a platform): TLS required, a certificate for the public name
+// made once, only the allowed addresses; never the whole internet; turning it off puts proxy.json back.
+func TestPublicProxy(t *testing.T) {
+	dir := useDir(t)
+	embeddedDone.Store(false)
+	write(t, dir+"/proxy.json", `{"listen": ":6432", "upstream": "env:LOKADB_UPSTREAM", "fanout": {"*": {"mode": "reject"}}}`)
+	c := &Config{}
+	pub := &cloudproto.PublicProxy{Name: "lokadb.example.com", Allow: []string{"203.0.113.7", "198.51.100.0/24"}}
+	if _, err := c.ApplySettings(&cloudproto.Settings{ProxyPublic: pub}); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(read(t, dir+"/proxy.json"), &m); err != nil {
+		t.Fatal(err)
+	}
+	tls, _ := m["tls"].(map[string]any)
+	if tls["require"] != true || tls["cert"] != dir+"/proxy.crt" || m["listen"] != ":6432" || len(m["allow"].([]any)) != 2 {
+		t.Fatalf("proxy.json: %v", m)
+	}
+	crt := read(t, dir+"/proxy.crt")
+	if fi, _ := os.Stat(dir + "/proxy.key"); fi.Mode().Perm() != 0o600 {
+		t.Errorf("proxy.key mode %v", fi.Mode().Perm())
+	}
+	if c.RestartRequested() {
+		t.Error("a restart asked for before the proxy ran")
+	}
+	// the same again: nothing changes, the certificate is kept
+	if c.applyPublicProxy() || !bytes.Equal(read(t, dir+"/proxy.crt"), crt) {
+		t.Error("the same setting changed something")
+	}
+	// a restart: before the panel's settings come, what was applied last stands
+	fresh := &Config{}
+	if fresh.applyPublicProxy() || !bytes.Contains(read(t, dir+"/proxy.json"), []byte("allow")) {
+		t.Error("a new process wiped the public proxy setting before the panel's settings arrived")
+	}
+	// the proxy runs: a change asks for a new process
+	embeddedDone.Store(true)
+	t.Cleanup(func() { embeddedDone.Store(false) })
+	pub.Allow = []string{"203.0.113.9"}
+	c.public = pub
+	if !c.applyPublicProxy() || !c.RestartRequested() {
+		t.Error("a new allow list did not ask for a restart")
+	}
+	// refused: no addresses, the whole internet, a name with a port; the file stays as it is
+	before := read(t, dir+"/proxy.json")
+	for _, bad := range []*cloudproto.PublicProxy{{Name: "x.example.com"}, {Name: "x.example.com", Allow: []string{"0.0.0.0/0"}}, {Name: "x.example.com:6432", Allow: []string{"1.2.3.4"}}, {Name: "", Allow: []string{"1.2.3.4"}}} {
+		if ValidatePublicProxy(bad) == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+		c.public = bad
+		if c.applyPublicProxy() || !bytes.Equal(read(t, dir+"/proxy.json"), before) {
+			t.Errorf("a refused setting changed proxy.json: %+v", bad)
+		}
+	}
+	// off: back to the private proxy
+	c.public = nil
+	if !c.applyPublicProxy() {
+		t.Fatal("turning it off changed nothing")
+	}
+	m = nil
+	_ = json.Unmarshal(read(t, dir+"/proxy.json"), &m)
+	if m["tls"] != nil || m["allow"] != nil || m["listen"] != ":6432" {
+		t.Fatalf("not put back: %v", m)
 	}
 }

@@ -318,7 +318,7 @@ func main() {
 			os.Exit(0)
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		err = (&runner.Runner{Cfg: cfg, Log: log, Version: buildinfo.Version()}).Run(ctx)
+		err = (&runner.Runner{Cfg: cfg, Log: log, Version: buildinfo.Version(), Stop: stop}).Run(ctx)
 		stop()
 	case "agent":
 		fs := flag.NewFlagSet("agent", flag.ExitOnError)
