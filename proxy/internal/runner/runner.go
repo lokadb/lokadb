@@ -366,7 +366,7 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 	revokedWait := first
 	for ctx.Err() == nil {
 		r.mu.Lock()
-		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}, Problems: r.problems, Info: r.Cfg.Info()}
+		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}, Problems: redactProblems(r.problems), Info: redactInfo(r.Cfg.Info())}
 		ready := r.ops != nil
 		for id := range r.running {
 			req.Running = append(req.Running, id)
@@ -628,6 +628,7 @@ func (r *Runner) do(ctx context.Context, rj *job, log *slog.Logger) cloudproto.R
 	res := cloudproto.Result{Status: cloudproto.StatusOK}
 	if out != nil {
 		res.Result, _ = json.Marshal(out)
+		res.Result = redactJSON(res.Result) // an error text inside a report or a result: no row values
 	}
 	return res
 }
@@ -737,4 +738,25 @@ func (r *Runner) call(ctx context.Context, bearer, path string, in, out any) (in
 		}
 	}
 	return resp.StatusCode, nil
+}
+
+// redactProblems and redactInfo: the poll carries error texts too (a database that refused, with its words).
+func redactProblems(in []cloudproto.Problem) []cloudproto.Problem {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]cloudproto.Problem, len(in))
+	for i, p := range in {
+		p.Message, p.Fix = Redact(p.Message), Redact(p.Fix)
+		out[i] = p
+	}
+	return out
+}
+
+func redactInfo(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = Redact(v)
+	}
+	return out
 }

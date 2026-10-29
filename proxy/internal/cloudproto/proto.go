@@ -96,6 +96,9 @@ type Settings struct {
 	Spec json.RawMessage `json:"spec,omitempty"`
 	// OnlyKeys: the organizations list shows keys only, no names (strict SaaSes).
 	OnlyKeys bool `json:"only_keys,omitempty"`
+	// ShowNames: names stay in the list although the customers table looks like people (without it
+	// such a table shows keys only: a person's name or e-mail is personal data).
+	ShowNames bool `json:"show_names,omitempty"`
 	// ProxyPublic: the proxy listens to the internet, for an application on a platform: TLS is
 	// required, and only the addresses in Allow may connect (never the whole internet).
 	ProxyPublic *PublicProxy `json:"proxy_public,omitempty"`
@@ -128,6 +131,8 @@ type OrgListResult struct {
 	PageSize    int           `json:"page_size"`
 	LabelColumn string        `json:"label_column,omitempty"`
 	OnlyKeys    bool          `json:"only_keys,omitempty"`
+	// KeysByDefault: keys only because the table looks like people, not because the person chose it.
+	KeysByDefault bool `json:"keys_by_default,omitempty"`
 }
 
 type OrgListItem struct {

@@ -35,16 +35,21 @@ func (o *Ops) OrgList(ctx context.Context, a cloudproto.OrgListArgs) (cloudproto
 	if set.OrgTable == "" || set.OrgKey == "" {
 		return res, &cloudproto.JobError{Code: "no_org_table", Message: "the table of customers is not chosen yet: choose it in the setup (step 2)"}
 	}
-	res.OnlyKeys = set.OnlyKeys
 	conn, err := ownsql.Connect(ctx, o.Cfg.DB)
 	if err != nil {
 		return res, err
 	}
 	defer conn.Close(context.Background())
+	// a table of people shows keys only unless the person turned names on: a name or an e-mail is personal data
+	onlyKeys := set.OnlyKeys
+	if !onlyKeys && !set.ShowNames && o.looksLikePeople(ctx, conn, set.OrgTable) {
+		onlyKeys, res.KeysByDefault = true, true
+	}
+	res.OnlyKeys = onlyKeys
 	tbl, key := identOf(set.OrgTable).Sanitize(), pgx.Identifier{set.OrgKey}.Sanitize()
 
 	label := ""
-	if !set.OnlyKeys {
+	if !onlyKeys {
 		label = set.OrgLabel
 		if label == "" {
 			label = o.labelColumn(ctx, conn, set.OrgTable)
@@ -212,4 +217,48 @@ func (o *Ops) countRows(ctx context.Context, conn *pgx.Conn, roots [][2]string, 
 		_ = tx.Rollback(context.Background())
 		cancel()
 	}
+}
+
+// peopleTables: tables whose rows are people (or their accounts); personalColumns: columns that hold a
+// person's data whatever the table is called.
+var (
+	peopleTables    = map[string]bool{"users": true, "user": true, "members": true, "member": true, "people": true, "persons": true, "person": true, "customers": true, "customer": true, "profiles": true, "individuals": true}
+	accountTables   = map[string]bool{"accounts": true, "account": true, "clients": true, "client": true}
+	personalColumns = map[string]bool{"email": true, "e_mail": true, "email_address": true, "first_name": true, "last_name": true, "full_name": true, "phone": true, "phone_number": true, "birthday": true, "birth_date": true}
+)
+
+// looksLikePeople: the customers table is a table of people: it is called users, members, people or
+// customers, or has a column of a person's own data (an e-mail, a first or last name), or it is a
+// table of accounts with a name.
+func (o *Ops) looksLikePeople(ctx context.Context, conn *pgx.Conn, table string) bool {
+	schema, name := "public", table
+	if i := strings.IndexByte(table, '.'); i > 0 {
+		schema, name = table[:i], table[i+1:]
+	}
+	name = strings.ToLower(strings.Trim(name, `"`))
+	if peopleTables[name] {
+		return true
+	}
+	rows, err := conn.Query(ctx, `SELECT lower(column_name) FROM information_schema.columns WHERE table_schema = $1 AND lower(table_name) = $2`, schema, name)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var c string
+		if rows.Scan(&c) == nil {
+			cols[c] = true
+		}
+	}
+	return peopleByColumns(name, cols)
+}
+
+func peopleByColumns(table string, cols map[string]bool) bool {
+	for c := range cols {
+		if personalColumns[c] {
+			return true
+		}
+	}
+	return accountTables[table] && (cols["name"] || cols["username"] || cols["display_name"])
 }

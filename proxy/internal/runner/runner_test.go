@@ -319,3 +319,50 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	defer l.mu.Unlock()
 	return l.w.Write(p)
 }
+
+// The words of a database error leave the runner without the rows' values: the constraint and the
+// column stay, what the customer's rows hold does not. The shapes are Postgres's own.
+func TestRedactRowValues(t *testing.T) {
+	cases := []struct{ in, keep string }{
+		{"ERROR:  duplicate key value violates unique constraint \"users_email_key\"\nDETAIL:  Key (email)=(ann@example.com) already exists.", "Key (email)=(…) already exists."},
+		{"failed to connect: duplicate key value violates unique constraint \"users_pkey\" (SQLSTATE 23505): Key (id, team_id)=(7, 3) already exists.", "Key (id, team_id)=(…) already exists."},
+		{"insert or update on table \"projects\" violates foreign key constraint \"projects_team_id_fkey\"\nDETAIL:  Key (team_id)=(99) is not present in table \"teams\".", "Key (team_id)=(…) is not present in table \"teams\"."},
+		{"update or delete on table \"teams\" violates foreign key constraint \"users_team_id_fkey\" on table \"users\"\nDETAIL:  Key (id)=(3) is still referenced from table \"users\".", "Key (id)=(…) is still referenced from table \"users\"."},
+		{"new row for relation \"plans\" violates check constraint \"plans_price_check\"\nDETAIL:  Failing row contains (3, Pro, -5).", "Failing row contains (…)."},
+		{"null value in column \"email\" of relation \"users\" violates not-null constraint\nDETAIL:  Failing row contains (7, null, Ann Smith, ann (the boss) @x.com).", "Failing row contains (…)."},
+		{"conflicting key value violates exclusion constraint \"rooms_excl\"\nDETAIL:  Key (room, during)=(1, [\"2024-01-01\",\"2024-01-02\")) conflicts with existing key (room, during)=(1, [\"2024-01-01\",\"2024-01-03\")).", "Key (room, during)=(…) conflicts with existing key (room, during)=(…)."},
+		{"ERROR: invalid input syntax for type integer: \"ann@example.com\"", "invalid input syntax for type integer: \"…\""},
+		{"ERROR: invalid input value for enum status: \"secret plan\"", "invalid input value for enum status: \"…\""},
+		{"ERROR: value \"99999999999\" is out of range for type integer", "value \"…\" is out of range for type integer"},
+		{"Key (email)=(a@b.c) something new", "Key (email)=(…)"}, // a shape not known: the rest of the line goes
+	}
+	for _, c := range cases {
+		got := Redact(c.in)
+		if !strings.Contains(got, c.keep) {
+			t.Errorf("%q\n  got  %q\n  want %q", c.in, got, c.keep)
+		}
+		for _, leak := range []string{"ann@example.com", "Ann Smith", "(7, 3)", "(99)", "(3, Pro", "secret plan", "99999999999", "2024-01-0", "a@b.c", "the boss"} {
+			if strings.Contains(got, leak) {
+				t.Errorf("%q leaks %q: %q", c.in, leak, got)
+			}
+		}
+		for _, name := range []string{"users_email_key", "projects_team_id_fkey", "plans_price_check", "rooms_excl", "(email)", "(team_id)", "\"teams\"", "\"email\""} {
+			if strings.Contains(c.in, name) && !strings.Contains(got, name) {
+				t.Errorf("%q lost the name %q: %q", c.in, name, got)
+			}
+		}
+	}
+	if Redact("host=db password=hunter2 user=u") != "host=db password=*** user=u" {
+		t.Error("the password of a DSN is no longer hidden")
+	}
+	// a report and a result: every string, numbers untouched
+	raw := redactJSON([]byte(`{"findings":[{"msg":"Key (email)=(ann@example.com) already exists."}],"org":9007199254740993}`))
+	if strings.Contains(string(raw), "ann@example.com") || !strings.Contains(string(raw), "9007199254740993") {
+		t.Errorf("redactJSON: %s", raw)
+	}
+	// the poll's problems and info
+	p := redactProblems([]cloudproto.Problem{{Key: "db", Message: "Key (id)=(5) already exists.", Fix: "x"}})
+	if strings.Contains(p[0].Message, "5") && !strings.Contains(p[0].Message, "(…)") {
+		t.Errorf("problems: %+v", p)
+	}
+}

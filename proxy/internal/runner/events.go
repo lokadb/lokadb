@@ -1,9 +1,12 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,10 +18,86 @@ var (
 	urlPassword = regexp.MustCompile(`(?i)(postgres(ql)?://[^:/@\s]*:)[^@\s]*@`)
 )
 
-// Redact hides the passwords of DSNs in a line: whatever leaves the runner goes through it.
+// What Postgres puts of a row into an error: the DETAIL lines of a violated constraint and the
+// value a conversion choked on. The column and constraint names stay (they say what failed); the
+// values are the customer's data and do not leave the runner.
+var (
+	// Key (a, b)=(1, x) already exists. / is not present in table "t". / is still referenced from table "t". /
+	// conflicts with existing key (a, b)=(1, y).   The value may hold parentheses: it ends at the known tail.
+	keyValues = regexp.MustCompile(`(?s)(Key \([^)
+]*\)=)\(.*?\)(\s+(?:already exists|is not present|is still referenced|conflicts with))`)
+	existingKey = regexp.MustCompile(`(?s)(existing key \([^)
+]*\)=)\(.*?\)(\.|$|
+)`)
+	keyAny = regexp.MustCompile(`(Key \([^)
+]*\)=)\(([^
+]*)`)
+	failingRow = regexp.MustCompile(`(Failing row contains )\([^
+]*\)`)
+	quotedValueMsg = regexp.MustCompile(`(?i)((?:invalid input syntax for (?:type )?[^:
+"]*|invalid input value for enum [^:
+"]*|malformed [a-z ]*literal|date/time field value out of range|invalid [a-z ]* format|invalid value for parameter[^:
+"]*): )"(?:[^"\
+]|\.)*"`)
+	outOfRange = regexp.MustCompile(`(value )"[^"
+]*"( is out of range for type)`)
+)
+
+// Redact hides the passwords of DSNs in a line and the row values of database errors: whatever
+// leaves the runner goes through it.
 func Redact(s string) string {
 	s = kvPassword.ReplaceAllString(s, "${1}***")
-	return urlPassword.ReplaceAllString(s, "${1}***@")
+	s = urlPassword.ReplaceAllString(s, "${1}***@")
+	return stripValues(s)
+}
+
+// stripValues: "Key (email)=(ann@example.com) already exists." becomes "Key (email)=(…) already exists."
+func stripValues(s string) string {
+	s = keyValues.ReplaceAllString(s, "${1}(…)${2}")
+	s = existingKey.ReplaceAllString(s, "${1}(…)${2}")
+	s = keyAny.ReplaceAllStringFunc(s, func(m string) string { // a shape not known above: the rest of the line goes
+		if strings.Contains(m, "=(…)") {
+			return m
+		}
+		return keyAny.ReplaceAllString(m, "${1}(…)")
+	})
+	s = failingRow.ReplaceAllString(s, "${1}(…)")
+	s = quotedValueMsg.ReplaceAllString(s, `${1}"…"`)
+	return outOfRange.ReplaceAllString(s, `${1}"…"${2}`)
+}
+
+// redactJSON: every string of a JSON document (a check report, a move's result) goes through Redact.
+func redactJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var v any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber() // numbers (a 64-bit id) come back exactly as they were
+	if dec.Decode(&v) != nil {
+		return raw
+	}
+	out, err := json.Marshal(redactValue(v))
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func redactValue(v any) any {
+	switch x := v.(type) {
+	case string:
+		return Redact(x)
+	case []any:
+		for i := range x {
+			x[i] = redactValue(x[i])
+		}
+	case map[string]any:
+		for k, e := range x {
+			x[k] = redactValue(e)
+		}
+	}
+	return v
 }
 
 // events: a job's progress lines waiting to be sent, in order.
