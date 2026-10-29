@@ -857,7 +857,7 @@ func (s *session) writeInTx(dc *directConn, org string, di *directInfo, vals val
 		if keys, ok = w.givenKeys(vals, kind); !ok {
 			return notTaken("an INSERT whose key is an expression")
 		}
-		extra = append(extra, givenRefs(w.lits(keys, kind, typ), w.refsCols(), refs, org, w.upsert))
+		extra = append(extra, givenRefs(w.table, w.lits(keys, kind, typ), w.refsCols(), refs, org, w.upsert))
 	default:
 		if w.unnest != nil {
 			var ok bool
@@ -866,7 +866,7 @@ func (s *session) writeInTx(dc *directConn, org string, di *directInfo, vals val
 			}
 		}
 		extra = append(extra, "WITH lokadb_k AS (SELECT "+w.table.KeyDefault+" AS id FROM generate_series(1, "+itoa(n)+")), lokadb_r AS (INSERT INTO "+refs+
-			" (id, tenant) SELECT id, "+orgLit(org)+" FROM lokadb_k) SELECT id::text FROM lokadb_k")
+			" (id, tenant) SELECT id, "+w.table.orgLit(org)+" FROM lokadb_k) SELECT id::text FROM lokadb_k")
 	}
 	rows, ok, sent := s.txGate(org, di, dc, extra...)
 	if !ok {

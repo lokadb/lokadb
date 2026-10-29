@@ -36,9 +36,9 @@ CREATE TRIGGER documents_touch BEFORE UPDATE ON documents FOR EACH ROW EXECUTE F
 GRANT SELECT ON documents TO app;
 -- versions without an FK, two of them lost their document
 CREATE TABLE document_versions (id bigserial PRIMARY KEY, document_id bigint, content text);
--- ids of a type lokadb does not take as a key (char(26), as ULIDs are kept: uuid is taken since
--- block 17) and a two-column FK
-CREATE TABLE attachments (id char(26) PRIMARY KEY, organization_id bigint NOT NULL,
+-- ids of a type lokadb does not take as a key (a decimal number: uuid, varchar and character(n), as
+-- ULIDs are kept, are taken since block 17) and a two-column FK
+CREATE TABLE attachments (id numeric(26,0) PRIMARY KEY, organization_id bigint NOT NULL,
   document_org bigint NOT NULL, document_id bigint NOT NULL, FOREIGN KEY (document_org, document_id) REFERENCES documents (organization_id, id));
 INSERT INTO organizations (name) VALUES ('A'), ('B');
 INSERT INTO documents (organization_id, slug) VALUES (1, 'a'), (2, 'b');

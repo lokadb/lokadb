@@ -5,7 +5,7 @@
 *Run it where you ran `move-org`: on a machine that reaches your database and, through the relay, the organization's.*
 
 ```bash
-lokadb move-back -db "$CLOUD_DSN" -spec spec.json -org 1 -customer "$CUST_ADMIN_DSN" [-dry-run]
+lokadb move-back -db env:CLOUD_DSN -spec spec.json -org 1 -customer env:CUST_ADMIN_DSN [-dry-run]
 ```
 
 `-spec` is the same spec file as for `enable`; `-customer` is the organization's administrator through the relay's port for it (the names are those of [Install on your database](install.md#the-names-used-on-this-page)). **Success:** the command logs `move-back done`; the organization's rows are in your database again, in a partition of their own (`<table>__o<N>`), and the proxy reads them there.
@@ -26,7 +26,7 @@ Use it at the end of a contract, to stop using LokaDB for this organization, or 
 ## `lokadb repoint`: a new database with the same rows
 
 ```bash
-lokadb repoint -db "$CLOUD_DSN" -org 1 -customer-app "$NEW_CUST_APP_DSN" -proxy-config lokadb.json
+lokadb repoint -db env:CLOUD_DSN -org 1 -customer-app env:NEW_CUST_APP_DSN -proxy-config lokadb.json
 ```
 
 For a restore on another host, a failover to a replica, a new password.
@@ -41,7 +41,7 @@ For a restore on another host, a failover to a replica, a new password.
 ## `lokadb disable`: undoing `enable`
 
 ```bash
-lokadb disable -db "$CLOUD_DSN" -spec spec.json [-dry-run]
+lokadb disable -db env:CLOUD_DSN -spec spec.json [-dry-run]
 ```
 
 - **One transaction under `ACCESS EXCLUSIVE`.** The table `enable` started from, `<table>__cloud`, stays with its indexes, constraints and statistics; rows of other partitions (returned organizations, rows without an organization) are poured into it with triggers and foreign-key checks off. The pause grows with these rows; `-dry-run` counts them.

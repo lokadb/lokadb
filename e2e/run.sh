@@ -278,6 +278,25 @@ shape=$(cust_sql cust_richapp "SELECT (SELECT string_agg(extname, ',' ORDER BY e
 [ "$shape" = 'citext,pg_trgm "en-x-icu" body_len=s,words=v 2' ] \
   && echo "PASS  richapp: the organization's table keeps the extensions, collation, generated columns and indexes ($shape)" \
   || fail "richapp: the organization's table: '$shape'"
+
+log "lokadb init: the first install's files in one command"
+init_out=$($C run --rm -T --entrypoint sh lokadb -c '
+adm="host=cloud dbname=postgres user=postgres password=pw sslmode=disable"
+lokadb init -dir /tmp/i -relay-host relay -admin "$adm" -cp-role init_cp -cp-db init_cp -cp-sslmode disable >/tmp/o1 2>&1 || { cat /tmp/o1; exit 1; }
+sum() { sha256sum /tmp/i/ca.crt /tmp/i/relay/ca.crt /tmp/i/relay/ca.key /tmp/i/relay/relay.crt /tmp/i/credentials.key /tmp/i/control-plane.dsn /tmp/i/relay.json | sha256sum; }
+before=$(sum)
+lokadb init -dir /tmp/i -relay-host relay -admin "$adm" -cp-role init_cp -cp-db init_cp -cp-sslmode disable >/tmp/o2 2>&1 || { cat /tmp/o2; exit 1; }
+[ "$before" = "$(sum)" ] || { echo "a second run rewrote a file"; exit 1; }
+pw=$(grep -o "password=.[^ ]*" /tmp/i/control-plane.dsn | head -1 | cut -d"'"'"'" -f2)
+{ [ ${#pw} -ge 24 ] && ! grep -qF "$pw" /tmp/o1 /tmp/o2; } || { echo "the password is short or printed"; exit 1; }
+[ ! -e /tmp/i/ca.key ] && [ "$(stat -c %a /tmp/i/relay/ca.key)" = 600 ] && [ "$(stat -c %a /tmp/i/control-plane.dsn)" = 600 ] || { echo "modes or the CA key place"; exit 1; }
+lokadb token -cp file:/tmp/i/control-plane.dsn -org 9 >/dev/null 2>&1 || { echo "the generated control-plane.dsn does not work"; exit 1; }
+echo INIT-OK' 2>&1)
+case "$init_out" in
+  *INIT-OK*) echo "PASS  lokadb init made the control plane role and database (random password, not printed), the keys (0600, the CA key apart), the certificates and configs; a second run changed nothing; the generated DSN works (lokadb token -cp file:...)" ;;
+  *) fail "lokadb init: $init_out" ;;
+esac
+cloud_sql postgres "DROP DATABASE IF EXISTS init_cp WITH (FORCE)" >/dev/null 2>&1; cloud_sql postgres "DROP ROLE IF EXISTS init_cp" >/dev/null 2>&1
 fi # part core
 
 # block 6: what the application sees of its schema (public), to compare before enable and after

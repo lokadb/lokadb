@@ -43,3 +43,52 @@ func TestAbandonMaps(t *testing.T) {
 		t.Errorf("integer organization: %s", got)
 	}
 }
+
+// Organizations named by a string (text, varchar, character(n)), keys of type character(n): a
+// Laravel ulid() is character(26).
+func TestStringTenant(t *testing.T) {
+	const v = "01JAAAAAAAAAAAAAAAAAAAAAAA"
+	for base, want := range map[string]string{"character": TenantText, "character varying": TenantText, "text": TenantText,
+		"uuid": TenantUUID, "bigint": TenantInt, "numeric": "", "money": ""} {
+		if got := TenantKind(base); got != want {
+			t.Errorf("TenantKind(%s) = %q, want %q", base, got, want)
+		}
+	}
+	for base, want := range map[string]string{"character": KindChar, "character varying": KindText, "text": KindText, "uuid": KindUUID, "integer": KindInt, "bytea": ""} {
+		if got := KeyKind(base); got != want {
+			t.Errorf("KeyKind(%s) = %q, want %q", base, got, want)
+		}
+	}
+	for k, want := range map[string]string{KindChar: TenantText, KindText: TenantText, KindUUID: TenantUUID, KindInt: TenantInt, "": ""} {
+		if got := TenantOfKey(k); got != want {
+			t.Errorf("TenantOfKey(%q) = %q, want %q", k, got, want)
+		}
+	}
+	str := MoveOptions{Org: 4, tenant: Tenant{Org: 4, Kind: TenantText, Value: v}}.org()
+	if str.Lit() != "'"+v+"'" || str.Key("team_id") != `(coalesce("team_id"::text, '') COLLATE "C")` || str.LockCall() != "lokadb.org_lock_v('"+v+"')" {
+		t.Errorf("string organization: %q, %q, %q", str.Lit(), str.Key("team_id"), str.LockCall())
+	}
+	if tenantType(TenantText) != "text" || tenantDefault(TenantText) != "lokadb.org_default_text()" || !ValueKind(TenantText) || ValueKind(TenantInt) {
+		t.Errorf("tenantType %q, tenantDefault %q", tenantType(TenantText), tenantDefault(TenantText))
+	}
+	mt := moveTable{name: "builds", tenant: "team_id", org: 4, val: str.Lit()}
+	steps := strings.Join(swapSteps(mt, "app"), " ")
+	for _, want := range []string{`ATTACH PARTITION "builds__o4" FOR VALUES IN ('` + v + `')`, `WHERE "team_id" = '` + v + `'`} {
+		if !strings.Contains(steps, want) {
+			t.Errorf("move-back's swap lacks %q: %s", want, steps)
+		}
+	}
+	if got := abandonMaps([]string{"'builds'"}, str); !strings.Contains(got, "WHERE tenant = ''"+v+"''") {
+		t.Errorf("abandonMaps: %s", got)
+	}
+	for in, want := range map[string]string{v: v, v + "   ": v, "007": "007", "acme": "acme"} {
+		if got, err := CanonTenant(in); err != nil || got != want {
+			t.Errorf("CanonTenant(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "   ", "-1", "-acme", " lead"} {
+		if _, err := CanonTenant(in); err == nil {
+			t.Errorf("CanonTenant(%q) took it", in)
+		}
+	}
+}

@@ -64,7 +64,7 @@ func (s *session) inlineKey(an *Analysis, vals valuesFunc, batch []pgproto3.Fron
 	m := s.meta
 	if m == nil || tx == 'E' || !an.Lokadb || an.Write || an.TxControl || an.Utility || an.ResetsOrg || an.MovesOrg ||
 		an.Rewritten != "" || len(an.Events) > 0 || len(an.Prelude) > 0 || len(an.Tuples) > 0 ||
-		len(an.Stmts) > 1 || an.Unhinted || an.ParseError || m.anyDirect() || m.uuidOrgs() {
+		len(an.Stmts) > 1 || an.Unhinted || an.ParseError || m.anyDirect() || m.valueOrgs() {
 		return "", "", false
 	}
 	// the client's Bind, then (past Describes of its portal) its Execute to the end

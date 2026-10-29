@@ -222,7 +222,7 @@ func (c *checker) cloudTable(ct admin.CloudTable) {
 		if kind == "" {
 			kind = admin.TenantInt
 		}
-		if err == nil && (cols["id"] == "" || cols[ct.TenantColumn] != kind) {
+		if err == nil && (cols["id"] == "" || admin.TenantOfKey(cols[ct.TenantColumn]) != kind) {
 			c.add(SpecError, "routing_invalid", ct.Table, fmt.Sprintf("cloud table %s: it needs a column id of type %s and a column %s of the organizations' kind (%s)", ct.Table, admin.KeyTypes, ct.TenantColumn, kind), nil)
 			return
 		}

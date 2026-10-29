@@ -8,13 +8,17 @@ import (
 	"github.com/lokadb/lokadb/proxy/internal/admin"
 )
 
-// Organizations with a uuid number (block 18, tasks/uuid-tenant.md).
+// Organizations named by a uuid or a string (block 18, tasks/uuid-tenant.md; Laravel's ulid()
+// is character(26)).
 
 // reservedTenant: lokadb keeps values of its own in the organization column's range: the nil
 // uuid for rows of no organization in a table numbered by uuid, and for integers -2 (no
 // organization) and -1 (nothing found), so that the proxy takes any negative number for
-// "no organization". Rows that hold such a value would be taken for rows without one, and
-// their organization could never move. A blocker while there are any.
+// "no organization"; for a string the empty string and one a minus starts, and a number the
+// proxy would read as an integer (a leading zero or a plus: '007' is not 7) or a string with
+// blanks at its edges (lokadb keeps a character(n) organization without its padding). Rows that
+// hold such a value would be taken for rows without one, and their organization could never
+// move. A blocker while there are any.
 func (c *checker) reservedTenant(t, tc, kind string, mark func(string)) error {
 	var cond, why string
 	switch kind {
@@ -24,6 +28,10 @@ func (c *checker) reservedTenant(t, tc, kind string, mark func(string)) error {
 	case admin.TenantInt:
 		cond = fmt.Sprintf("c.%s < 0", q(tc))
 		why = fmt.Sprintf("have a negative %s: lokadb keeps -2 for rows of no organization and -1 for \"no organization found\", and takes any negative number for no organization", tc)
+	case admin.TenantText:
+		v := "c." + q(tc) + "::text"
+		cond = "(" + v + " = '' OR " + v + " LIKE '-%' OR " + v + " ~ '^(0[0-9]+|\\+[0-9]+)$' OR " + v + " ~ '^[[:space:]]|[[:space:]]$')"
+		why = fmt.Sprintf("have a %s that lokadb keeps for itself (an empty string, one that a minus starts, a number with a leading zero or a plus, or one with blanks at its edge)", tc)
 	default:
 		return nil
 	}
@@ -41,7 +49,8 @@ func (c *checker) reservedTenant(t, tc, kind string, mark func(string)) error {
 }
 
 // mixedTenants: the LokaDB tables hold the numbers of the same organizations, so their
-// organization columns are of one kind (integers or uuids); a spec that mixes them is wrong.
+// organization columns are of one kind (integers, uuids or strings); a spec that mixes them is
+// wrong.
 func (c *checker) mixedTenants(kinds map[string]string) {
 	by := map[string][]string{}
 	for t, k := range kinds {
@@ -60,5 +69,5 @@ func (c *checker) mixedTenants(kinds map[string]string) {
 	}
 	sort.Strings(parts)
 	sort.Strings(examples)
-	c.add(SpecError, "tenant_kind_mixed", "", fmt.Sprintf("the organization columns of the spec's tables are of different kinds (%s): they hold the numbers of the same organizations, so they must be all integers or all uuids", strings.Join(parts, "; ")), examples)
+	c.add(SpecError, "tenant_kind_mixed", "", fmt.Sprintf("the organization columns of the spec's tables are of different kinds (%s): they hold the numbers of the same organizations, so they must be all integers, all uuids or all strings", strings.Join(parts, "; ")), examples)
 }

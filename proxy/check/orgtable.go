@@ -67,6 +67,10 @@ type TableRole struct {
 	Reason string `json:"reason,omitempty"`
 	// Options: the columns an ambiguous table could be reached by.
 	Options []OrgOption `json:"options,omitempty"`
+	// Nullable: the child's only path to its parent is a column that may be NULL; RowsWithoutParent
+	// rows hold NULL there now and would not move (they have no organization).
+	Nullable          bool  `json:"nullable_path,omitempty"`
+	RowsWithoutParent int64 `json:"rows_without_parent,omitempty"`
 }
 
 type OrgOption struct {
@@ -85,6 +89,10 @@ type OrgCandidate struct {
 	// Excluded: why it is ranked last though many tables reach it (a users table, which is on the
 	// many side of a membership table)
 	Excluded string `json:"excluded,omitempty"`
+	// Unsupported: the key's type cannot be an organization key (it is not smallint, integer, bigint
+	// or uuid); the table is listed anyway, with the way out in TenantColumn.
+	Unsupported  string `json:"unsupported,omitempty"`
+	TenantColumn string `json:"tenant_column,omitempty"` // the column most tables reach it by: -tenant-column
 }
 
 // DiscoverByOrgTable proposes the spec for the organizations table (a table name, schema
@@ -117,7 +125,10 @@ func orgChecker(ctx context.Context, conn *pgx.Conn) (*checker, func(), error) {
 	return c, func() { _ = tx.Rollback(ctx) }, nil
 }
 
-type orgCol struct{ name, typ, kind string }
+type orgCol struct {
+	name, typ, kind string
+	notNull         bool
+}
 
 type orgTab struct {
 	key    string
@@ -127,6 +138,9 @@ type orgTab struct {
 }
 
 type orgFK struct{ src, col, dst, dstCol string }
+
+// nullable: the foreign key column may hold NULL (a row without a parent).
+func (g *orgGraph) nullable(f orgFK) bool { return !g.tabs[f.src].byName[f.col].notNull }
 
 type orgGraph struct {
 	tabs   map[string]*orgTab
@@ -144,7 +158,7 @@ func bareName(key string) string { _, n := rel.SplitKey(key); return n }
 
 func (c *checker) orgGraph() (*orgGraph, error) {
 	g := &orgGraph{tabs: map[string]*orgTab{}, multi: map[string]map[string]bool{}, fkCols: map[string]map[string]bool{}, bare: map[string][]string{}, into: map[string][]orgFK{}}
-	cols, err := c.rows(`SELECT ` + relKeySQL("c") + `, a.attname::text, a.atttypid::regtype::text FROM pg_class c
+	cols, err := c.rows(`SELECT ` + relKeySQL("c") + `, a.attname::text, a.atttypid::regtype::text, a.attnotnull::text FROM pg_class c
 		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
 		WHERE c.relnamespace NOT IN (` + sysSchemas + `) AND c.relkind = 'r' AND NOT c.relispartition ORDER BY 1, a.attnum`)
 	if err != nil {
@@ -157,7 +171,7 @@ func (c *checker) orgGraph() (*orgGraph, error) {
 			g.tabs[r[0]] = t
 			g.keys = append(g.keys, r[0])
 		}
-		oc := orgCol{name: r[1], typ: r[2], kind: admin.KeyKind(r[2])}
+		oc := orgCol{name: r[1], typ: r[2], kind: admin.KeyKind(r[2]), notNull: r[3] == "true"}
 		t.cols = append(t.cols, oc)
 		t.byName[r[1]] = oc
 	}
@@ -254,7 +268,7 @@ func (g *orgGraph) nameEdges(src string) []orgFK {
 	var out []orgFK
 	for _, col := range t.cols {
 		x, ok := strings.CutSuffix(col.name, "_id")
-		if !ok || x == "" || col.kind == "" || col.kind == admin.KindText || g.fkCols[src][col.name] || col.name == t.pk {
+		if !ok || x == "" || col.kind == "" || col.kind == admin.KindText || col.kind == admin.KindChar || g.fkCols[src][col.name] || col.name == t.pk {
 			continue
 		}
 		if _, poly := t.byName[x+"_type"]; poly {
@@ -368,6 +382,7 @@ type orgNode struct {
 	col, parent string // a root has no parent
 	basis       string
 	depth       int
+	nullable    bool // the column to the parent may be NULL: rows without a parent have no organization
 }
 
 type orgRun struct {
@@ -382,8 +397,35 @@ type orgRun struct {
 	spec       admin.Spec
 	byName     []string        // tables found by name
 	unverified map[string]bool // taken by name from a table with no value to check
-	pos        int             // r.order up to here has had its children looked for
 	seen       map[string]foundResult
+}
+
+// organizationColumn: the column most tables reach k by (foreign keys, and names when edges is
+// given), "" when none does.
+func (g *orgGraph) organizationColumn(k string, edges map[string][]orgFK) string {
+	n := map[string]int{}
+	for _, f := range g.into[k] {
+		n[f.col]++
+	}
+	for _, f := range edges[k] {
+		n[f.col]++
+	}
+	best := ""
+	for col, c := range n {
+		if best == "" || c > n[best] || c == n[best] && col < best {
+			best = col
+		}
+	}
+	return best
+}
+
+// wayOut: what to do when the organizations table cannot be used by its key: name the column the
+// other tables hold the organization in.
+func (g *orgGraph) wayOut(k string, edges map[string][]orgFK) string {
+	if col := g.organizationColumn(k, edges); col != "" {
+		return fmt.Sprintf(". Way out: -tenant-column %s (the column the tables that belong to an organization hold it in)", col)
+	}
+	return ". Way out: -tenant-column COLUMN (the column the tables that belong to an organization hold it in)"
 }
 
 func (c *checker) discoverOrg(table string) (*Discovery, error) {
@@ -397,11 +439,11 @@ func (c *checker) discoverOrg(table string) (*Discovery, error) {
 	}
 	ot := g.tabs[org]
 	if ot.pk == "" {
-		return nil, fmt.Errorf("%s has no primary key of one column: the organizations table needs one (%s)", org, admin.TenantTypes)
+		return nil, fmt.Errorf("%s has no primary key of one column: the organizations table needs one (%s)%s", org, admin.TenantTypes, g.wayOut(org, nil))
 	}
 	kind := admin.TenantKind(ot.byName[ot.pk].typ)
 	if kind == "" {
-		return nil, fmt.Errorf("the key of %s, %s, is %s: an organization is numbered by %s", org, ot.pk, ot.byName[ot.pk].typ, admin.TenantTypes)
+		return nil, fmt.Errorf("the key of %s, %s, is %s: an organization is numbered by %s%s", org, ot.pk, ot.byName[ot.pk].typ, admin.TenantTypes, g.wayOut(org, nil))
 	}
 	r := &orgRun{c: c, g: g, org: org, kind: kind, nodes: map[string]*orgNode{}, roles: map[string]*TableRole{}, seen: map[string]foundResult{}, unverified: map[string]bool{}, hints: map[string][]string{}}
 	if err := r.run(); err != nil {
@@ -470,6 +512,7 @@ func (r *orgRun) run() error {
 	}
 	r.verifyAlternatives()
 	r.propagateAmbiguous()
+	r.countWithoutParent()
 	r.explainTheRest(fkReach)
 	return nil
 }
@@ -479,15 +522,63 @@ func (r *orgRun) usable(t string) bool {
 	return r.nodes[t] != nil && (r.roles[t] == nil || r.roles[t].Role == "")
 }
 
-// expandFK: foreign keys onto the key of a chosen table, shortest path first (r.order is by depth).
+// expandFK: foreign keys onto the key of a chosen table. A NOT NULL column wins over a nullable
+// one, however long its path: a nullable column is taken only when nothing else reaches the
+// table (and then rows with NULL there have no organization: see countWithoutParent). Within
+// each kind, the shortest path first (r.order is by depth).
 func (r *orgRun) expandFK() {
-	for ; r.pos < len(r.order); r.pos++ {
-		p := r.order[r.pos]
+	for {
+		r.expandStrict()
+		picked := false
+	nullable:
+		for _, p := range r.order {
+			for _, f := range r.g.into[p] {
+				if r.resolved(f.src) {
+					continue
+				}
+				r.choose(f.src, &orgNode{col: f.col, parent: p, basis: "fk", depth: r.nodes[p].depth + 1, nullable: true})
+				picked = true
+				break nullable
+			}
+		}
+		if !picked {
+			return
+		}
+	}
+}
+
+// expandStrict: the NOT NULL foreign keys, breadth first from everything chosen.
+func (r *orgRun) expandStrict() {
+	for i := 0; i < len(r.order); i++ {
+		p := r.order[i]
 		for _, f := range r.g.into[p] {
-			if r.resolved(f.src) {
+			if r.resolved(f.src) || r.g.nullable(f) {
 				continue
 			}
 			r.choose(f.src, &orgNode{col: f.col, parent: p, basis: "fk", depth: r.nodes[p].depth + 1})
+		}
+	}
+}
+
+// countWithoutParent: the rows of a child that reaches its parent by a nullable column and hold
+// NULL there: they have no organization and would not move.
+func (r *orgRun) countWithoutParent() {
+	for _, s := range r.order {
+		n := r.nodes[s]
+		if !n.nullable || !r.usable(s) {
+			continue
+		}
+		tr := r.role(s)
+		tr.Nullable = true
+		rows, err := r.c.heavyRows(fmt.Sprintf("SELECT count(*)::text FROM %s WHERE %s IS NULL", qk(s), q(n.col)))
+		if err != nil {
+			r.note(s, fmt.Sprintf("%s -> %s is the only path and the column may be NULL; the rows without a value could not be counted (%s)", n.col, n.parent, firstLine(err.Error())))
+			continue
+		}
+		tr.RowsWithoutParent, _ = strconv.ParseInt(rows[0][0], 10, 64)
+		if tr.RowsWithoutParent > 0 {
+			r.note(s, fmt.Sprintf("%s -> %s is the only path to an organization and the column may be NULL: %s of %s hold NULL there and would not move",
+				n.col, n.parent, plural(int(tr.RowsWithoutParent), "row", "rows"), s))
 		}
 	}
 }
@@ -818,6 +909,7 @@ func (r *orgRun) result() *Discovery {
 		out := TableRole{Table: s, Column: n.col, Basis: n.basis}
 		if tr != nil {
 			out.Reason = tr.Reason
+			out.Nullable, out.RowsWithoutParent = tr.Nullable, tr.RowsWithoutParent
 		}
 		path := []string{s}
 		for x := n; ; x = r.nodes[x.parent] {
@@ -944,9 +1036,6 @@ func (c *checker) orgCandidates() ([]OrgCandidate, error) {
 			continue
 		}
 		kind := admin.TenantKind(t.byName[t.pk].typ)
-		if kind == "" {
-			continue
-		}
 		reach := g.reaches(k, edges, false)
 		reachOf[k] = reach
 		byFK := g.reaches(k, nil, true)
@@ -954,12 +1043,19 @@ func (c *checker) orgCandidates() ([]OrgCandidate, error) {
 			continue
 		}
 		oc := OrgCandidate{Table: k, Key: t.pk, KeyKind: kind, Reach: len(reach), ByFK: len(byFK), Excluded: excluded[k]}
+		if kind == "" {
+			oc.TenantColumn = g.organizationColumn(k, edges)
+			oc.Unsupported = fmt.Sprintf("its key %s is %s: an organization is numbered by %s", t.pk, t.byName[t.pk].typ, admin.TenantTypes)
+		}
 		oc.Evidence = fmt.Sprintf("%s: %s reach it, %d by FK", k, plural(oc.Reach, "table", "tables"), oc.ByFK)
 		if oc.Reach > oc.ByFK {
 			oc.Evidence += fmt.Sprintf(", %d by a column named <x>_id", oc.Reach-oc.ByFK)
 		}
 		if oc.Excluded != "" {
 			oc.Evidence += " (" + oc.Excluded + ")"
+		}
+		if oc.Unsupported != "" {
+			oc.Evidence += " (" + oc.Unsupported + g.wayOut(k, edges) + ")"
 		}
 		out = append(out, oc)
 	}
@@ -1044,7 +1140,7 @@ func (c *checker) orgDiscovered(d *Discovery) {
 	roots, children, byName, cloud, ambiguous := d.counts()
 	c.add(Info, "discovered", d.OrgTable, fmt.Sprintf("%s found by the organizations table %s (key %s, %s): %d with a foreign key to it, %d through another table; %d stay in the cloud, %d are ambiguous. The spec decides which data leaves the cloud: review the suggested spec and the reason of every table (discovery in the JSON report), then pass the spec with -spec",
 		plural(len(d.Spec.Tables), "table", "tables"), d.OrgTable, d.Key, d.KeyKind, roots, children, cloud, ambiguous), nil)
-	var amb, name, link []string
+	var amb, name, link, nulls []string
 	for _, t := range d.Tables {
 		switch {
 		case t.Role == RoleAmbiguous:
@@ -1055,6 +1151,13 @@ func (c *checker) orgDiscovered(d *Discovery) {
 		if t.Basis == "name" {
 			name = append(name, fmt.Sprintf("%s.%s -> %s", t.Table, t.Column, t.Path[1]))
 		}
+		if t.Nullable && t.RowsWithoutParent > 0 {
+			nulls = append(nulls, fmt.Sprintf("%s: %s hold NULL in %s and would not move", t.Table, plural(int(t.RowsWithoutParent), "row", "rows"), t.Column))
+		}
+	}
+	if len(nulls) > 0 {
+		c.add(Warning, "discovery_nullable_parent", d.OrgTable, fmt.Sprintf("%s reach their parent only through a column that may be NULL, and some rows hold NULL: they have no organization, so they would not move. Fill the column, or name another path in the spec (parent_table and parent_column)",
+			plural(len(nulls), "table", "tables")), nulls)
 	}
 	if len(amb) > 0 {
 		c.add(Warning, "discovery_ambiguous", d.OrgTable, fmt.Sprintf("%s could not be placed without a guess, so %s left out of the spec: name the right column in the spec (tenant_column, or parent_table and parent_column)",

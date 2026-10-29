@@ -133,7 +133,7 @@ func (s *session) lockStmt(call, org string) cloudStmt {
 	switch {
 	case org == "NULL":
 		return prepared(call + "(lokadb.org_lock(NULL))")
-	case !s.meta.uuidOrgs():
+	case !s.meta.valueOrgs():
 		return prepared(call+"(lokadb.org_lock($1))", []byte(org))
 	}
 	return prepared(call+"(lokadb.org_lock_v($1))", []byte(org))

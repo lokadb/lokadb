@@ -23,6 +23,9 @@ type Table struct {
 	Cloud     string // default partition holding all cloud tenants
 	Cols      []string
 	ColType   map[string]string
+	// OrgValue: the organizations are named by their value, a uuid or a string (Meta.TenantKind):
+	// the organization goes into SQL quoted, a numeric-looking string too (Table.orgLit).
+	OrgValue bool
 	// UserTypes: a column has a type outside pg_catalog (enum, domain, composite). Its OID
 	// differs in each organization's database, so the direct path leaves the table to the FDW
 	// (a client that cached the cloud's description would read the answer by the wrong type).
@@ -85,7 +88,7 @@ type Meta struct {
 	// TupleKinds[refs]: the kinds of the columns of the composite key refs maps (KeyKinds
 	// says kindTuple; tuples.go)
 	TupleKinds map[string][]string
-	// TenantKind: the kind of the organization columns (int or uuid, block 18): an
+	// TenantKind: the kind of the organization columns (int, uuid or text, block 18): an
 	// organization is its value there, kept in canonical form ("": int).
 	TenantKind string
 	// OrgNum[value] = the number N of an organization numbered by uuid (lokadb.tenants, block
@@ -228,9 +231,24 @@ func (m *Meta) rowTrigger(table string, event int) bool {
 	return m != nil && m.RowTriggers[table]&event != 0
 }
 
-// boundRe: the organization of a partition by its bound, an integer or (block 18) a uuid as
-// Postgres prints it (canonical, as canonicalUUID), the session's organization.
-var boundRe = regexp.MustCompile(`^FOR VALUES IN \('?(-?[0-9]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'?\)$`)
+// boundRe: the organization of a partition by its bound: an integer, or (block 18) a quoted
+// literal as Postgres prints it, with its cast if it has one: a uuid (canonical, as
+// canonicalUUID) or a string ('01J…'::text), the session's organization.
+var boundRe = regexp.MustCompile(`^FOR VALUES IN \((?:'((?:[^']|'')*)'(?:::[a-z ]+(?:\(\d+\))?)?|(-?[0-9]+))\)$`)
+
+// boundOf: the organization a partition's bound names, false for DEFAULT, a bound of several
+// values and the empty string (the key of rows of no organization in a table named by strings).
+func boundOf(expr string) (string, bool) {
+	b := boundRe.FindStringSubmatch(expr)
+	if b == nil {
+		return "", false
+	}
+	v := b[2]
+	if v == "" {
+		v = strings.ReplaceAll(b[1], "''", "'")
+	}
+	return v, v != ""
+}
 
 // maxCloudFirstRows: lokadb.direct_cloud_first rows a session reads (PUBLIC may insert: a table
 // filled with garbage is read this far, and the proxy warns).
@@ -495,7 +513,7 @@ func readMeta(q queryFunc) (*Meta, error) {
 		if r[3] == "f" && r[5] == "true" {
 			m.Direct[r[1]] = true
 		}
-		if b := boundRe.FindStringSubmatch(r[2]); b != nil {
+		if org, ok := boundOf(r[2]); ok {
 			parts := m.Foreign
 			if r[3] == "r" {
 				parts = m.Local
@@ -503,7 +521,7 @@ func readMeta(q queryFunc) (*Meta, error) {
 			if parts[r[0]] == nil {
 				parts[r[0]] = map[string]string{}
 			}
-			parts[r[0]][b[1]] = r[1]
+			parts[r[0]][org] = r[1]
 		}
 	}
 	if err := triggers(q, m, "lokadb.tables t"); err != nil {

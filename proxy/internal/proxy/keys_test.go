@@ -228,7 +228,7 @@ func uuidOrgMeta() *Meta {
 // statement gives it in; lokadb.tenant takes it too.
 func TestUUIDOrganization(t *testing.T) {
 	m := uuidOrgMeta()
-	if m.TenantKind != kindUUID || m.keyKind("") != kindUUID || !m.uuidOrgs() || testMeta().uuidOrgs() {
+	if m.TenantKind != kindUUID || m.keyKind("") != kindUUID || !m.valueOrgs() || testMeta().valueOrgs() {
 		t.Fatalf("TenantKind %q, keyKind(\"\") %q", m.TenantKind, m.keyKind(""))
 	}
 	s := &session{db: "uuid-org-test", meta: m, orgCache: map[string]map[string]string{"projects__refs": {testUUID: "7f000000-0000-4000-8000-000000000001"}}}
@@ -249,11 +249,11 @@ func TestUUIDOrganization(t *testing.T) {
 		t.Errorf("an integer for a uuid organization: not unknown")
 	}
 	for in, want := range map[string]string{strings.ToUpper(testUUID): testUUID, "7": "7", "*": "*", "": ""} {
-		if got, err := tenantValue(in, TenantSetting); err != nil || got != want {
+		if got, err := tenantValue(in, TenantSetting, ""); err != nil || got != want {
 			t.Errorf("tenantValue(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	if _, err := tenantValue("acme", TenantSetting); err == nil {
+	if _, err := tenantValue("acme", TenantSetting, ""); err == nil {
 		t.Errorf("tenantValue took acme")
 	}
 }
@@ -285,12 +285,13 @@ func TestUUIDOrganizationBound(t *testing.T) {
 		"FOR VALUES IN (5)":                  "5",
 		"FOR VALUES IN ('-2')":               "-2",
 		"DEFAULT":                            "",
-		"FOR VALUES IN ('abc')":              "",
+		"FOR VALUES IN ('abc')":              "abc", // a string organization
+		"FOR VALUES IN ('01JA'::text)":       "01JA",
+		"FOR VALUES IN ('it''s'::text)":      "it's",
+		"FOR VALUES IN ('')":                 "", // the rows of none of a table named by strings
+		"FOR VALUES IN ('a', 'b')":           "",
 	} {
-		got := ""
-		if b := boundRe.FindStringSubmatch(bound); b != nil {
-			got = b[1]
-		}
+		got, _ := boundOf(bound)
 		if got != want {
 			t.Errorf("%s: %q, want %q", bound, got, want)
 		}
@@ -311,11 +312,11 @@ func TestUUIDOrganizationTarget(t *testing.T) {
 			t.Errorf("%s: no TargetSQL", c.sql)
 			continue
 		}
-		if got := an.targetSQL(c.part, testUUID); !strings.Contains(got, c.want) || !strings.Contains(got, c.part) {
+		if got := an.targetSQL(c.part, testUUID, true); !strings.Contains(got, c.want) || !strings.Contains(got, c.part) {
 			t.Errorf("%s:\n%s\nwant %s", c.sql, got, c.want)
 		}
 	}
-	if got := analyze("SELECT count(*) FROM documents WHERE organization_id = 1", testMeta()).targetSQL("documents__org1", "1"); !strings.Contains(got, "documents.organization_id = 1") {
+	if got := analyze("SELECT count(*) FROM documents WHERE organization_id = 1", testMeta()).targetSQL("documents__org1", "1", false); !strings.Contains(got, "documents.organization_id = 1") {
 		t.Errorf("an integer organization: %s", got)
 	}
 }

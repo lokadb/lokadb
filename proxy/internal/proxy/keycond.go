@@ -62,11 +62,22 @@ func keyCond(sql string, m *Meta, org string, path []string) (string, bool) {
 	if currentOf {
 		return "", false
 	}
-	none, lit := "-2", org
-	if m.TenantKind == kindUUID {
-		none, lit = "'00000000-0000-0000-0000-000000000000'::uuid", sqlString(org)+"::uuid"
-	} else if _, err := strconv.ParseInt(org, 10, 64); err != nil {
-		return "", false
+	// the partition key's expression (admin.tenantKey), with the organization as a literal of it
+	keyExpr := func(col string) string { return fmt.Sprintf("coalesce(%s, -2)", col) }
+	lit := org
+	switch m.TenantKind {
+	case kindUUID:
+		keyExpr = func(col string) string {
+			return fmt.Sprintf("coalesce(%s, '00000000-0000-0000-0000-000000000000'::uuid)", col)
+		}
+		lit = sqlString(org) + "::uuid"
+	case kindText:
+		keyExpr = func(col string) string { return fmt.Sprintf("coalesce(%s::text, '') COLLATE \"C\"", col) }
+		lit = sqlString(org)
+	default:
+		if _, err := strconv.ParseInt(org, 10, 64); err != nil {
+			return "", false
+		}
 	}
 	added := false
 	add := func(where **pg.Node, rels []keyRel) {
@@ -88,7 +99,7 @@ func keyCond(sql string, m *Meta, org string, path []string) (string, bool) {
 			if !strings.Contains(ref, ".") {
 				ref = quoteIdent(ref)
 			}
-			c, err := pg.Parse(fmt.Sprintf("SELECT WHERE coalesce(%s.%s, %s) = %s", ref, quoteIdent(t.TenantCol), none, lit))
+			c, err := pg.Parse(fmt.Sprintf("SELECT WHERE %s = %s", keyExpr(ref+"."+quoteIdent(t.TenantCol)), lit))
 			if err != nil {
 				continue
 			}

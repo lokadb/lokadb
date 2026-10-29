@@ -6,11 +6,11 @@
 
 ```bash
 # small tables: one step
-lokadb enable -db "$CLOUD_DSN" -spec spec.json -owner app
+lokadb enable -db env:CLOUD_DSN -spec spec.json -owner app
 
 # large tables: two steps
-lokadb enable -db "$CLOUD_DSN" -spec spec.json -owner app -prepare    # step 1, online; can be stopped and repeated
-lokadb enable -db "$CLOUD_DSN" -spec spec.json -owner app             # step 2: the switch, under a short lock
+lokadb enable -db env:CLOUD_DSN -spec spec.json -owner app -prepare    # step 1, online; can be stopped and repeated
+lokadb enable -db env:CLOUD_DSN -spec spec.json -owner app             # step 2: the switch, under a short lock
 ```
 
 `$CLOUD_DSN` is the administrator's connection string to your database, `app` the role that owns the application's tables; [Install on your database](install.md#the-names-used-on-this-page) lists the names used on these pages. The commands run on a machine that reaches your database, as an administrator.
@@ -48,8 +48,8 @@ Where the tables go:
 *Run it on a machine that reaches your database and, through the relay, the organization's: an address in the relay's `org_allow`, such as the proxy host.* The application keeps working through the proxy all along.
 
 ```bash
-lokadb move-org -db "$CLOUD_DSN" -spec spec.json -owner app -org 1 \
-  -customer "$CUST_ADMIN_DSN" -customer-app "$CUST_APP_DSN" \
+lokadb move-org -db env:CLOUD_DSN -spec spec.json -owner app -org 1 \
+  -customer env:CUST_ADMIN_DSN -customer-app env:CUST_APP_DSN \
   -proxy-config lokadb.json -direct-role lokadb_dml
 ```
 

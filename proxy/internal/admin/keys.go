@@ -10,10 +10,11 @@ const (
 	KindInt  = "int"  // smallint, integer, bigint: the refs table's id is bigint, as before block 17
 	KindUUID = "uuid" // uuid
 	KindText = "text" // text, varchar under a deterministic collation
+	KindChar = "char" // character(n) (bpchar): text whose trailing blanks do not count (Laravel's ulid())
 )
 
 // KeyTypes names the types lokadb takes as a key, for messages.
-const KeyTypes = "smallint, integer, bigint, uuid, text or varchar"
+const KeyTypes = "smallint, integer, bigint, uuid, text, varchar or character(n)"
 
 // keyKindSQL: the kind of column a (pg_attribute) as a key, empty for a type lokadb does not take.
 // A nondeterministic collation makes different texts equal keys, which the refs table's
@@ -22,6 +23,8 @@ const keyKindSQL = `CASE WHEN a.atttypid IN ('int2'::regtype, 'int4'::regtype, '
 	WHEN a.atttypid = 'uuid'::regtype THEN 'uuid'
 	WHEN a.atttypid IN ('text'::regtype, 'varchar'::regtype)
 	  AND coalesce((SELECT co.collisdeterministic FROM pg_collation co WHERE co.oid = a.attcollation), true) THEN 'text'
+	WHEN a.atttypid = 'bpchar'::regtype
+	  AND coalesce((SELECT co.collisdeterministic FROM pg_collation co WHERE co.oid = a.attcollation), true) THEN 'char'
 	ELSE '' END`
 
 // refsTypeSQL: the type of the refs table's id for key column a: bigint for every integer,
@@ -57,6 +60,8 @@ func KeyKind(base string) string {
 		return KindUUID
 	case "text", "character varying":
 		return KindText
+	case "character":
+		return KindChar
 	}
 	return ""
 }

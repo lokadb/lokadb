@@ -36,13 +36,13 @@ func TestTenantSetRecognized(t *testing.T) {
 		if err != nil {
 			t.Fatal(c.sql, err)
 		}
-		got, ok, err := tenantSet(tree.Stmts[0].Stmt, "")
+		got, ok, err := tenantSet(tree.Stmts[0].Stmt, "", "")
 		if ok != c.ok || (err != nil) != c.err || err == nil && got != c.want {
 			t.Errorf("%s: got %+v ok=%v err=%v", c.sql, got, ok, err)
 		}
 	}
 	tree, _ := pg.Parse(`SET LOCAL app.current_tenant = 3`)
-	if got, ok, _ := tenantSet(tree.Stmts[0].Stmt, "app.current_tenant"); !ok || got.Value != "3" {
+	if got, ok, _ := tenantSet(tree.Stmts[0].Stmt, "app.current_tenant", ""); !ok || got.Value != "3" {
 		t.Errorf("tenant_setting from the config: %+v %v", got, ok)
 	}
 }

@@ -43,12 +43,14 @@ discovery.spec.tables[].tenant_column string
 discovery.tables[].basis string
 discovery.tables[].code string
 discovery.tables[].column string
+discovery.tables[].nullable_path bool
 discovery.tables[].options[].column string
 discovery.tables[].options[].target string
 discovery.tables[].parent string
 discovery.tables[].path []string
 discovery.tables[].reason string
 discovery.tables[].role string
+discovery.tables[].rows_without_parent number
 discovery.tables[].table string
 fanout.allow []string
 fanout.mode string

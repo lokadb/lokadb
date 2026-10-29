@@ -297,7 +297,7 @@ func applyRouting(r *runner, spec Spec) error {
 			for _, c := range cols {
 				kind[c[0]] = c[1]
 			}
-			if kind["id"] == "" || kind[ct.TenantColumn] != dbKind {
+			if kind["id"] == "" || TenantOfKey(kind[ct.TenantColumn]) != dbKind {
 				return fmt.Errorf("cloud table %s: it needs a column id of type %s and a column %s of the organizations' kind (%s)", ct.Table, KeyTypes, ct.TenantColumn, dbKind)
 			}
 			want["cloud:"+ct.Table] = true

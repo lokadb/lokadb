@@ -496,7 +496,7 @@ func newSession(srv *Server, db string, c net.Conn, be *pgproto3.Backend, hj *pg
 	s.cancelKey = cancelKey(s.cancelPID, s.cancelSecret)
 	s.relayDone = make(chan struct{})
 	srv.sessions.Store(s.cancelKey, s)
-	s.tenant.session, _ = startupTenant(params, s.tenantCfg().Setting) // a bad value is refused at the connection (handle)
+	s.tenant.session, _ = startupTenant(params, s.tenantCfg().Setting, s.tenantCfg().kind) // a bad value is refused at the connection (handle)
 	s.metaVer, s.metaAt = srv.schemaVersion(db).Load(), metaLook()
 	if srv.rec != nil {
 		s.track = newTxTracker(srv.rec, db)
@@ -1059,7 +1059,7 @@ func (s *session) handleQuery(sql string) {
 			}
 		}
 		if part != "" {
-			sql = an.targetSQL(part, org)
+			sql = an.targetSQL(part, org, s.meta.valueOrgs())
 			an = &Analysis{Lokadb: true, Rewritten: sql, Target: part}
 		} else if an.Lokadb && len(an.Stmts) == 1 && an.Rewritten == "" {
 			keyOrg = org // the partition key's condition (keycond.go, F7); a statement the proxy rewrites goes as it is
@@ -1554,7 +1554,7 @@ func (s *session) handleBatch(final pgproto3.FrontendMessage) {
 		}
 		if key, ok := s.orgLock(an, org); ok {
 			// up to Sync (or COMMIT) the batch is one transaction: the lock holds as long
-			inject[e.idx] = append(inject[e.idx], s.lockOrg(key, s.meta.uuidOrgs())...)
+			inject[e.idx] = append(inject[e.idx], s.lockOrg(key, s.meta.valueOrgs())...)
 		}
 		if txNow != 'E' {
 			inject[e.idx] = append(inject[e.idx], prelude(an.Prelude)...)
@@ -1572,7 +1572,7 @@ func (s *session) handleBatch(final pgproto3.FrontendMessage) {
 		if part != "" {
 			inject[e.idx] = append(inject[e.idx],
 				outMsg{msg: &pgproto3.Close{ObjectType: 'S', Name: "lokadb_alt"}, mode: mDrop},
-				outMsg{msg: &pgproto3.Parse{Name: "lokadb_alt", Query: an.targetSQL(part, org), ParameterOIDs: e.st.oids}, mode: mDrop})
+				outMsg{msg: &pgproto3.Parse{Name: "lokadb_alt", Query: an.targetSQL(part, org, s.meta.valueOrgs()), ParameterOIDs: e.st.oids}, mode: mDrop})
 			b.PreparedStatement = "lokadb_alt"
 			traced = &Analysis{Lokadb: true, Rewritten: "partition", Target: part}
 		} else if !an.Lokadb || txNow == 'E' || an.Rewritten != "" { // a statement the proxy rewrites: relinked as it is
@@ -1865,7 +1865,7 @@ func (s *session) orgLock(an *Analysis, org string) (key string, ok bool) {
 // lockCall: the lock key of orgLock's key in SQL text: lokadb.org_lock(NULL), of an integer
 // organization lokadb.org_lock(N), of one numbered by uuid lokadb.org_lock_v('…') (block 18).
 func (s *session) lockCall(key string) string {
-	if key == "NULL" || !s.meta.uuidOrgs() {
+	if key == "NULL" || !s.meta.valueOrgs() {
 		return "lokadb.org_lock(" + key + ")"
 	}
 	return "lokadb.org_lock_v(" + sqlString(key) + ")"

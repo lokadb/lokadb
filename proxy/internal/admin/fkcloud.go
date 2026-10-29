@@ -118,10 +118,10 @@ BEGIN
   SELECT coalesce(array_agg(c.oid::regclass ORDER BY c.relname), '{}') INTO parts
     FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
     WHERE i.inhparent = to_regclass(lokadb.qrel(parent)) AND c.relkind = 'f'
-      AND (tc IS NULL OR CASE WHEN (old ->> tc) ~ '^-?[0-9]+$'
+      AND (tc IS NULL OR CASE WHEN lokadb.tenant_kind(parent, (SELECT t.tenant_column FROM lokadb.tables t WHERE t.table_name = parent)) = 'int'
         THEN (lokadb.bound_orgs(to_regclass(lokadb.qrel(parent))) ->> c.oid::text)::bigint = (old ->> tc)::bigint
-        -- an organization numbered by uuid (block 18): both are its canonical text
-        ELSE (lokadb.bound_orgs(to_regclass(lokadb.qrel(parent))) ->> c.oid::text) = (old ->> tc) END);
+        -- an organization named by its value, a uuid or a string (block 18): both are its canonical text
+        ELSE (lokadb.bound_orgs(to_regclass(lokadb.qrel(parent))) ->> c.oid::text) = rtrim(old ->> tc) END);
   IF parts = '{}' THEN RETURN; END IF;
   IF tc IS NULL AND NOT (mode IN ('log', 'allow') OR mode = 'reject-writes' AND act IN ('a', 'r')) THEN
     -- a table with a column that holds the organization of its rows can be declared; a shared one

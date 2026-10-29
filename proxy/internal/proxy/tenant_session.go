@@ -28,6 +28,8 @@ type TenantConfig struct {
 	// On unless set to false (the coordinator's decision of 24.10, block 9's B9.11): without a
 	// pooler before the proxy, or with one in session mode, a session value is safe.
 	LocalOnly *bool `json:"local_only,omitempty"`
+
+	kind string // the database's kind of organizations (Meta.TenantKind), set by session.tenantCfg
 }
 
 // localOnly: Tenant.LocalOnly, on by default.
@@ -78,12 +80,12 @@ func (c *TenantConfig) Validate() error {
 const TenantMismatchLog = "log"
 
 // tenantSetOf recognizes lokadb.tenant, and extra (Config.Tenant.Setting) when it is set.
-func tenantSetOf(n *pg.Node, extra string) (TenantSet, bool, error) {
-	if ts, ok, err := tenantSet(n, TenantSetting); ok {
+func tenantSetOf(n *pg.Node, extra, kind string) (TenantSet, bool, error) {
+	if ts, ok, err := tenantSet(n, TenantSetting, kind); ok {
 		return ts, ok, err
 	}
 	if extra != "" && !strings.EqualFold(extra, TenantSetting) {
-		return tenantSet(n, extra)
+		return tenantSet(n, extra, kind)
 	}
 	return TenantSet{}, false, nil
 }
@@ -127,7 +129,7 @@ func tenantString(sql string, cfg TenantConfig) (evs []TxEvent, sets []TenantSet
 			}
 			continue
 		}
-		ts, ok, terr := tenantSetOf(raw.Stmt, extra)
+		ts, ok, terr := tenantSetOf(raw.Stmt, extra, cfg.kind)
 		if terr == nil && ok {
 			terr = cfg.sessionRefused(ts, TenantSetting)
 		}
@@ -159,7 +161,7 @@ func stmtTenant(sql string, cfg TenantConfig) (*TenantSet, error) {
 	if err != nil || len(tree.Stmts) != 1 {
 		return nil, nil
 	}
-	ts, ok, err := tenantSetOf(tree.Stmts[0].Stmt, extra)
+	ts, ok, err := tenantSetOf(tree.Stmts[0].Stmt, extra, cfg.kind)
 	if err == nil && ok {
 		err = cfg.sessionRefused(ts, TenantSetting)
 	}
@@ -224,7 +226,7 @@ func boundTenant(st *stmtInfo, p *portalInfo) (*TenantSet, error) {
 			v = ""
 		}
 		var err error
-		if ts.Value, err = tenantValue(v, TenantSetting); err != nil {
+		if ts.Value, err = tenantValue(v, TenantSetting, ts.kind); err != nil {
 			return nil, err
 		}
 		ts.Param = 0
@@ -233,10 +235,14 @@ func boundTenant(st *stmtInfo, p *portalInfo) (*TenantSet, error) {
 }
 
 func (s *session) tenantCfg() TenantConfig {
+	var cfg TenantConfig
 	if c := s.srv.cfg.Tenant; c != nil && c.Validate() == nil { // lokadb proxy refuses to start with an invalid one
-		return *c
+		cfg = *c
 	}
-	return TenantConfig{}
+	if s.meta != nil {
+		cfg.kind = s.meta.TenantKind // the values it names are read by the organizations' kind
+	}
+	return cfg
 }
 
 // tenantOrg reconciles a statement on LokaDB tables with the organization the application
@@ -340,7 +346,7 @@ func (s *session) refuseNamed(sql string, an *Analysis, unknown bool, named stri
 // setting as a startup parameter of its own, by either name): the session's value from the
 // start. The parameters come as a map, in no order: set twice with different values (after
 // tenantValue) it is refused, or the proxy could route by one and the server keep the other.
-func startupTenant(params map[string]string, extra string) (string, error) {
+func startupTenant(params map[string]string, extra, kind string) (string, error) {
 	names := []string{TenantSetting}
 	if extra != "" {
 		names = append(names, strings.ToLower(extra))
@@ -348,7 +354,7 @@ func startupTenant(params map[string]string, extra string) (string, error) {
 	val, found := "", false
 	var bad error
 	take := func(raw string) {
-		v, err := tenantValue(raw, TenantSetting)
+		v, err := tenantValue(raw, TenantSetting, kind)
 		switch {
 		case bad != nil:
 		case err != nil:

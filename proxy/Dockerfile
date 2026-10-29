@@ -17,12 +17,12 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
-ARG VERSION=dev
+ARG VERSION=
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     if [ "$TARGETARCH" != "$BUILDARCH" ]; then \
       case "$TARGETARCH" in arm64) export CC=aarch64-linux-gnu-gcc ;; amd64) export CC=x86_64-linux-gnu-gcc ;; esac; \
     fi; \
-    CGO_ENABLED=1 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags "-X main.version=$VERSION" -o /out/lokadb ./cmd/lokadb
+    CGO_ENABLED=1 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags "-X github.com/lokadb/lokadb/proxy/internal/buildinfo.version=$VERSION" -o /out/lokadb ./cmd/lokadb
 
 # the release binary alone (linked against bookworm's glibc, 2.36)
 FROM scratch AS binary

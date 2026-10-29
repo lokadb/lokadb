@@ -197,7 +197,7 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	if err := o.resolve(ctx, cloud); err != nil {
 		return err
 	}
-	if o.tenant.Kind == TenantUUID {
+	if ValueKind(o.tenant.Kind) {
 		log = log.With("tenant", o.tenant.Value)
 	}
 	pub := fmt.Sprintf("lokadb_org%d", o.Org)

@@ -554,3 +554,114 @@ func orgConn(t *testing.T, dsn string) (string, *pgx.Conn) {
 	t.Cleanup(func() { conn.Close(context.Background()) })
 	return dsn, conn
 }
+
+// The schema of a real install (KeepPlain): commits point at builds by a nullable build_id and at
+// repositories by a mandatory repository_id; items reach their proposal only by a nullable column.
+const keepPlainShape = `
+CREATE TABLE teams (id bigserial PRIMARY KEY, name text);
+CREATE TABLE repositories (id bigserial PRIMARY KEY, team_id bigint NOT NULL REFERENCES teams);
+CREATE TABLE builds (id bigserial PRIMARY KEY, team_id bigint NOT NULL REFERENCES teams, repository_id bigint REFERENCES repositories);
+CREATE TABLE commits (id bigserial PRIMARY KEY, build_id bigint REFERENCES builds, repository_id bigint NOT NULL REFERENCES repositories);
+CREATE TABLE proposals (id bigserial PRIMARY KEY, team_id bigint NOT NULL REFERENCES teams);
+CREATE TABLE proposal_items (id bigserial PRIMARY KEY, proposal_id bigint REFERENCES proposals, body text);
+CREATE TABLE notes (id bigserial PRIMARY KEY, build_id bigint REFERENCES builds, commit_id bigint NOT NULL REFERENCES commits);
+INSERT INTO teams (name) VALUES ('t1'), ('t2');
+INSERT INTO repositories (team_id) VALUES (1), (2);
+INSERT INTO builds (team_id, repository_id) VALUES (1, 1), (2, 2);
+INSERT INTO commits (build_id, repository_id) VALUES (1, 1), (NULL, 1), (NULL, 2);
+INSERT INTO proposals (team_id) VALUES (1);
+INSERT INTO proposal_items (proposal_id) VALUES (1), (NULL), (NULL);
+INSERT INTO notes (build_id, commit_id) VALUES (1, 1);`
+
+// A NOT NULL path to the organization wins over a nullable one, even a longer one; a table with
+// only a nullable path is taken with the count of rows that would not move.
+func TestOrgTableParentChoice(t *testing.T) {
+	_, conn := orgDB(t, "org_parent", keepPlainShape)
+	d := orgDiscover(t, conn, "teams")
+	wantSpec(t, d, "repositories team_id", "builds team_id", "proposals team_id",
+		"commits -> repositories.repository_id", "proposal_items -> proposals.proposal_id", "notes -> commits.commit_id")
+	if r := roleOf(t, d, "commits"); r.Nullable || r.RowsWithoutParent != 0 {
+		t.Errorf("commits has a mandatory path: %+v", r)
+	}
+	if r := roleOf(t, d, "notes"); r.Nullable {
+		t.Errorf("notes: %+v", r)
+	}
+	r := roleOf(t, d, "proposal_items")
+	if !r.Nullable || r.RowsWithoutParent != 2 || !strings.Contains(r.Reason, "2 rows of proposal_items hold NULL there and would not move") {
+		t.Errorf("proposal_items: %+v", r)
+	}
+	c := &checker{rep: &Report{}}
+	c.orgDiscovered(d)
+	var warn *Finding
+	for i, f := range c.rep.Findings {
+		if f.Code == "discovery_nullable_parent" {
+			warn = &c.rep.Findings[i]
+		}
+	}
+	if warn == nil || warn.Severity != Warning || len(warn.Examples) != 1 || !strings.Contains(warn.Examples[0], "proposal_items: 2 rows hold NULL in proposal_id") {
+		t.Errorf("warning: %+v", warn)
+	}
+}
+
+// With no NULL in the nullable column there is nothing to warn about.
+func TestOrgTableNullableWithoutNulls(t *testing.T) {
+	_, conn := orgDB(t, "org_nonull",
+		`CREATE TABLE teams (id bigserial PRIMARY KEY)`,
+		`CREATE TABLE proposals (id bigserial PRIMARY KEY, team_id bigint NOT NULL REFERENCES teams)`,
+		`CREATE TABLE items (id bigserial PRIMARY KEY, proposal_id bigint REFERENCES proposals)`,
+		`INSERT INTO teams DEFAULT VALUES`, `INSERT INTO proposals (team_id) VALUES (1)`, `INSERT INTO items (proposal_id) VALUES (1)`)
+	d := orgDiscover(t, conn, "teams")
+	wantSpec(t, d, "proposals team_id", "items -> proposals.proposal_id")
+	if r := roleOf(t, d, "items"); !r.Nullable || r.RowsWithoutParent != 0 || strings.Contains(r.Reason, "NULL") {
+		t.Errorf("items: %+v", r)
+	}
+	c := &checker{rep: &Report{}}
+	c.orgDiscovered(d)
+	for _, f := range c.rep.Findings {
+		if f.Code == "discovery_nullable_parent" {
+			t.Errorf("warned with no NULL: %+v", f)
+		}
+	}
+}
+
+// The real organizations table with a key of a type lokadb does not take (character(26)) is listed
+// by -org-candidates with the reason and the column to use, and -org-table says the same.
+func TestOrgTableUnsupportedKey(t *testing.T) {
+	_, conn := orgDB(t, "org_charkey",
+		`CREATE TABLE teams (id char(26) PRIMARY KEY, name text)`,
+		`CREATE TABLE repositories (id bigserial PRIMARY KEY, team_id char(26) NOT NULL REFERENCES teams)`,
+		`CREATE TABLE builds (id bigserial PRIMARY KEY, team_id char(26) NOT NULL REFERENCES teams)`,
+		`CREATE TABLE github_installations (id bigserial PRIMARY KEY, account text)`,
+		`CREATE TABLE rule_items (id bigserial PRIMARY KEY, installation_id bigint REFERENCES github_installations)`)
+	cands, err := OrgTableCandidates(context.Background(), conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var teams *OrgCandidate
+	for i, c := range cands {
+		if c.Table == "teams" {
+			teams = &cands[i]
+		} else if c.Unsupported != "" {
+			t.Errorf("%s is marked unsupported: %+v", c.Table, c)
+		}
+	}
+	if teams == nil {
+		t.Fatalf("teams is not listed: %+v", cands)
+	}
+	if teams.Reach != 2 || teams.TenantColumn != "team_id" || teams.KeyKind != "" ||
+		!strings.Contains(teams.Unsupported, "id is character") || !strings.Contains(teams.Evidence, "-tenant-column team_id") {
+		t.Errorf("teams: %+v", teams)
+	}
+	if cands[0].Table != "teams" {
+		t.Errorf("teams reached by 2 tables is not first: %+v", cands)
+	}
+	_, err = DiscoverByOrgTable(context.Background(), conn, "teams")
+	if err == nil || !strings.Contains(err.Error(), "-tenant-column team_id") {
+		t.Errorf("error: %v", err)
+	}
+	// no column to suggest: the error still names the flag
+	_, conn2 := orgDB(t, "org_charkey2", `CREATE TABLE lone (id text PRIMARY KEY)`)
+	if _, err := DiscoverByOrgTable(context.Background(), conn2, "lone"); err == nil || !strings.Contains(err.Error(), "-tenant-column COLUMN") {
+		t.Errorf("lone: %v", err)
+	}
+}

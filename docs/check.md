@@ -3,8 +3,8 @@
 `lokadb check` answers "can the organizations of this database and this application be moved?" before anything is changed. It reads the catalog, `pg_stat_statements` and the proxy's workload recording. It does not infer permissions from the catalog: it **tries** what `enable` and `move-org` will do (`CREATE TABLE`, `CREATE EXTENSION`, `CREATE SERVER`, `CREATE SUBSCRIPTION … WITH (connect = false)`, `ALTER TABLE … OWNER TO`) in a transaction that is always rolled back. The answer is therefore right for any role, for managed-service roles (`rds_superuser`, `cloudsqlsuperuser`, `azure_pg_admin`) and settings (`default_transaction_read_only`, a replica).
 
 ```bash
-lokadb check -db "$CLOUD_DSN" -spec spec.json -workload workload.json -proxy-config lokadb.json \
-  -customer "$CUST_ADMIN_DSN" -customer-app "$CUST_APP_DSN" -org 1
+lokadb check -db env:CLOUD_DSN -spec spec.json -workload workload.json -proxy-config lokadb.json \
+  -customer env:CUST_ADMIN_DSN -customer-app env:CUST_APP_DSN -org 1
 ```
 
 **Before you run it.** None of the inputs is needed to start:
@@ -39,7 +39,7 @@ Blockers (2)
   [customer_table_exists] the organization's database already has a table documents that lokadb did not create ...
 
 Not supported by lokadb yet (limitations of lokadb, not problems of the schema) (4)
-  [id_type] attachments.id is character(26): lokadb takes keys of type smallint, integer, bigint, uuid, text or varchar ...
+  [id_type] attachments.id is numeric(26,0): lokadb takes keys of type smallint, integer, bigint, uuid, text, varchar or character(n) ...
   ...
 
 Changes after the migration (the application works, but these behave differently) (1)

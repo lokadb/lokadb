@@ -616,8 +616,8 @@ const orgMark = "__lokadb_org__"
 
 // targetSQL returns the statement aimed at partition part, kept to organization org: an
 // integer as it is, a uuid (block 18) as a literal of the organization column's type.
-func (a *Analysis) targetSQL(part, org string) string {
-	if !intRe.MatchString(org) {
+func (a *Analysis) targetSQL(part, org string, valueOrgs bool) string {
+	if valueOrgs || !intRe.MatchString(org) {
 		org = sqlString(org)
 	}
 	return strings.Replace(strings.Replace(a.targetText(), targetMark, qrel(part), 1), orgMark, org, 1)
@@ -2188,10 +2188,21 @@ const ordCol, rnCol = "__lokadb_ord", "__lokadb_rn"
 var typmodRe = regexp.MustCompile(`^(character varying|character|bit varying|bit)\(\d+\)(\[\])?$`)
 
 // castType is the type the rewritten upsert casts a value to: the column's type without a
-// length for character and bit types. An explicit cast to varchar(n) silently cuts a value
-// that is too long; storing it into the column (an assignment) fails as the original
-// INSERT would have.
-func castType(typ string) string { return typmodRe.ReplaceAllString(typ, "$1$2") }
+// length for character varying and bit varying. An explicit cast to varchar(n) silently cuts a
+// value that is too long; storing it into the column (an assignment) fails as the original
+// INSERT would have. Without a length "character" is character(1) and "bit" is bit(1) (the
+// value would be cut to one character): character(n) casts to bpchar, which has none, and bit(n)
+// keeps its length.
+func castType(typ string) string {
+	m := typmodRe.FindStringSubmatch(typ)
+	switch {
+	case m == nil || m[1] == "bit":
+		return typ
+	case m[1] == "character":
+		return "bpchar" + m[2]
+	}
+	return m[1] + m[2]
+}
 
 // rewriteUpsert turns INSERT ... ON CONFLICT on a LokaDB table into an equivalent statement
 // that does not need a unique index on the partitioned parent (which Postgres forbids

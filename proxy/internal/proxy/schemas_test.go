@@ -55,8 +55,8 @@ func TestQualifyByPath(t *testing.T) {
 	// a routed UPDATE aims at the partition in the table's schema
 	app.Foreign = map[string]map[string]string{"app.documents": {"1": "app.documents__org1"}}
 	a := analyzeIn("UPDATE documents SET title = 'x' WHERE org_id = 1 AND id = 5", app, []string{"app"})
-	if a.Target != "app.documents" || !strings.Contains(a.targetSQL("app.documents__org1", "1"), `"app"."documents__org1"`) {
-		t.Errorf("target %q, sql %q", a.Target, a.targetSQL("app.documents__org1", "1"))
+	if a.Target != "app.documents" || !strings.Contains(a.targetSQL("app.documents__org1", "1", false), `"app"."documents__org1"`) {
+		t.Errorf("target %q, sql %q", a.Target, a.targetSQL("app.documents__org1", "1", false))
 	}
 }
 

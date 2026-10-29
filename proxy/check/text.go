@@ -80,10 +80,13 @@ func (r *Report) WriteText(w io.Writer) {
 			continue
 		}
 		fmt.Fprintf(w, "\n%s (%d)\n", sectionText[sev], len(fs))
-		for _, f := range fs {
+		for _, f := range groupFindings(fs) {
 			fmt.Fprintf(w, "  [%s] %s\n", f.Code, f.Message)
 			for _, e := range f.Examples {
 				fmt.Fprintf(w, "      %s\n", e)
+			}
+			if len(f.same) > 0 {
+				fmt.Fprintf(w, "      the same for %s\n", sameText(f.same))
 			}
 		}
 	}
@@ -112,6 +115,58 @@ func (r *Report) WriteText(w io.Writer) {
 	}
 	fmt.Fprintf(w, "\nThe report covers the schema and the queries seen so far. Queries nobody has run yet (rare code paths,\n"+
 		"dynamic SQL) are not covered: test the application through the proxy before moving an organization.\n")
+}
+
+// groupedFinding is a finding of the text report with the objects of the findings of its code
+// that follow it: one cause makes dozens of them (a key type lokadb does not take, in every table
+// of an application), and the report names the cause once.
+type groupedFinding struct {
+	Finding
+	same []string
+}
+
+// sameMin: a code with more findings than this in a section is written once, with the objects of
+// the others (the JSON report keeps every finding).
+const sameMin = 5
+
+// groupFindings: fs (of one severity) with the findings of a code that has more than sameMin of
+// them reduced to the first and the objects of the rest, in the order of their first findings.
+func groupFindings(fs []Finding) []groupedFinding {
+	n := map[string]int{}
+	for _, f := range fs {
+		n[f.Code]++
+	}
+	var out []groupedFinding
+	at := map[string]int{}
+	for _, f := range fs {
+		// only a finding that says nothing beyond its message: a measure, patterns, examples of
+		// its own are each worth their line
+		if n[f.Code] <= sameMin || f.Measure != nil || len(f.Patterns) > 0 || len(f.Transactions) > 0 || len(f.Examples) > 0 {
+			out = append(out, groupedFinding{Finding: f})
+			continue
+		}
+		if i, ok := at[f.Code]; ok {
+			out[i].same = append(out[i].same, f.Object)
+			continue
+		}
+		at[f.Code] = len(out)
+		out = append(out, groupedFinding{Finding: f})
+	}
+	return out
+}
+
+// sameText: "37 more: a.id, b.id, … and 25 more" (the objects of grouped findings).
+func sameText(objs []string) string {
+	const shown = 12
+	head := objs
+	if len(head) > shown {
+		head = head[:shown]
+	}
+	s := fmt.Sprintf("%d more: %s", len(objs), strings.Join(head, ", "))
+	if len(objs) > shown {
+		s += fmt.Sprintf(", … and %d more", len(objs)-shown)
+	}
+	return s
 }
 
 func uniqueLine(n int) string {

@@ -151,7 +151,7 @@ func TestTarget(t *testing.T) {
 		a := analyze(c.sql, m)
 		got := ""
 		if a.targetText() != "" {
-			got = a.targetSQL("documents__org1", "1")
+			got = a.targetSQL("documents__org1", "1", false)
 			if _, err := pg.Parse(got); err != nil {
 				t.Errorf("%s: target SQL does not parse: %v", c.sql, err)
 			}
@@ -204,8 +204,9 @@ func TestUpsertCastAndWhere(t *testing.T) {
 		t.Errorf("with DO UPDATE WHERE the insert must skip every existing key, updated or not:\n%s", a.Rewritten)
 	}
 	for typ, want := range map[string]string{
-		"character varying(255)": "character varying", "character(3)": "character", "character varying(20)[]": "character varying[]",
-		"bit(8)": "bit", "numeric(10,2)": "numeric(10,2)", "timestamp(3) without time zone": "timestamp(3) without time zone", "text": "text",
+		"character varying(255)": "character varying", "character varying(20)[]": "character varying[]",
+		// bare "character" is character(1) and "bit" is bit(1): a value would be cut to one character
+		"character(3)": "bpchar", "character(26)[]": "bpchar[]", "bit(8)": "bit(8)", "numeric(10,2)": "numeric(10,2)", "timestamp(3) without time zone": "timestamp(3) without time zone", "text": "text",
 	} {
 		if got := castType(typ); got != want {
 			t.Errorf("castType(%q) = %q, want %q", typ, got, want)
@@ -285,7 +286,7 @@ func TestLocalUpsert(t *testing.T) {
 		a := analyze(c.sql, m)
 		got := ""
 		if a.TargetLocal {
-			got = a.targetSQL("documents__cloud", "2")
+			got = a.targetSQL("documents__cloud", "2", false)
 		}
 		if got != c.want || c.want != "" && a.Rewritten == "" {
 			t.Errorf("%s\n got: %s\nwant: %s", c.sql, got, c.want)
@@ -808,7 +809,7 @@ func TestTargetIsLazy(t *testing.T) {
 	if got := a.targetText(); got != want {
 		t.Fatalf("text:\n got %s\nwant %s", got, want)
 	}
-	if got := a.targetSQL("documents__org1", "1"); got != `SELECT id, title FROM "documents__org1" documents WHERE (organization_id = $1 AND id = $2) AND documents.organization_id = 1` {
+	if got := a.targetSQL("documents__org1", "1", false); got != `SELECT id, title FROM "documents__org1" documents WHERE (organization_id = $1 AND id = $2) AND documents.organization_id = 1` {
 		t.Fatalf("aimed at the partition: %s", got)
 	}
 	// a text cannot become one the partition does not take

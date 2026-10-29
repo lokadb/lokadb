@@ -53,6 +53,7 @@ discovery_ambiguous
 discovery_by_name
 discovery_empty
 discovery_link_tables
+discovery_nullable_parent
 enable_prepare
 enable_prepare_done
 enable_prepare_stalled

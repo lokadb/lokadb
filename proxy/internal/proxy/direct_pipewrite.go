@@ -81,7 +81,7 @@ func (s *session) pipeWrite(org string, units []*pipeUnit, dis []*directInfo, dc
 				return notTaken("an INSERT whose key is an expression")
 			}
 			rowsOf[i] = 1
-			extra = append(extra, givenRefs(w.lits(keys[i], kind, typ), w.refsCols(), qrel(t.Refs), org, false))
+			extra = append(extra, givenRefs(w.table, w.lits(keys[i], kind, typ), w.refsCols(), qrel(t.Refs), org, false))
 			continue
 		}
 		n := len(w.rows)
@@ -93,7 +93,7 @@ func (s *session) pipeWrite(org string, units []*pipeUnit, dis []*directInfo, dc
 		}
 		rowsOf[i] = n
 		extra = append(extra, "WITH lokadb_k AS (SELECT "+t.KeyDefault+" AS id FROM generate_series(1, "+itoa(n)+")), lokadb_r AS (INSERT INTO "+qrel(t.Refs)+
-			" (id, tenant) SELECT id, "+orgLit(org)+" FROM lokadb_k) SELECT id::text FROM lokadb_k")
+			" (id, tenant) SELECT id, "+t.orgLit(org)+" FROM lokadb_k) SELECT id::text FROM lokadb_k")
 	}
 	rows, ok, sent := s.txGateAll(org, dis, dc, extra...)
 	if !ok {
@@ -396,7 +396,7 @@ func (s *session) pipeWrite(org string, units []*pipeUnit, dis []*directInfo, dc
 		case w.del && len(deleted[i]) > 0: // the cloud's FKs onto __refs act here
 			post = append(post, w.refsDelete(refs, deleted[i], kind, typ))
 		case w.sel && len(inserted[i]) > 0: // the keys the rows named: none another organization's
-			post = append(post, givenRefs(w.lits(inserted[i], kind, typ), w.refsCols(), refs, org, false))
+			post = append(post, givenRefs(w.table, w.lits(inserted[i], kind, typ), w.refsCols(), refs, org, false))
 			selChecks++
 		case w.upsert: // the keys the cloud gave rows that were updated or skipped leave __refs
 			given := keys[i]

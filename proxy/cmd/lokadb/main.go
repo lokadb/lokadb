@@ -26,16 +26,15 @@ import (
 	"github.com/lokadb/lokadb/proxy/check"
 	_ "github.com/lokadb/lokadb/proxy/check/ext" // -rtt, -suggest, -patch, the feed index advice
 	"github.com/lokadb/lokadb/proxy/internal/admin"
+	"github.com/lokadb/lokadb/proxy/internal/buildinfo"
 	"github.com/lokadb/lokadb/proxy/internal/creds"
+	"github.com/lokadb/lokadb/proxy/internal/initcmd"
 	"github.com/lokadb/lokadb/proxy/internal/migrate"
 	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 	"github.com/lokadb/lokadb/proxy/internal/proxy"
 	"github.com/lokadb/lokadb/proxy/internal/runner"
 	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 )
-
-// version: set at build time (-ldflags "-X main.version=0.9.0"); the runner reports it.
-var version = "dev"
 
 func main() {
 	// time to the nanosecond, not slog's millisecond: logs of the proxy and of a lokadb command
@@ -55,7 +54,7 @@ func main() {
 	case "-h", "-help", "--help", "help":
 		usage()
 	case "version", "-version", "--version":
-		fmt.Println(version)
+		fmt.Println(buildinfo.Version())
 		return
 	}
 	var err error
@@ -67,6 +66,12 @@ func main() {
 		parseArgs(fs)
 		var cfg proxy.Config
 		if err = readJSON(*cfgPath, &cfg); err == nil {
+			// a DSN with a password is kept out of the file: "env:NAME" or "file:PATH"
+			if cfg.Upstream, err = resolveRef("upstream", cfg.Upstream); err == nil {
+				cfg.ControlPlane, err = resolveRef("control_plane", cfg.ControlPlane)
+			}
+		}
+		if err == nil {
 			if *record != "" {
 				cfg.Record = *record
 			}
@@ -246,6 +251,9 @@ func main() {
 		}
 		cfg.ConfigPath = *cfgPath // "orgs" is re-read: a new organization needs no restart
 		var store *tunnel.PGStore
+		if cfg.ControlPlane, err = resolveRef("control_plane", cfg.ControlPlane); err != nil {
+			break
+		}
 		if store, err = tunnel.OpenPGStoreForRelay(context.Background(), cfg.ControlPlane, log); err == nil {
 			rl := tunnel.NewRelay(cfg, store, log)
 			go func() { // SIGTERM: drain (health check red, streams finish), then exit; a second one exits at once
@@ -274,13 +282,26 @@ func main() {
 	case "runner": // LokaDB Cloud's runner at the SaaS (private/cloud/DESIGN.md §4)
 		fs := flag.NewFlagSet("runner", flag.ExitOnError)
 		cfgPath := fs.String("config", "/etc/lokadb/runner.json", "runner config")
+		checkOnly := fs.Bool("check", false, "check the config (its files, the databases, the host names) and print every problem, without registering; exit 1 if there is any")
 		parseArgs(fs)
 		var cfg *runner.Config
 		if cfg, err = runner.LoadConfig(*cfgPath); err != nil {
 			break
 		}
+		if *checkOnly {
+			probs := cfg.Check(context.Background())
+			for _, p := range probs {
+				fmt.Printf("PROBLEM  %s\n         fix: %s\n", p.Message, p.Fix)
+			}
+			if len(probs) > 0 {
+				fmt.Printf("%d problem(s): the runner would register and wait for them to be fixed\n", len(probs))
+				os.Exit(1)
+			}
+			fmt.Println("ok: the files, the database and the control plane are all right")
+			os.Exit(0)
+		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		err = (&runner.Runner{Cfg: cfg, Log: log, Version: version}).Run(ctx)
+		err = (&runner.Runner{Cfg: cfg, Log: log, Version: buildinfo.Version()}).Run(ctx)
 		stop()
 	case "agent":
 		fs := flag.NewFlagSet("agent", flag.ExitOnError)
@@ -394,17 +415,47 @@ func main() {
 	case "certs":
 		fs := flag.NewFlagSet("certs", flag.ExitOnError)
 		dir := fs.String("dir", "certs", "output directory")
-		relayHost := fs.String("relay-host", "relay", "relay host name")
+		relayHost := fs.String("relay-host", "relay", "relay host name or IP (several, comma separated)")
+		caKeyDir := fs.String("ca-key-dir", "", "where ca.key goes (default: next to the certificates, in -dir: then only the relay may mount -dir; the agent, the runner and the proxy get a copy of ca.crt alone, as `lokadb init` lays it out)")
 		orgs := fs.String("orgs", "", "comma-separated organization ids for static client certificates (normally none: agents enroll)")
 		force := fs.Bool("force", false, "replace an existing CA (every agent then needs a new certificate)")
 		parseArgs(fs)
+		keyDir := *caKeyDir
+		if keyDir == "" {
+			keyDir = *dir
+		}
 		if _, statErr := os.Stat(filepath.Join(*dir, "ca.crt")); statErr == nil && !*force {
 			log.Info("certificates already present, keeping them", "dir", *dir)
 			break
 		}
-		if err = tunnel.GenerateCerts(*dir, *relayHost, strings.Split(*orgs, ",")); err == nil {
-			log.Info("certificates written", "dir", *dir)
+		if err = tunnel.GenerateCertsTo(*dir, keyDir, *relayHost, strings.Split(*orgs, ",")); err == nil {
+			log.Info("certificates written", "dir", *dir, "ca_key", filepath.Join(keyDir, "ca.key"))
+			if inside(keyDir, *dir) {
+				log.Warn("ca.key is in this directory next to ca.crt: mount the directory into the relay only; the agent, the runner and the proxy get a copy of ca.crt alone (or use -ca-key-dir to keep the key elsewhere)", "dir", *dir)
+			}
 		}
+	case "init":
+		fs := flag.NewFlagSet("init", flag.ExitOnError)
+		var o initcmd.Options
+		var orgAllow string
+		fs.StringVar(&o.Dir, "dir", "/etc/lokadb", "where the files are written (on this machine)")
+		fs.StringVar(&o.ContainerDir, "container-dir", "/etc/lokadb", "where the containers see -dir: the paths in relay.json and proxy.json")
+		fs.StringVar(&o.RelayHost, "relay-host", "", "the name (or IP) agents dial the relay by; several, comma separated (required)")
+		fs.StringVar(&o.AdminDSN, "admin", "", "DSN of a role that may create roles and databases: makes the control plane's role (random password) and database")
+		fs.StringVar(&o.CPRole, "cp-role", "lokadb_cp", "the control plane's role")
+		fs.StringVar(&o.CPDB, "cp-db", "lokadb_cp", "the control plane's database")
+		fs.StringVar(&o.CPHost, "cp-host", "", "the control plane's host as the relay and proxy containers reach it (default: the host of -admin; with docker-compose the service name)")
+		fs.StringVar(&o.CPPort, "cp-port", "", "its port (default: the port of -admin)")
+		fs.StringVar(&o.CPSSLMode, "cp-sslmode", "", "its sslmode (default: the one of -admin; disable inside a docker network without TLS)")
+		fs.StringVar(&orgAllow, "org-allow", "", "comma-separated IPs, CIDRs or names that may reach an organization's port on the relay (default: the private ranges)")
+		fs.StringVar(&o.Network, "network", "", "docker network for the docker run lines it prints")
+		fs.StringVar(&o.Image, "image", "", "the image for the docker run lines (default ghcr.io/lokadb/lokadb:latest)")
+		parseArgs(fs)
+		if orgAllow != "" {
+			o.OrgAllow = strings.Split(orgAllow, ",")
+		}
+		o.Out = os.Stdout
+		err = initcmd.Run(context.Background(), o)
 	case "move-cleanup":
 		fs := flag.NewFlagSet("move-cleanup", flag.ExitOnError)
 		db := fs.String("db", "", "admin DSN of the cloud database")
@@ -893,13 +944,17 @@ usage:
               [-ci [-baseline accepted.json]] [-write-baseline F]: exit 0 nothing new, 6 new items (CI of the application)
   lokadb relay -config relay.json
   lokadb runner -config runner.json   (LokaDB Cloud's runner: takes jobs from the service, runs them here)
+  lokadb runner -check -config runner.json   (its config checked: every problem printed, nothing registered; exit 1 if any)
   lokadb issuer -config issuer.json   (signs agent certificates for the relays: the CA key lives only here)
   lokadb agent -relay HOST:PORT -ca F -state DIR -token-file F -db HOST:PORT [-cloud-listen ADDR [-cloud-allow A[,A]]] [-sessions N] [-max-conns N] [-enroll ADDR] [-server-name NAME] [-status-listen ADDR] [-status-url URL -status-token-file F] [-enroll-only]
   lokadb token  -cp DSN -org N [-ttl 15m]
   lokadb revoke -cp DSN -org N [-serial S]
   lokadb agents -cp DSN
   lokadb org-endpoint -cp DSN -org N (-listen ADDR [-tls require] [-change-port] | -remove)   (relays serve the organization without a restart)
-  lokadb certs -dir DIR -relay-host relay [-orgs N,N] [-force]   (a demo CA and relay certificate)
+  lokadb certs -dir DIR -relay-host relay [-ca-key-dir DIR] [-orgs N,N] [-force]   (a demo CA and relay certificate; ca.key in DIR unless -ca-key-dir: mount DIR into the relay only)
+  lokadb init -relay-host NAME [-dir /etc/lokadb] [-admin DSN] [-cp-host H -cp-sslmode disable] [-org-allow CIDR,...] [-network N]
+               (the first install in one command: control plane role and database with a random password, credentials.key, the CA
+                and relay certificate, relay.json, proxy.json; prints the docker run lines; what exists is kept, never overwritten)
   lokadb org-profile -db DSN (-org N | -tenant UUID) [-customer-app DSN -direct-role ROLE] [-control-plane DSN -key FILE [-key-old F] [-drop-fdw-credentials]] [-lock-timeout 5s] fdw|fdw+direct|direct   (the organization's routing profile, switched under its pause)
   lokadb org-credentials -db DSN -control-plane DSN -key FILE (-org N | -tenant UUID) -kind direct|owner -dsn DSN|-   (the organization's credentials for the proxy, sealed in the control plane)
                also: -list, -reseal -key-old F (key rotation), -claim-legacy
@@ -923,7 +978,7 @@ usage:
   lokadb refs-diff -db DSN [-org N[,N]] [-cloud] [-json]
   lokadb refs-sync -db DSN (-org N[,N] | -all [-cloud]) [-delete-stale] [-max-sequence-jump 100000] [-json]
               the refs tables against the rows the organizations have (rows written there past the cloud); exit code 0 same, 2 differences left, 1 failed
-  lokadb version   (the release this binary was built from; "dev" for a local build)
+  lokadb version   (the release this binary was built from; "devel-..." for a local build)
   lokadb COMMAND -h   (the flags of one command)`)
 	os.Exit(2)
 }
@@ -935,7 +990,8 @@ usage:
 // still works, with a warning.
 var dsnFlags = map[string]bool{"db": true, "customer": true, "customer-app": true, "cp": true, "publisher": true, "dsn": true, "proxy-db": true,
 	"direct": true, "owner": true, // repoint -direct, -owner (a role name elsewhere: no password in it)
-	"control-plane": true} // org-profile, org-credentials (review 3 of admin, R3-11)
+	"control-plane": true, // org-profile, org-credentials (review 3 of admin, R3-11)
+	"admin": true} // init -admin
 
 // parseArgs parses a command's flags (os.Args[2:]) and resolves its DSN flags.
 func parseArgs(fs *flag.FlagSet) {
@@ -974,10 +1030,48 @@ func secretFlags(fs *flag.FlagSet) {
 				os.Exit(1)
 			}
 			_ = f.Value.Set(os.Getenv(name))
+		case strings.HasPrefix(v, "file:"):
+			b, err := os.ReadFile(strings.TrimPrefix(v, "file:"))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: -%s %s: %v\n", f.Name, v, err)
+				os.Exit(1)
+			}
+			_ = f.Value.Set(strings.TrimSpace(string(b)))
 		case passwordInDSN.MatchString(v):
 			fmt.Fprintf(os.Stderr, "warning: -%s holds a password on the command line (ps and the shell's history show it): give -%s - (stdin) or -%s env:NAME, or leave the password out and keep it in PGPASSFILE (~/.pgpass)\n", f.Name, f.Name, f.Name)
 		}
 	})
+}
+
+// resolveRef: a config string that is "env:NAME" (the variable, which must not be empty) or
+// "file:PATH" (the file's text, trimmed) is replaced by it; anything else stays.
+func resolveRef(field, v string) (string, error) {
+	switch {
+	case strings.HasPrefix(v, "env:"):
+		name := strings.TrimPrefix(v, "env:")
+		if os.Getenv(name) == "" {
+			return "", fmt.Errorf("config %s: %s: the environment variable %s is empty", field, v, name)
+		}
+		return os.Getenv(name), nil
+	case strings.HasPrefix(v, "file:"):
+		b, err := os.ReadFile(strings.TrimPrefix(v, "file:"))
+		if err != nil {
+			return "", fmt.Errorf("config %s: %w", field, err)
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+	return v, nil
+}
+
+// inside: path is dir or below it.
+func inside(path, dir string) bool {
+	a, err1 := filepath.Abs(path)
+	b, err2 := filepath.Abs(dir)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(b, a)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // mustKeyID: the key_id of a key file already read (printed, never the key).

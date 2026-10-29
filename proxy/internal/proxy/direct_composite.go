@@ -50,7 +50,7 @@ func (w *directWrite) rowLits(vals valuesFunc, org string) ([]string, bool) {
 // The VALUES are computed once, MATERIALIZED (block 10's review of stage 2): a default read again
 // would give the refs rows other keys than the organization's rows get.
 func (w *directWrite) tupleRefs(lits []string, refs, org string) string {
-	org = orgLit(org)
+	org = w.table.orgLit(org)
 	cols := w.refsCols()
 	var vs, nulls, out, keys []string
 	for i, l := range lits {
@@ -92,7 +92,7 @@ func (w *directWrite) tupleAnswer(rows [][]string, n int) (ok bool, keys, added 
 // a composite one. othersNone reads its answer: none of them is another organization's.
 func (w *directWrite) refsAdd(keys []string, kind, typ, refs, org string) string {
 	if w.keyCols == nil {
-		return givenRefs(keyLits(keys, kind, typ), "id", refs, org, false)
+		return givenRefs(w.table, keyLits(keys, kind, typ), "id", refs, org, false)
 	}
 	return w.tupleRefs(w.lits(keys, kind, typ), refs, org)
 }

@@ -376,7 +376,7 @@ func (s *Server) handle(c net.Conn) {
 		return
 	}
 	if s.cfg.Tenant != nil { // the cooperative mode: the organization the connection names
-		v, err := startupTenant(sm.Parameters, s.cfg.Tenant.Setting)
+		v, err := startupTenant(sm.Parameters, s.cfg.Tenant.Setting, "")
 		if err == nil && v != "" {
 			err = s.cfg.Tenant.sessionRefused(TenantSet{Value: v}, TenantSetting)
 		}

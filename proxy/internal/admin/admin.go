@@ -192,6 +192,41 @@ BEGIN
   END IF;
   RETURN o::uuid;
 END $$;
+-- Organizations named by a string (text, varchar, character(n); a Laravel ulid() is character(26)):
+-- lokadb.org holds the string, the key is the column as text in the byte order of collation "C"
+-- (coalesce(column::text, '')), the range's bounds are strings. org_max_text is above every
+-- value (a string of four of the highest character the database encoding has); -1 is an empty
+-- range (the lower bound there, '' the upper).
+CREATE OR REPLACE FUNCTION lokadb.org_max_text() RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN pg_catalog.getdatabaseencoding() OPERATOR(pg_catalog.=) 'UTF8'
+    THEN pg_catalog.repeat(pg_catalog.chr(1114111), 4) ELSE pg_catalog.repeat(pg_catalog.chr(255), 4) END $$;
+CREATE OR REPLACE FUNCTION lokadb.org_lo_text() RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN coalesce(pg_catalog.current_setting('lokadb.org', true), '') OPERATOR(pg_catalog.=) '' THEN ''::pg_catalog.text
+    WHEN pg_catalog.current_setting('lokadb.org', true) OPERATOR(pg_catalog.=) '-2' THEN ''::pg_catalog.text
+    WHEN pg_catalog.current_setting('lokadb.org', true) OPERATOR(pg_catalog.=) '-1' THEN lokadb.org_max_text()
+    ELSE pg_catalog.current_setting('lokadb.org', true) END $$;
+CREATE OR REPLACE FUNCTION lokadb.org_hi_text() RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN coalesce(pg_catalog.current_setting('lokadb.org', true), '') OPERATOR(pg_catalog.=) '' THEN lokadb.org_max_text()
+    WHEN pg_catalog.current_setting('lokadb.org', true) OPERATOR(pg_catalog.=) '-2' THEN ''::pg_catalog.text
+    WHEN pg_catalog.current_setting('lokadb.org', true) OPERATOR(pg_catalog.=) '-1' THEN ''::pg_catalog.text
+    ELSE pg_catalog.current_setting('lokadb.org', true) END $$;
+-- org_default_text: org_default of a child's organization column named by a string.
+CREATE OR REPLACE FUNCTION lokadb.org_default_text() RETURNS text LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $$
+DECLARE o text := nullif(current_setting('lokadb.org', true), '');
+BEGIN
+  IF o = '-2' THEN
+    RETURN NULL;
+  END IF;
+  IF o IS NULL THEN
+    RAISE EXCEPTION 'lokadb: the row reached the table without its organization (the write did not go through the proxy, or the proxy had not yet learnt that enable made the table lokadb''s); retry the statement'
+      USING ERRCODE = '23503';
+  END IF;
+  IF o = '-1' THEN
+    RAISE EXCEPTION 'lokadb: the organization of the new row is unknown: its parent row was not found'
+      USING ERRCODE = '23503';
+  END IF;
+  RETURN o;
+END $$;
 -- The numbers of organizations numbered by uuid (lokadb org-add): N names (<t>__o<N>,
 -- lokadb_org<N>, the tunnel), the value is the organization for rows. Every role reads it (the
 -- proxy), only lokadb's owner writes it.
@@ -229,6 +264,8 @@ BEGIN
   EXECUTE format('SELECT tenant::text FROM %s WHERE id = ($1).%I', lokadb.qrel(TG_ARGV[0]), TG_ARGV[1]) INTO org USING NEW;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF TG_OP = 'INSERT' AND n = 0 THEN RETURN NEW; END IF;
+  -- the blanks a character(n) organization column adds are not part of the value
+  org := rtrim(org); had := rtrim(had);
   IF org IS DISTINCT FROM had THEN
     IF TG_OP = 'INSERT' THEN
       RAISE EXCEPTION 'lokadb: %.% = %: the parent belongs to organization %, the new row to %',
@@ -337,6 +374,14 @@ BEGIN
   END IF;
   RETURN new;
 END $$;
+CREATE OR REPLACE FUNCTION lokadb.same_org(new text, old text) RETURNS text LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF new IS DISTINCT FROM old THEN
+    RAISE EXCEPTION 'lokadb: moving a row to another organization is not supported'
+      USING ERRCODE = '0A000', DETAIL = format('organization %s -> %s', coalesce(old, 'none'), coalesce(new, 'none'));
+  END IF;
+  RETURN new;
+END $$;
 CREATE OR REPLACE FUNCTION lokadb.same_org(new bigint, old bigint) RETURNS bigint LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF new IS DISTINCT FROM old THEN
@@ -405,7 +450,7 @@ CREATE OR REPLACE FUNCTION lokadb.foreign_parts(parent regclass) RETURNS oid[] L
 -- (the bound as text: an integer, or the value of an organization numbered by uuid, block 18)
 CREATE OR REPLACE FUNCTION lokadb.bound_orgs(parent regclass) RETURNS jsonb LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
   SELECT coalesce(jsonb_object_agg(c.oid::text, coalesce(
-      replace((regexp_match(pg_get_expr(c.relpartbound, c.oid), '^FOR VALUES IN \(''((?:[^'']|'''')*)''(::[a-z ]+)?\)$'))[1], '''''', ''''),
+      replace((regexp_match(pg_get_expr(c.relpartbound, c.oid), '^FOR VALUES IN \(''((?:[^'']|'''')*)''(::[a-z ]+(\(\d+\))?)?\)$'))[1], '''''', ''''),
       (regexp_match(pg_get_expr(c.relpartbound, c.oid), '^FOR VALUES IN \((-?\d+)\)$'))[1])), '{}')
   FROM pg_foreign_table f JOIN pg_inherits i ON i.inhrelid = f.ftrelid JOIN pg_class c ON c.oid = f.ftrelid
   WHERE i.inhparent = parent $$;
@@ -413,12 +458,17 @@ CREATE OR REPLACE FUNCTION lokadb.bound_orgs(parent regclass) RETURNS jsonb LANG
 -- the catalog: enable asks before it records the table); tenant_none: the key of rows of no
 -- organization; tenant_key: the partition key (block 18).
 CREATE OR REPLACE FUNCTION lokadb.tenant_kind(parent text, tc text) RETURNS text LANGUAGE sql STABLE AS $$
-  SELECT CASE WHEN EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid = to_regclass(lokadb.qrel(parent)) AND a.attname = tc
-                            AND a.atttypid = 'uuid'::regtype) THEN 'uuid' ELSE 'int' END $$;
+  SELECT CASE (SELECT a.atttypid FROM pg_attribute a WHERE a.attrelid = to_regclass(lokadb.qrel(parent)) AND a.attname = tc)
+    WHEN 'uuid'::regtype THEN 'uuid'
+    WHEN 'text'::regtype THEN 'text' WHEN 'varchar'::regtype THEN 'text' WHEN 'bpchar'::regtype THEN 'text'
+    ELSE 'int' END $$;
 CREATE OR REPLACE FUNCTION lokadb.tenant_none(parent text, tc text) RETURNS text LANGUAGE sql STABLE AS $$
-  SELECT CASE lokadb.tenant_kind(parent, tc) WHEN 'uuid' THEN '''00000000-0000-0000-0000-000000000000''::uuid' ELSE '-2' END $$;
+  SELECT CASE lokadb.tenant_kind(parent, tc) WHEN 'uuid' THEN '''00000000-0000-0000-0000-000000000000''::uuid'
+    WHEN 'text' THEN '''''' ELSE '-2' END $$;
 CREATE OR REPLACE FUNCTION lokadb.tenant_key(parent text, tc text) RETURNS text LANGUAGE sql STABLE AS $$
-  SELECT format('coalesce(%I, %s)', tc, lokadb.tenant_none(parent, tc)) $$;
+  SELECT CASE lokadb.tenant_kind(parent, tc)
+    WHEN 'text' THEN format('(coalesce(%I::text, %s) COLLATE "C")', tc, lokadb.tenant_none(parent, tc))
+    ELSE format('coalesce(%I, %s)', tc, lokadb.tenant_none(parent, tc)) END $$;
 CREATE OR REPLACE FUNCTION lokadb.tenant_policy(parent text, tc text) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
   key text := lokadb.tenant_key(parent, tc);
@@ -432,6 +482,10 @@ BEGIN
     lo := 'lokadb.org_lo_uuid()';
     hi := 'lokadb.org_hi_uuid()';
     bound := format('((SELECT lokadb.bound_orgs(%L::regclass)) ->> tableoid::text) = %s::text', lokadb.qrel(parent), key);
+  ELSIF lokadb.tenant_kind(parent, tc) = 'text' THEN
+    lo := 'lokadb.org_lo_text()';
+    hi := 'lokadb.org_hi_text()';
+    bound := format('((SELECT lokadb.bound_orgs(%L::regclass)) ->> tableoid::text) = %s', lokadb.qrel(parent), key);
   END IF;
   -- the per-organization policies of an older move-org
   FOR r IN SELECT polname FROM pg_policy WHERE polrelid = lokadb.qrel(parent)::regclass AND polname LIKE 'lokadb\_bind\_org%' LOOP

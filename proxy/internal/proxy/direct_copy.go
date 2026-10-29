@@ -419,7 +419,7 @@ func (s *session) copyEnd(end pgproto3.FrontendMessage) {
 		var keys []string
 		if cp.keyAt < 0 { // the cloud gives one key per row, with its refs row
 			c := s.cloudRun(fmt.Sprintf("WITH lokadb_k AS (SELECT %s AS id FROM generate_series(1, %d)), lokadb_r AS (INSERT INTO %s (id, tenant) SELECT id, %s FROM lokadb_k) SELECT id::text FROM lokadb_k",
-				t.KeyDefault, n, refs, orgLit(cp.org)))
+				t.KeyDefault, n, refs, t.orgLit(cp.org)))
 			if c.err != nil || len(c.rows) != n {
 				fail(errorOf(c, "the cloud gave no keys for the COPY"))
 				return
@@ -441,7 +441,7 @@ func (s *session) copyEnd(end pgproto3.FrontendMessage) {
 			for _, r := range rows {
 				keys = append(keys, r)
 			}
-			c := s.cloudRun(givenRefs(keyLits(keys, kind, typ), "id", refs, cp.org, false))
+			c := s.cloudRun(givenRefs(t, keyLits(keys, kind, typ), "id", refs, cp.org, false))
 			if c.err != nil || len(c.rows) != 1 || len(c.rows[0]) != 1 || c.rows[0][0] != "0" {
 				e := c.resp
 				if e == nil {

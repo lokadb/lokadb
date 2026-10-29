@@ -43,6 +43,8 @@ type Runner struct {
 	HTTP    *http.Client
 	// PollWait: how long the service may hold a poll (it answers within 25 s).
 	PollWait time.Duration
+	// Recheck: how often a runner with problems checks its config again (default 30 s).
+	Recheck time.Duration
 
 	ops     *Ops
 	started time.Time
@@ -55,6 +57,8 @@ type Runner struct {
 	invHash   string
 	interval  time.Duration
 	inv       *cloudproto.Inventory
+	problems  []cloudproto.Problem                       // the config's, while it is not ready (untilReady)
+	check     func(context.Context) []cloudproto.Problem // Cfg.Check (a test sets another)
 }
 
 type job struct {
@@ -107,6 +111,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.PollWait == 0 {
 		r.PollWait = 25 * time.Second
 	}
+	if r.Recheck == 0 {
+		r.Recheck = 30 * time.Second
+	}
 	have, err := r.loadState()
 	if err != nil {
 		return fmt.Errorf("%s: %w", r.statePath(), err)
@@ -121,7 +128,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 	fp, _ := seal.Fingerprint(key.Public())
-	r.Log.Info("runner", "id", r.st.RunnerID, "service", r.Cfg.Service, "key", fp)
+	r.Log.Info("runner", "id", r.st.RunnerID, "version", r.Version, "service", r.Cfg.Service, "key", fp)
+	if err := r.untilReady(ctx); err != nil || ctx.Err() != nil {
+		return err
+	}
 	tun, err := tunnel.OpenPGStore(ctx, r.Cfg.ControlPlane)
 	if err != nil {
 		return fmt.Errorf("control plane: %w", err)
@@ -152,6 +162,52 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.mu.Unlock()
 	wg.Wait()
 	return err
+}
+
+// untilReady checks the config (Config.Check) until it passes. Meanwhile the runner polls with
+// its problems, so the panel shows them; it logs each once and checks again every Recheck.
+func (r *Runner) untilReady(ctx context.Context) error {
+	if r.check == nil {
+		r.check = r.Cfg.Check
+	}
+	probs := r.check(ctx)
+	if len(probs) == 0 {
+		return nil
+	}
+	pctx, stop := context.WithCancel(ctx)
+	defer stop()
+	polled := make(chan error, 1)
+	go func() { polled <- r.pollLoop(pctx) }()
+	told := map[string]bool{}
+	for {
+		r.mu.Lock()
+		r.problems = probs
+		r.mu.Unlock()
+		if len(probs) == 0 {
+			r.Log.Info("ready: the config's problems are fixed")
+			stop()
+			return <-polled
+		}
+		now := map[string]bool{}
+		for _, p := range probs {
+			now[p.Message] = true
+			if !told[p.Message] {
+				r.Log.Warn("not ready: "+p.Message, "fix", p.Fix)
+			}
+		}
+		if len(told) == 0 {
+			r.Log.Warn("the runner is registered and shows these problems in the panel; it takes no jobs until they are fixed and checks again by itself", "every", r.Recheck)
+		}
+		told = now
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-polled:
+			return err
+		case <-time.After(r.Recheck):
+		}
+		probs = r.check(ctx)
+	}
 }
 
 func (r *Runner) register(ctx context.Context) error {
@@ -250,7 +306,8 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 	told := "" // the newer release already logged
 	for ctx.Err() == nil {
 		r.mu.Lock()
-		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}}
+		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}, Problems: r.problems}
+		ready := r.ops != nil
 		for id := range r.running {
 			req.Running = append(req.Running, id)
 		}
@@ -297,6 +354,15 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 				j.cancel()
 			}
 			r.mu.Unlock()
+		}
+		if !ready {
+			// the service gives a runner with problems no jobs; one that came anyway is refused
+			for _, j := range res.Jobs {
+				r.postResult(ctx, j.ID, cloudproto.Result{Status: cloudproto.StatusFailed, Error: &cloudproto.JobError{Code: "not_ready",
+					Message: "the runner is not ready: its config has problems (the panel lists them)"}})
+			}
+			sleep(ctx, time.Second)
+			continue
 		}
 		if res.WantInventory {
 			if inv, err := r.ops.Inventory(ctx); err == nil {

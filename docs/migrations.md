@@ -31,8 +31,8 @@ A migration that writes into a table after `ADD COLUMN` or `RENAME COLUMN` in th
 ## Schema reconciliation: `schema-diff`, `schema-sync`
 
 ```bash
-lokadb schema-diff -db "$CLOUD_DSN" [-org N[,N]] [-json]
-lokadb schema-sync -db "$CLOUD_DSN" (-org N[,N] | -all) [-drop-extra]
+lokadb schema-diff -db env:CLOUD_DSN [-org N[,N]] [-json]
+lokadb schema-sync -db env:CLOUD_DSN (-org N[,N] | -all) [-drop-extra]
 ```
 
 `schema-diff` compares each moved organization's copies of LokaDB tables with the cloud: columns (name, type, `NOT NULL`, generated, collation), indexes (by definition, not name), `CHECK`, foreign keys between LokaDB tables. Exit code 0 — identical, 2 — differences or an organization unreachable, 1 — failure. `schema-sync` brings the chosen organizations to the cloud's schema, one transaction per organization, and compares again; what exists only in the organization is dropped only with `-drop-extra`. While it runs, the schema of LokaDB tables in the cloud does not change (the migration waits, writes continue).
@@ -44,8 +44,8 @@ Run them after the proxy error "ddl committed in the cloud but not in the organi
 `<table>__refs` holds the organization of every key; the proxy finds organizations by it and foreign keys of other tables point at it. The cloud keeps it by trigger for every write that goes through the cloud. Rows written directly in an organization's database are not in it; rows deleted there leave their key behind.
 
 ```bash
-lokadb refs-diff -db "$CLOUD_DSN" [-org N[,N]] [-cloud]
-lokadb refs-sync -db "$CLOUD_DSN" (-org N[,N] | -all [-cloud]) [-delete-stale] [-max-sequence-jump N]
+lokadb refs-diff -db env:CLOUD_DSN [-org N[,N]] [-cloud]
+lokadb refs-sync -db env:CLOUD_DSN (-org N[,N] | -all [-cloud]) [-delete-stale] [-max-sequence-jump N]
 ```
 
 `refs-diff` reports rows written around the cloud, keys `__refs` gives to another organization (manual fix only), keys whose rows are gone, and an organization's largest id when it is ahead of the cloud sequence (the cloud would issue that id again). `refs-sync` adds missing keys and advances the sequence — by at most `-max-sequence-jump` (100 000) by default, because the sequence is shared by all organizations and one huge id would exhaust it for everyone; a larger jump is named and needs the flag explicitly. `-delete-stale` removes keys of vanished rows (foreign keys of cloud tables then follow their `ON DELETE`). The maps of unique columns are reconciled too. The organization is paused while this runs. `-cloud` adds the organizations that live in the cloud (moved back, or never moved) to the comparison; with `refs-sync` it goes with `-all`. Both commands exit with 2 when differences are left, 1 when they failed.

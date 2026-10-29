@@ -285,8 +285,11 @@ func (c *checker) schema() error {
 			tbl.Cols = append(tbl.Cols, tenant[t]) // enable adds it, DEFAULT lokadb.org_default()
 			tenantKind[t] = tenantKind[st.ParentTable]
 			tbl.ColType[tenant[t]] = "bigint"
-			if tenantKind[t] == admin.TenantUUID {
+			switch tenantKind[t] {
+			case admin.TenantUUID:
 				tbl.ColType[tenant[t]] = "uuid"
+			case admin.TenantText:
+				tbl.ColType[tenant[t]] = "text"
 			}
 			if pc, ok := cols[t][st.ParentColumn]; !ok {
 				delete(tenant, t)
@@ -298,7 +301,7 @@ func (c *checker) schema() error {
 			} else if pk := keyKind[st.ParentTable]; pk != "" && admin.KeyKind(pc.base) != pk || pk == "" && admin.KeyKind(pc.base) == "" {
 				// the reference is looked up in the parent's refs table, whose id is of the
 				// parent's key's type (block 17)
-				unsupported(t, "parent_column_type", t+"."+st.ParentColumn, fmt.Sprintf("%s.%s is %s: lokadb follows a reference to the parent's key of the same kind only (integer to integer, uuid to uuid, text or varchar to text or varchar)", t, st.ParentColumn, pc.typ), nil)
+				unsupported(t, "parent_column_type", t+"."+st.ParentColumn, fmt.Sprintf("%s.%s is %s: lokadb follows a reference to the parent's key of the same kind only (integer to integer, uuid to uuid, text or varchar to text or varchar, character(n) to character(n))", t, st.ParentColumn, pc.typ), nil)
 			} else if typ := strings.TrimSuffix(st.ParentColumn, "_id") + "_type"; strings.HasSuffix(st.ParentColumn, "_id") && cols[t][typ].typ != "" {
 				// Rails' polymorphic belongs_to: <x>_id with <x>_type naming the parent table.
 				// Every row "found" in the parent would be counted, also those of other tables.
@@ -345,7 +348,7 @@ func (c *checker) schema() error {
 	// the organizations' kind, which the routing declarations (a cloud table's organization
 	// column) are judged by; after enable proxy.LoadMeta has it
 	for _, k := range tenantKind {
-		if k == admin.TenantUUID {
+		if admin.ValueKind(k) {
 			m.TenantKind = k
 		}
 	}
@@ -417,6 +420,10 @@ func (c *checker) schema() error {
 			if inSpec[src] && m.Lookups[src] != nil {
 				m.Lookups[src][cols[0]] = admin.Helper(dst, "__refs__"+refcols[0])
 			}
+			continue
+		case inSpec[dst] && key[dst] == "":
+			// the parent has no key lokadb takes: id_type or id_missing says so, once, and an FK onto
+			// it names no key to point past
 			continue
 		case inSpec[dst] && !ok:
 			for _, t := range []string{src, dst} {

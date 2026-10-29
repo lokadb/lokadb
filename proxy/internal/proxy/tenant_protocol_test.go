@@ -285,18 +285,18 @@ func TestStartupTenant(t *testing.T) {
 		"--lokadb.tenant=0042": "42",
 		"-c search_path=x":     "",
 	} {
-		got, err := startupTenant(map[string]string{"options": params}, "")
+		got, err := startupTenant(map[string]string{"options": params}, "", "")
 		if err != nil || got != want {
 			t.Errorf("%s: %q %v, want %q", params, got, err, want)
 		}
 	}
-	if got, _ := startupTenant(map[string]string{"lokadb.tenant": "5"}, ""); got != "5" {
+	if got, _ := startupTenant(map[string]string{"lokadb.tenant": "5"}, "", ""); got != "5" {
 		t.Errorf("parameter: %q", got)
 	}
-	if got, _ := startupTenant(map[string]string{"app.current_tenant": "6"}, "app.current_tenant"); got != "6" {
+	if got, _ := startupTenant(map[string]string{"app.current_tenant": "6"}, "app.current_tenant", ""); got != "6" {
 		t.Errorf("tenant_setting: %q", got)
 	}
-	if _, err := startupTenant(map[string]string{"options": "-c lokadb.tenant=acme"}, ""); err == nil {
+	if _, err := startupTenant(map[string]string{"options": "-c lokadb.tenant=acme"}, "", ""); err == nil {
 		t.Error("acme accepted")
 	}
 	for _, params := range []map[string]string{
@@ -308,14 +308,14 @@ func TestStartupTenant(t *testing.T) {
 		{"lokadb.tenant": "1", "app.current_tenant": "2"},
 		{"options": "-c lokadb.tenant=1 -c lokadb.tenant=acme"},
 	} {
-		if v, err := startupTenant(params, "app.current_tenant"); err == nil {
+		if v, err := startupTenant(params, "app.current_tenant", ""); err == nil {
 			t.Errorf("%v: accepted as %q", params, v)
 		}
 	}
-	if v, err := startupTenant(map[string]string{"options": "-c lokadb.tenant=3 --LOKADB.TENANT=3"}, ""); err != nil || v != "3" {
+	if v, err := startupTenant(map[string]string{"options": "-c lokadb.tenant=3 --LOKADB.TENANT=3"}, "", ""); err != nil || v != "3" {
 		t.Errorf("the same value twice: %q %v", v, err)
 	}
-	if v, err := startupTenant(map[string]string{"lokadb.tenant": "07", "options": "-c lokadb.tenant=7"}, ""); err != nil || v != "7" {
+	if v, err := startupTenant(map[string]string{"lokadb.tenant": "07", "options": "-c lokadb.tenant=7"}, "", ""); err != nil || v != "7" {
 		t.Errorf("the same organization twice: %q %v", v, err)
 	}
 }

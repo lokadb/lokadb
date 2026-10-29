@@ -25,12 +25,13 @@ type TenantSet struct {
 	Param int    // > 0: the value is this parameter of the Bind (set_config('lokadb.tenant', $1, …))
 	Local bool   // SET LOCAL / set_config(…, true): until the end of the transaction
 	All   bool   // RESET ALL, DISCARD ALL: every setting, lokadb.tenant too
+	kind  string // the database's kind of organizations (TenantConfig.kind), for the value of a parameter
 }
 
 // tenantSet recognizes a statement that sets lokadb.tenant (or setting, the name the proxy
 // config gives the application's own variable). ok: it is one; err: it is one the proxy
 // refuses (a value that is not an organization, set_config inside another query).
-func tenantSet(n *pg.Node, setting string) (ts TenantSet, ok bool, err error) {
+func tenantSet(n *pg.Node, setting, kind string) (ts TenantSet, ok bool, err error) {
 	if setting == "" {
 		setting = TenantSetting
 	}
@@ -46,7 +47,7 @@ func tenantSet(n *pg.Node, setting string) (ts TenantSet, ok bool, err error) {
 			if !strings.EqualFold(vs.Name, setting) {
 				return TenantSet{}, false, nil
 			}
-			ts = TenantSet{Local: vs.IsLocal}
+			ts = TenantSet{Local: vs.IsLocal, kind: kind}
 			if len(vs.Args) != 1 {
 				return ts, true, fmt.Errorf("%s takes one value: an organization id or '*'", setting)
 			}
@@ -54,7 +55,7 @@ func tenantSet(n *pg.Node, setting string) (ts TenantSet, ok bool, err error) {
 			if !isValue || v.Param > 0 {
 				return ts, true, fmt.Errorf("%s must be an organization id or '*'", setting)
 			}
-			ts.Value, err = tenantValue(v.Const, setting)
+			ts.Value, err = tenantValue(v.Const, setting, kind)
 			return ts, true, err
 		}
 		return TenantSet{}, false, nil
@@ -85,9 +86,9 @@ func tenantSet(n *pg.Node, setting string) (ts TenantSet, ok bool, err error) {
 	if !isValue || local == nil || local.GetBoolval() == nil {
 		return TenantSet{}, true, fmt.Errorf("set_config('%s', value, is_local): the value must be a constant or a parameter, is_local true or false", setting)
 	}
-	ts = TenantSet{Local: local.GetBoolval().Boolval, Param: v.Param}
+	ts = TenantSet{Local: local.GetBoolval().Boolval, Param: v.Param, kind: kind}
 	if v.Param == 0 {
-		ts.Value, err = tenantValue(v.Const, setting)
+		ts.Value, err = tenantValue(v.Const, setting, kind)
 	}
 	return ts, true, err
 }
@@ -101,13 +102,23 @@ func setConfigOf(fc *pg.FuncCall, setting string) bool {
 	return ok && v.Param == 0 && strings.EqualFold(v.Const, setting)
 }
 
-// tenantValue checks a value of lokadb.tenant: an organization id (an integer, or a uuid for
-// organizations numbered by uuid, block 18), '*' or "" (unset). The id in canonical form.
-func tenantValue(s, setting string) (string, error) {
+// tenantValue checks a value of lokadb.tenant: an organization id (an integer, or for
+// organizations named by their value a uuid or a string, block 18), '*' or "" (unset). The id
+// in canonical form. kind: the database's kind of organizations (Meta.TenantKind; "" where it
+// is not known, a connection's startup parameters, which then name an integer or a uuid
+// only): for string organizations the value is the string without the blanks of character(n),
+// as it is (not a number or a uuid read as such); one that a minus starts is lokadb's own
+// (-1 and -2): not an organization.
+func tenantValue(s, setting, kind string) (string, error) {
 	s = strings.TrimSpace(s)
 	switch {
 	case s == "" || s == TenantAll:
 		return s, nil
+	case kind == kindText:
+		if strings.HasPrefix(s, "-") || strings.ContainsRune(s, 0) {
+			return "", fmt.Errorf("%s must be an organization id or '*', not %q", setting, s)
+		}
+		return strings.TrimRight(s, " "), nil
 	case intRe.MatchString(s):
 		return canonicalInt(s), nil
 	}

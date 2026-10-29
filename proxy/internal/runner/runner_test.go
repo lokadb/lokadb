@@ -161,3 +161,53 @@ func waitFor(t *testing.T, ok func() bool) {
 	}
 	t.Fatal("timed out")
 }
+
+// TestUntilReady: a runner whose config has a problem polls with it and takes no job; once the
+// problem is fixed it polls without problems and goes on.
+func TestUntilReady(t *testing.T) {
+	r, f := newTest(t)
+	r.st.Secret, r.Recheck, r.PollWait = "lrs_secret", 50*time.Millisecond, 10*time.Millisecond
+	var polls []cloudproto.PollRequest
+	srv := httptest.NewServer(func() http.Handler {
+		m := f.handler().(*http.ServeMux)
+		m.HandleFunc("POST /v1/runner/poll", func(w http.ResponseWriter, req *http.Request) {
+			var b cloudproto.PollRequest
+			_ = json.NewDecoder(req.Body).Decode(&b)
+			f.mu.Lock()
+			polls = append(polls, b)
+			f.mu.Unlock()
+			// a job the service should not have given: the runner refuses it
+			json.NewEncoder(w).Encode(cloudproto.PollResponse{Jobs: []cloudproto.Job{{ID: "jb_9", Kind: cloudproto.KindInventory}}})
+		})
+		return m
+	}())
+	t.Cleanup(srv.Close)
+	r.Cfg.Service, r.HTTP = srv.URL, srv.Client()
+	spec := filepath.Join(t.TempDir(), "spec.json")
+	r.check = func(context.Context) []cloudproto.Problem {
+		if _, err := os.Stat(spec); err != nil {
+			return []cloudproto.Problem{{Key: "spec", Message: "spec: " + spec + ": no such file", Path: spec}}
+		}
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.untilReady(context.Background()) }()
+	waitFor(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(polls) > 0 && f.results["jb_9"].Error != nil })
+	f.mu.Lock()
+	if p := polls[0].Problems; len(p) != 1 || p[0].Key != "spec" || f.results["jb_9"].Error.Code != "not_ready" {
+		t.Fatalf("problems %+v, job %+v", p, f.results["jb_9"])
+	}
+	f.mu.Unlock()
+	os.WriteFile(spec, []byte("{}"), 0o644)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("not ready after the file appeared")
+	}
+	if len(r.problems) != 0 {
+		t.Fatalf("problems left: %+v", r.problems)
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lokadb/lokadb/proxy/internal/admin"
+	"github.com/lokadb/lokadb/proxy/internal/buildinfo"
 	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 	"github.com/lokadb/lokadb/proxy/internal/proxy"
 )
@@ -296,7 +297,7 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	c := &checker{ctx: ctx, tx: tx, o: o, rep: &Report{SchemaVersion: SchemaVersion, LokadbVersion: buildVersion(), Sources: []string{}, Findings: []Finding{}, Tables: []TableStatus{}}}
+	c := &checker{ctx: ctx, tx: tx, o: o, rep: &Report{SchemaVersion: SchemaVersion, LokadbVersion: buildinfo.Version(), Sources: []string{}, Findings: []Finding{}, Tables: []TableStatus{}}}
 	db, err := c.rows(`SELECT current_database()`)
 	if err != nil {
 		return nil, err

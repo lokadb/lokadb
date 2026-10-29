@@ -62,6 +62,19 @@ type PollRequest struct {
 	Version       string   `json:"version"`
 	Running       []string `json:"running"`
 	InventoryHash string   `json:"inventory_hash"`
+	// Problems: what keeps the runner from working (its config, a file, a database); while
+	// there are any, it takes no jobs and sends no inventory. None: ready.
+	Problems []Problem `json:"problems,omitempty"`
+}
+
+// Problem: one thing to fix on the runner's side, in words for the panel.
+type Problem struct {
+	Key     string `json:"key"`               // the runner.json key: "spec", "relay.ca", "db"…
+	Message string `json:"message"`           // what is wrong, the path included
+	Fix     string `json:"fix,omitempty"`     // what to do
+	Path    string `json:"path,omitempty"`    // the file as the runner sees it (in its container)
+	Host    string `json:"host,omitempty"`    // the same file on the host, from the container's mounts
+	Mounted *bool  `json:"mounted,omitempty"` // in a container: whether Path is under a mount from the host
 }
 
 type PollResponse struct {

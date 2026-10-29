@@ -15,6 +15,7 @@ const (
 	kindInt  = "int"  // smallint, integer, bigint; the organization column too
 	kindUUID = "uuid" // uuid
 	kindText = "text" // text, varchar: as written
+	kindChar = "char" // character(n): text without the blanks it is padded with (Laravel's ulid())
 	kindRaw  = ""     // not a key: a literal as it is, a binary integer decoded (lokadb.tenant)
 )
 
@@ -29,6 +30,8 @@ func keyKindOf(typ string) string {
 		return kindUUID
 	case "text", "character varying":
 		return kindText
+	case "character":
+		return kindChar
 	}
 	return ""
 }
@@ -42,15 +45,22 @@ func (m *Meta) keyKind(refs string) string {
 			return k
 		}
 	}
-	if m != nil && refs == "" && m.TenantKind != "" {
-		return m.TenantKind
+	if m != nil && refs == "" {
+		switch m.TenantKind {
+		case kindUUID:
+			return kindUUID
+		case kindText: // a string organization: character(n) pads it, so its blanks do not count
+			return kindChar
+		}
 	}
 	return kindInt
 }
 
-// uuidOrgs: the database's organizations are numbered by uuid (block 18): the pause lock
-// takes the organization's value as text (lokadb.org_lock_v).
-func (m *Meta) uuidOrgs() bool { return m != nil && m.TenantKind == kindUUID }
+// valueOrgs: the database's organizations are named by their value, a uuid or a string, and
+// numbered apart (block 18): the pause lock takes the value as text (lokadb.org_lock_v).
+func (m *Meta) valueOrgs() bool {
+	return m != nil && (m.TenantKind == kindUUID || m.TenantKind == kindText)
+}
 
 // realOrg: org is one organization, not "" (every one), -1 (none found) or -2 (rows of none).
 // An integer organization is never negative, a uuid never starts with a minus.
@@ -60,25 +70,31 @@ func realOrg(org string) bool { return org != "" && !strings.HasPrefix(org, "-")
 // integer one's is itself, one numbered by uuid has it from lokadb.tenants (OrgNum), "" when
 // it has none. lokadb.orgs, Profiles, Schemas and the proxy's config go by it.
 func (m *Meta) orgNum(org string) string {
-	if intRe.MatchString(org) || m == nil {
+	if m == nil {
 		return org
 	}
-	return m.OrgNum[org]
-}
-
-// orgLit: organization org as an SQL literal of the organization column's type: an integer as
-// it is, a uuid quoted.
-func orgLit(org string) string {
-	if intRe.MatchString(org) {
+	if n, ok := m.OrgNum[org]; ok {
+		return n
+	}
+	if !m.valueOrgs() && intRe.MatchString(org) {
 		return org
 	}
-	return sqlString(org)
+	return ""
 }
 
-// loadOrgNums reads the numbers of the organizations numbered by uuid (Meta.OrgNum).
+// orgLit: organization org as an SQL literal of table t's organization column: an integer as
+// it is, a value (a uuid, a string: a numeric-looking one too) quoted.
+func (t *Table) orgLit(org string) string {
+	if t != nil && t.OrgValue || !intRe.MatchString(org) {
+		return sqlString(org)
+	}
+	return org
+}
+
+// loadOrgNums reads the numbers of the organizations named by their value (Meta.OrgNum).
 func loadOrgNums(q queryFunc, m *Meta) error {
 	m.OrgNum = map[string]string{}
-	if m.TenantKind != kindUUID {
+	if !m.valueOrgs() {
 		return nil
 	}
 	ok, err := q(`SELECT (to_regclass('lokadb.tenants') IS NOT NULL)::text`)
@@ -106,6 +122,8 @@ func canonicalKey(kind, x string) (string, bool) {
 		return canonicalInt(x), true
 	case kindUUID:
 		return canonicalUUID(x)
+	case kindChar:
+		return strings.TrimRight(x, " "), true
 	}
 	return x, true
 }
@@ -170,6 +188,8 @@ func binaryKey(kind string, b []byte) (string, bool) {
 		return formatUUID(b), true
 	case kindText:
 		return string(b), true
+	case kindChar:
+		return strings.TrimRight(string(b), " "), true
 	}
 	return binaryInt(b)
 }
@@ -180,9 +200,15 @@ func binaryKey(kind string, b []byte) (string, bool) {
 func loadKeyKinds(q queryFunc, m *Meta) error {
 	m.KeyKinds, m.TenantKind = map[string]string{}, kindInt
 	for _, t := range m.Tables {
-		if keyKindOf(t.ColType[t.TenantCol]) == kindUUID { // one kind for every table (enable)
+		switch keyKindOf(t.ColType[t.TenantCol]) { // one kind for every table (enable)
+		case kindUUID:
 			m.TenantKind = kindUUID
+		case kindText, kindChar:
+			m.TenantKind = kindText
 		}
+	}
+	for _, t := range m.Tables {
+		t.OrgValue = m.valueOrgs()
 	}
 	m.TupleKinds = map[string][]string{}
 	for _, t := range m.Tables {

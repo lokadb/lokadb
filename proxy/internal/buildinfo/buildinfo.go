@@ -7,10 +7,22 @@ import (
 	"strings"
 )
 
-// Version: the module version, or "devel-<revision>" with "+dirty" for a modified tree, as far
-// as the build records it ("unknown" without build information). It holds only letters, digits
-// and ".+-_": it travels in a TLS ALPN name and a label of the metrics.
+// version: the release a binary was built from, stamped at build time (the tag without "v"):
+//
+//	-ldflags "-X github.com/lokadb/lokadb/proxy/internal/buildinfo.version=0.1.0"
+//
+// Empty for a local build. Every binary of the repository reads it through Version.
+var version string
+
+// Version: the stamped release, else the module version, or "devel-<revision>" with "+dirty"
+// for a modified tree, as far as the build records it ("unknown" without build information).
+// It holds only letters, digits and ".+-_": it travels in a TLS ALPN name and a label of the
+// metrics. The lokadb command, the runner, check's report, the proxy's /status and the agent
+// all report it.
 func Version() string {
+	if version != "" {
+		return Clean(version)
+	}
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "unknown"

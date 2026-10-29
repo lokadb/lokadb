@@ -642,7 +642,7 @@ func (s *session) writeDirect(dc *directConn, org string, di *directInfo, vals v
 		// a key that maps to this organization already (a crash between the two commits) is
 		// left to the organization's primary key; one of another organization is the cloud's
 		// to refuse
-		qs = append(qs, plain(givenRefs(w.lits(keys, kind, typ), w.refsCols(), refs, org, w.upsert)))
+		qs = append(qs, plain(givenRefs(w.table, w.lits(keys, kind, typ), w.refsCols(), refs, org, w.upsert)))
 	default:
 		if w.unnest != nil {
 			var ok bool
@@ -651,7 +651,7 @@ func (s *session) writeDirect(dc *directConn, org string, di *directInfo, vals v
 			}
 		}
 		qs = append(qs, plain(fmt.Sprintf("WITH lokadb_k AS (SELECT %s AS id FROM generate_series(1, %d)), lokadb_r AS (INSERT INTO %s (id, tenant) SELECT id, %s FROM lokadb_k) SELECT id::text FROM lokadb_k",
-			t.KeyDefault, n, refs, orgLit(org))))
+			t.KeyDefault, n, refs, t.orgLit(org))))
 	}
 	c := s.cloudRunStmts(qs...)
 	rollback := func() { s.cloudRun("ROLLBACK") }
@@ -847,9 +847,10 @@ func (s *session) writeDirect(dc *directConn, org string, di *directInfo, vals v
 // organization, then, for an upsert, the keys it added (one row each), whose rows the upsert
 // may not insert. A key that maps to this organization already (a crash between the two
 // commits, or an upsert's row there) is left to the organization's primary key. The
-// organization goes in as a literal of its column's type (orgLit: a uuid quoted, block 18).
-func givenRefs(lits []string, cols, refs, org string, upsert bool) string {
-	org = orgLit(org)
+// organization goes in as a literal of its column's type (Table.orgLit: a uuid or a string
+// quoted, block 18).
+func givenRefs(t *Table, lits []string, cols, refs, org string, upsert bool) string {
+	org = t.orgLit(org)
 	q := "WITH lokadb_v(" + cols + ") AS (VALUES (" + strings.Join(lits, "), (") + ")), lokadb_r AS (INSERT INTO " + refs + " (" + cols + ", tenant) SELECT " + cols + ", " + org +
 		" FROM lokadb_v ON CONFLICT (" + cols + ") DO NOTHING"
 	other := "SELECT count(*)::text FROM " + refs + " x JOIN lokadb_v USING (" + cols + ") WHERE x.tenant IS DISTINCT FROM " + org

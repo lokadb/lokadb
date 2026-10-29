@@ -7,7 +7,7 @@ The cloud never connects into the customer's network. An **agent** inside that n
 | `lokadb agent` | in the organization's network, next to its Postgres | Creates its own key, enrols with a one-time token, renews its certificate. Opens an **outbound** TLS connection to the relay and keeps it (keepalive, reconnect). Forwards streams from the tunnel **only** to the address in `-db`. Publishes no ports. |
 | `lokadb relay` | in the cloud network | Issues and renews agent certificates. Admits only certificates issued by enrolment and not revoked. Knows the organization from the certificate (`CN=org-<N>`). For each organization, listens on a port inside the cloud; a connection to it becomes a stream to that organization's agent. Only addresses in `org_allow` may connect. |
 | `lokadb token` / `revoke` / `agents` / `org-endpoint` | cloud administrator | Issue a one-time token, revoke an organization's certificates, list issued certificates, manage the organization's port on the relay. Stored in the registry (the control-plane database). |
-| `lokadb certs` | once | Creates a demo CA and relay certificate in `-dir`: `ca.crt` (public: the file agents and the runner get), `ca.key` (secret), `relay.crt`, `relay.key`. Does not overwrite an existing CA without `-force`. |
+| `lokadb certs` | once | Creates a demo CA and relay certificate in `-dir`: `ca.crt` (public: the file agents and the runner get), `ca.key` (secret), `relay.crt`, `relay.key`. Does not overwrite an existing CA without `-force`. [`lokadb init`](install.md#4-lokadb-init-the-control-plane-the-keys-and-the-configs) calls the same code, keeps `ca.key` apart in `relay/`, and does the rest of a first install too. The CA and the relay certificate live one year: [rotating the CA](#rotating-the-ca-without-restarts). |
 
 ## Ports
 
@@ -33,12 +33,12 @@ DETAIL:  ... FATAL:  lokadb relay: the agent of organization 1 is not connected
 
 ## Enrolment, renewal and revocation
 
-1. **Token.** `lokadb token -cp "$CP_DSN" -org 1 -ttl 15m` prints the token once; the registry keeps only its sha256, the organization and the expiry.
+1. **Token.** `lokadb token -cp file:/etc/lokadb/control-plane.dsn -org 1 -ttl 15m` prints the token once; the registry keeps only its sha256, the organization and the expiry.
 2. **Install.** The agent needs three things: the CA certificate (to verify the relay), the token in a file (`-token-file`, not on the command line), and a state directory (`-state`).
 3. **Enrol.** The agent creates a P-256 key and sends only a CSR and the token. The relay validates the CSR and that it serves the token's organization (neither failure burns the token), then consumes the token atomically and signs a certificate for `cert_ttl`. **The agent's key never leaves its machine.**
 4. **Renew.** At two thirds of the lifetime the agent creates a new key and gets a new certificate over mutual TLS. Revoked, expired or non-enrolled certificates cannot renew. A live session is not cut when the certificate expires; the next connection uses the new one. The previous certificate stays valid until the new one is used, so a lost renewal response does not lock the agent out. A certificate that expired at most `renew_expired` ago (24 h by default) can still renew — the agent recovers on its own after the relay or registry was down.
 5. **Restart.** The agent reuses the certificate from `-state` (one file, mode 0600, replaced atomically); no new token.
-6. **Revoke.** `lokadb revoke -cp "$CP_DSN" -org 1` revokes all certificates of the organization and its unused tokens. The relay checks live sessions against the registry every two seconds and cuts revoked ones. `-serial S` revokes one agent with its whole renewal chain. Only a new token brings the organization back.
+6. **Revoke.** `lokadb revoke -cp file:/etc/lokadb/control-plane.dsn -org 1` revokes all certificates of the organization and its unused tokens. The relay checks live sessions against the registry every two seconds and cuts revoked ones. `-serial S` revokes one agent with its whole renewal chain. Only a new token brings the organization back.
 
 Failed enrolment and renewal attempts are limited per client address (`enroll_fail_per_min`, 10). Each registry call made for a connection is limited to 5 s.
 
@@ -128,11 +128,11 @@ The `org_allow` list is required: without it the relay does not start. List the 
 
 | What you see | Cause | What to do |
 |---|---|---|
-| The application gets `lokadb relay: the agent of organization N is not connected` | no agent of that organization has a session with the relay | on the agent's host: is it running, and what does its log say (`tunnel up` or the reason it cannot connect)? Its `GET /status` (`-status-listen`) shows `state` and, per relay, `last_error`. On the relay side: `lokadb agents -cp "$CP_DSN"` lists the certificates, `GET /sessions` on `health_listen` the live sessions |
+| The application gets `lokadb relay: the agent of organization N is not connected` | no agent of that organization has a session with the relay | on the agent's host: is it running, and what does its log say (`tunnel up` or the reason it cannot connect)? Its `GET /status` (`-status-listen`) shows `state` and, per relay, `last_error`. On the relay side: `lokadb agents -cp file:/etc/lokadb/control-plane.dsn` lists the certificates, `GET /sessions` on `health_listen` the live sessions |
 | `lokadb relay: organization N is not available until the relay reads the registry` | the relay has not read the control plane yet | check that the relay reaches the control plane database (`control_plane` in `relay.json`) |
 | The relay logs `organization endpoint: connection refused, not in org_allow` | the connecting machine's address is not listed | add it to `org_allow` (the proxy, the cloud Postgres, every machine that runs `check` or `move-org`) and restart the relay |
 | Enrolment answers 429 `too many failed attempts` | more than `enroll_fail_per_min` (10) failed attempts from one address | wait a minute; fix the cause (a wrong token or CA) before retrying |
-| The agent logs that the token was used or expired | a token works once, for its `-ttl` (15 minutes by default) | `lokadb token -cp "$CP_DSN" -org N` makes a new one |
+| The agent logs that the token was used or expired | a token works once, for its `-ttl` (15 minutes by default) | `lokadb token -cp file:/etc/lokadb/control-plane.dsn -org N` makes a new one |
 | The agent's `state` is `revoked` | `lokadb revoke` was run for the organization | only a new token brings it back |
 | The agent's `state` is `cert_expired`, or it logs `issue a new token` | the agent was down longer than the certificate's lifetime plus `renew_expired` | a new token ([restarts and upgrades](https://docs.lokadb.com/operations/restarts-and-upgrades/)) |
 | A connection ends with `08006` and the log names a setting (`max_org_conns`, `max_streams`, agent `-max-conns`…) | a [limit](#limits) is reached | raise that setting, or find why connections pile up |

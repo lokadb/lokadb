@@ -1,7 +1,6 @@
 package check
 
 import (
-	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -176,24 +175,6 @@ func (c *checker) fanoutInfo() *FanoutInfo {
 		sort.Strings(f.Allow)
 	}
 	return f
-}
-
-// buildVersion: the module version and VCS revision lokadb was built from, as far as known.
-func buildVersion() string {
-	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown"
-	}
-	v := bi.Main.Version
-	for _, s := range bi.Settings {
-		if s.Key == "vcs.revision" && len(s.Value) >= 12 {
-			v += " " + s.Value[:12]
-		}
-		if s.Key == "vcs.modified" && s.Value == "true" {
-			v += "+dirty"
-		}
-	}
-	return v
 }
 
 // lokadbTables: the LokaDB tables a statement touches, sorted.

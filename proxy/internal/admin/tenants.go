@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 )
 
 // Organizations with a uuid number (block 18, tasks/uuid-tenant.md). An organization has two
@@ -12,12 +13,17 @@ import (
 // organization for rows (partitions LIST by value, the policy, lokadb.org, <t>__refs.tenant,
 // the proxy); and its number N, an integer lokadb names things by (<t>__o<N>, <t>__org<N>,
 // lokadb_org<N>, the tunnel, lokadb.orgs). For an integer column N = V, as before. For a uuid
-// column lokadb.tenants maps them, filled by lokadb org-add. V is kept as text, so that text
-// numbers can follow the same way.
+// or a text column (text, varchar, character(n): a Laravel ulid() is character(26)) lokadb.tenants
+// maps them, filled by lokadb org-add. V is kept as text.
 const (
 	TenantInt  = "int"
 	TenantUUID = "uuid"
+	TenantText = "text" // text, varchar, character(n): the value is a string
 )
+
+// ValueKind: the organizations of this kind are named by their value, a number only for the
+// names (every kind but integers).
+func ValueKind(kind string) bool { return kind == TenantUUID || kind == TenantText }
 
 // NilUUID is the organization key of rows of no organization in a table numbered by uuid:
 // a row whose organization column holds it cannot be told from one without an organization
@@ -32,35 +38,80 @@ func TenantKind(base string) string {
 		return TenantInt
 	case "uuid":
 		return TenantUUID
+	case "text", "character varying", "character":
+		return TenantText
 	}
 	return ""
 }
 
 // TenantTypes names the types lokadb takes as an organization column, for messages.
-const TenantTypes = "smallint, integer, bigint or uuid"
+const TenantTypes = "smallint, integer, bigint, uuid, text, varchar or character(n)"
+
+// TenantOfKey: the kind of organizations a key of key kind k (KindInt, KindUUID, KindText,
+// KindChar) can be: the id of an organizations table is the organization column of the rest.
+func TenantOfKey(k string) string {
+	switch k {
+	case KindInt:
+		return TenantInt
+	case KindUUID:
+		return TenantUUID
+	case KindText, KindChar:
+		return TenantText
+	}
+	return ""
+}
+
+// CanonTenant: the value of an organization of kind, as lokadb keeps it (lokadb.tenants): a
+// uuid as Postgres prints it (the caller asks the database); a string without the trailing
+// blanks a character(n) column adds. A string that is empty or starts with "-" is LokaDB's own
+// (the key of rows of no organization, -1 and -2): not an organization.
+func CanonTenant(s string) (string, error) {
+	v := strings.TrimRight(s, " ")
+	switch {
+	case v == "":
+		return "", errors.New("an empty string stands for rows of no organization in lokadb: it cannot be an organization")
+	case strings.HasPrefix(v, "-"):
+		return "", fmt.Errorf("%q starts with a minus: lokadb keeps -1 and -2 for itself, and takes such a value for no organization", v)
+	case v != strings.TrimLeft(v, " \t\n\r"):
+		return "", fmt.Errorf("%q starts with a blank: write the value as the organization column holds it", v)
+	}
+	return v, nil
+}
 
 // tenantKey is the partition key of a LokaDB table whose organization column tc is of kind:
 // the column, the rows of no organization (NULL) under a value of their own (-2, the nil
-// uuid), so that the policy keeps a range (pruning) and still lets them through.
+// uuid, ”), so that the policy keeps a range (pruning) and still lets them through. A string
+// organization is the column as text (a character(n) column without its padding), in the byte
+// order of collation "C": the bounds of the range are the same whatever the column's own
+// collation, and equal strings are one key.
 func tenantKey(tc, kind string) string {
-	if kind == TenantUUID {
+	switch kind {
+	case TenantUUID:
 		return fmt.Sprintf("(coalesce(%s, '%s'::uuid))", q(tc), NilUUID)
+	case TenantText:
+		return fmt.Sprintf("(coalesce(%s::text, '') COLLATE \"C\")", q(tc))
 	}
 	return partKey(tc)
 }
 
 // tenantType: the type of an organization column enable adds to a child table of kind.
 func tenantType(kind string) string {
-	if kind == TenantUUID {
+	switch kind {
+	case TenantUUID:
 		return "uuid"
+	case TenantText:
+		return "text"
 	}
 	return "bigint"
 }
 
 // tenantDefault: the default of that column (lokadb.org, the proxy's, of the right type).
 func tenantDefault(kind string) string {
-	if kind == TenantUUID {
+	switch kind {
+	case TenantUUID:
 		return "lokadb.org_default_uuid()"
+	case TenantText:
+		return "lokadb.org_default_text()"
 	}
 	return "lokadb.org_default()"
 }
@@ -115,13 +166,9 @@ func OrgAdd(ctx context.Context, o OrgAddOptions) (int64, error) {
 	case TenantInt:
 		return 0, fmt.Errorf("the organizations of this database are numbered by their own value (an integer organization column): give it as -org N to every command, nothing to register")
 	}
-	v, err := r.rows(`SELECT $1::uuid::text`, o.Tenant)
+	val, err := canonTenantValue(r.rows, kind, o.Tenant)
 	if err != nil {
-		return 0, fmt.Errorf("%q is no uuid: %w", o.Tenant, err)
-	}
-	val := v[0][0]
-	if val == NilUUID {
-		return 0, fmt.Errorf("%s stands for rows of no organization in lokadb: it cannot be an organization", NilUUID)
+		return 0, err
 	}
 	had, err := r.rows(`SELECT org::text FROM lokadb.tenants WHERE tenant = $1`, val)
 	if err != nil {
@@ -192,10 +239,14 @@ type Tenant struct {
 	Value string
 }
 
-// Lit: the organization's value as an SQL literal of its column's type: N, '<uuid>'::uuid.
+// Lit: the organization's value as an SQL literal of its column's type: N, '<uuid>'::uuid,
+// 'value' (a string organization: compared with a string, whatever the column's type).
 func (t Tenant) Lit() string {
-	if t.Kind == TenantUUID {
+	switch t.Kind {
+	case TenantUUID:
 		return lit(t.Value) + "::uuid"
+	case TenantText:
+		return lit(t.Value)
 	}
 	return fmt.Sprint(t.Org)
 }
@@ -204,9 +255,9 @@ func (t Tenant) Lit() string {
 func (t Tenant) Key(tc string) string { return tenantKey(tc, t.Kind) }
 
 // LockCall: the organization's pause lock key in SQL, the one the proxy takes:
-// lokadb.org_lock(N), lokadb.org_lock_v('<uuid>') for one numbered by uuid.
+// lokadb.org_lock(N), lokadb.org_lock_v('<value>') for one named by its value.
 func (t Tenant) LockCall() string {
-	if t.Kind == TenantUUID {
+	if ValueKind(t.Kind) {
 		return "lokadb.org_lock_v(" + lit(t.Value) + ")"
 	}
 	return fmt.Sprintf("lokadb.org_lock(%d)", t.Org)
@@ -220,7 +271,7 @@ func ResolveTenant(ctx context.Context, q querier, org int64, tenant string) (Te
 	if err != nil {
 		return Tenant{}, err
 	}
-	if kind != TenantUUID {
+	if !ValueKind(kind) {
 		if tenant != "" {
 			return Tenant{}, fmt.Errorf("-tenant: the organizations of this database are numbered by their own value: give -org %s", tenant)
 		}
@@ -228,7 +279,11 @@ func ResolveTenant(ctx context.Context, q querier, org int64, tenant string) (Te
 	}
 	var rows [][]string
 	if tenant != "" {
-		rows, err = rowsOf(ctx, q, `SELECT org::text, tenant FROM lokadb.tenants WHERE tenant = $1::uuid::text`, tenant)
+		var val string
+		if val, err = canonTenantValue(func(sql string, args ...any) ([][]string, error) { return rowsOf(ctx, q, sql, args...) }, kind, tenant); err != nil {
+			return Tenant{}, err
+		}
+		rows, err = rowsOf(ctx, q, `SELECT org::text, tenant FROM lokadb.tenants WHERE tenant = $1`, val)
 	} else {
 		rows, err = rowsOf(ctx, q, `SELECT org::text, tenant FROM lokadb.tenants WHERE org = $1`, org)
 	}
@@ -239,14 +294,30 @@ func ResolveTenant(ctx context.Context, q querier, org int64, tenant string) (Te
 		if tenant != "" {
 			return Tenant{}, fmt.Errorf("organization %s has no number yet: first lokadb org-add -tenant %s", tenant, tenant)
 		}
-		return Tenant{}, fmt.Errorf("no organization has number %d: first lokadb org-add -tenant <its uuid>", org)
+		return Tenant{}, fmt.Errorf("no organization has number %d: first lokadb org-add -tenant <its value>", org)
 	}
 	var n int64
 	fmt.Sscan(rows[0][0], &n)
 	if org != 0 && org != n {
 		return Tenant{}, fmt.Errorf("-org %d and -tenant %s are different organizations (%s has number %d)", org, tenant, rows[0][1], n)
 	}
-	return Tenant{Org: n, Kind: TenantUUID, Value: rows[0][1]}, nil
+	return Tenant{Org: n, Kind: kind, Value: rows[0][1]}, nil
+}
+
+// canonTenantValue: the value of an organization given on the command line (-tenant) of kind
+// as lokadb.tenants keeps it; rows runs a query (a uuid is read by the database).
+func canonTenantValue(rows func(sql string, args ...any) ([][]string, error), kind, s string) (string, error) {
+	if kind == TenantText {
+		return CanonTenant(s)
+	}
+	v, err := rows(`SELECT $1::uuid::text`, s)
+	if err != nil {
+		return "", fmt.Errorf("%q is no uuid: %w", s, err)
+	}
+	if v[0][0] == NilUUID {
+		return "", fmt.Errorf("%s stands for rows of no organization in lokadb: it cannot be an organization", NilUUID)
+	}
+	return v[0][0], nil
 }
 
 // LookupOrg: the number of organization tenant, a command's -tenant V (org, its -org, when
@@ -283,7 +354,7 @@ func ValidOrg(org int64) error {
 		return nil
 	}
 	if org == 0 {
-		return errors.New("no organization: give -org N (a positive number) or -tenant UUID")
+		return errors.New("no organization: give -org N (a positive number) or -tenant VALUE")
 	}
 	return fmt.Errorf("organization %d: a number below 1 is not an organization (-1 and -2 are reserved)", org)
 }
