@@ -345,6 +345,8 @@ func (c *Config) watchApp(ctx context.Context, srv *proxy.Server) {
 	var prevDirect int64
 	for {
 		c.watchRole(ctx)
+		list, over := srv.Unrouted()
+		c.collectUnrouted(list, over)
 		var via int64
 		var last time.Time
 		for _, u := range srv.Seen() {

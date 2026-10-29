@@ -36,14 +36,14 @@ const (
 
 // Kinds: what a runner of this version does, as capabilities.
 var Kinds = []string{KindInventory + "@1", KindLookup + "@1", KindCheck + "@1", KindEnable + "@1", KindDisable + "@1", KindOrgTables + "@1", KindOrgList + "@1", KindPrepare + "@1",
-	KindCredentials + "@1", KindMove + "@1", KindMoveBack + "@1", KindRelease + "@1", KindExtSync + "@1"}
+	KindCredentials + "@1", KindMove + "@1", KindMoveBack + "@1", KindRelease + "@1", KindExtSync + "@1", KindStatements + "@1", KindDecide + "@1"}
 
 // Exclusive: kinds of which a runner runs one at a time (the open module's own locks say so too).
 var Exclusive = map[string]bool{KindMove: true, KindMoveBack: true, KindEnable: true, KindDisable: true}
 
 // Idempotent: kinds the service may hand out again when their lease expired.
 var Idempotent = map[string]bool{KindOrgTables: true, KindOrgList: true, KindInventory: true, KindLookup: true, KindCheck: true, KindPrepare: true,
-	KindCredentials: true, KindRelease: true, KindExtSync: true}
+	KindCredentials: true, KindRelease: true, KindExtSync: true, KindStatements: true}
 
 // --- registration and polling ---
 
@@ -466,4 +466,56 @@ func ValidFanout(mode string) bool {
 		}
 	}
 	return false
+}
+
+// --- statements without a customer (the fanout review) ---
+
+// Kinds of the review: fanout.review lists the statements the proxy saw that name no customer;
+// fanout.decide gives some of them a way to be routed, or allows them by name.
+const (
+	KindStatements = "fanout.review"
+	KindDecide     = "fanout.decide"
+)
+
+// StatementsArgs: nothing yet; the runner answers from what its proxy has seen.
+type StatementsArgs struct{}
+
+// Statement: one statement shape (its literals are $n: no customer's data), how often it ran
+// without naming a customer, why, and what can be done with it.
+type Statement struct {
+	Fingerprint string   `json:"fingerprint"`
+	SQL         string   `json:"sql"`
+	Table       string   `json:"table,omitempty"`
+	Column      string   `json:"column,omitempty"`
+	Reason      string   `json:"reason"` // in words
+	Write       bool     `json:"write,omitempty"`
+	Refused     bool     `json:"refused,omitempty"` // the last time the application got an error
+	Count       int64    `json:"count"`
+	Options     []string `json:"options"` // "key", "cloud", "allow"
+}
+
+type StatementsResult struct {
+	Policy   string      `json:"policy"` // the fanout policy in force
+	Items    []Statement `json:"items"`
+	Overflow int64       `json:"overflow,omitempty"` // shapes that did not fit
+}
+
+// Decision: Choice is "key" (the column names the customer: a unique column such as a slug),
+// "cloud" (the table is not per customer; it lives with LokaDB) or "allow" (run this statement in
+// every customer's database, by name).
+type Decision struct {
+	Fingerprint string `json:"fingerprint"`
+	Choice      string `json:"choice"`
+}
+
+type DecideArgs struct {
+	Decisions []Decision `json:"decisions"`
+}
+
+type DecideResult struct {
+	Applied []string          `json:"applied"` // fingerprints
+	Failed  map[string]string `json:"failed,omitempty"`
+	// Spec: the spec with the routing declarations now in force; the panel saves it so that the
+	// service holds what the runner holds.
+	Spec json.RawMessage `json:"spec,omitempty"`
 }

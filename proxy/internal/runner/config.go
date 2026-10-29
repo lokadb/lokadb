@@ -111,7 +111,8 @@ type Config struct {
 	adminDSN                        string               // the DSN the runner works as (the application's, or LOKADB_DB's)
 	settings                        *cloudproto.Settings // the panel's, as last applied
 	public                          *cloudproto.PublicProxy
-	publicKnown                     bool   // the panel's settings have arrived: until then proxy.json (what was applied last) stands
+	publicKnown                     bool // the panel's settings have arrived: until then proxy.json (what was applied last) stands
+	unr                             unroutedStore
 	fanoutMode                      string // the panel's fanout policy for the application's database ("": not chosen, proxy.json stands)
 	restart                         bool
 	info                            map[string]string

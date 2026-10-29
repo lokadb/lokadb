@@ -2561,9 +2561,11 @@ func (s *session) refuse(sql string, an *Analysis, unknown bool) bool {
 	}
 	switch v {
 	case FanoutRefused:
+		s.srv.unrouted.note(sql, an, true)
 		s.log.Warn("refused: names no organization", "table", fanoutTable(an), "policy", s.fanout.Mode, "gap", an.GapText(), "sql", brief(sql))
 		return true
 	case FanoutRun:
+		s.srv.unrouted.note(sql, an, false)
 		if s.fanout.Mode == FanoutLog {
 			s.log.Warn("runs in every organization's database", "table", fanoutTable(an), "sql", brief(sql))
 		}

@@ -103,3 +103,23 @@ func TestFanoutRaiseSQL(t *testing.T) {
 		t.Errorf("detail: %s %v", sql, err)
 	}
 }
+
+// Statements that name no organization are counted by shape (literals do not matter), with the reason.
+func TestUnroutedCollected(t *testing.T) {
+	var u unroutedSet
+	an := &Analysis{Lokadb: true, Unhinted: true, UnhintedTable: "builds", Gaps: []Gap{{Kind: "unrestricted", Table: "builds", Column: "slug", Form: "="}}}
+	u.note("SELECT * FROM builds WHERE slug = 'a'", an, true)
+	an2 := &Analysis{Lokadb: true, Unhinted: true, UnhintedTable: "builds", Gaps: an.Gaps}
+	u.note("SELECT * FROM builds WHERE slug = 'b'", an2, false)
+	other := &Analysis{Lokadb: true, Unhinted: true, UnhintedTable: "imports", Write: true}
+	u.note("DELETE FROM imports WHERE done", other, true)
+	s := &Server{}
+	s.unrouted.m = u.m
+	list, over := s.Unrouted()
+	if over != 0 || len(list) != 2 || list[0].Count != 2 || list[0].Table != "builds" || list[0].Refused || len(list[0].Gaps) != 1 || !list[1].Write {
+		t.Fatalf("%+v %d", list, over)
+	}
+	if list[0].SQL != "SELECT * FROM builds WHERE slug = $1" {
+		t.Errorf("literals not removed: %q", list[0].SQL)
+	}
+}

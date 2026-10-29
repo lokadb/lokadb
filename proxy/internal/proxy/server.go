@@ -149,6 +149,7 @@ type Server struct {
 	creds      credStore              // the organizations' credentials of the control plane (credentials.go)
 	allow      *allowList             // the addresses that may connect (allow.go); nil: any
 	seen       roleSeen               // the roles that connected (seen.go)
+	unrouted   unroutedSet            // statements that name no organization (unrouted.go)
 }
 
 func NewServer(cfg Config, log *slog.Logger) *Server {

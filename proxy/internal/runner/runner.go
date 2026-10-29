@@ -570,6 +570,16 @@ func (r *Runner) do(ctx context.Context, rj *job, log *slog.Logger) cloudproto.R
 		if decode(&a) {
 			out, err = r.ops.OrgList(ctx, a)
 		}
+	case cloudproto.KindStatements:
+		var a cloudproto.StatementsArgs
+		if decode(&a) {
+			out, err = r.ops.Statements(ctx, a)
+		}
+	case cloudproto.KindDecide:
+		var a cloudproto.DecideArgs
+		if decode(&a) {
+			out, err = r.ops.Decide(ctx, a)
+		}
 	case cloudproto.KindOrgTables:
 		var a cloudproto.OrgTablesArgs
 		if decode(&a) {
