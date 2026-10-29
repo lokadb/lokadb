@@ -3,6 +3,8 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +33,9 @@ type State struct {
 	Secret   string `json:"secret"`
 	Key      string `json:"key"` // seal private key
 	Service  string `json:"service"`
+	// TokenHash: which registration token this identity was made with (never the token), so that a
+	// new token in the environment is told from the spent one.
+	TokenHash string `json:"token_hash,omitempty"`
 	// Running: the jobs that were running; after a restart they are reported interrupted.
 	Running []string `json:"running"`
 }
@@ -65,6 +70,9 @@ type Runner struct {
 	inv       *cloudproto.Inventory
 	problems  []cloudproto.Problem                       // the config's, while it is not ready (untilReady)
 	check     func(context.Context) []cloudproto.Problem // Cfg.Check (a test sets another)
+	// RevokedWait: the first wait after the service refuses the identity and there is no new token (doubles, up to ten minutes)
+	RevokedWait time.Duration
+	triedToken  string // the token (hashed) already tried after a refusal
 }
 
 type job struct {
@@ -73,8 +81,44 @@ type job struct {
 	ev     *events
 }
 
-// ErrRevoked: the service refused the runner's secret (removed in the panel, or registered again).
-var ErrRevoked = errors.New("the service refused this runner's secret: it was removed or registered again; register it with a new token (LOKADB_RUNNER_TOKEN) after deleting runner.json")
+func tokenHash(t string) string {
+	h := sha256.Sum256([]byte(t))
+	return hex.EncodeToString(h[:8])
+}
+
+// revokedMessage says what to do, in the words of the install the runner is: the embedded runner
+// (one paste, LOKADB_TOKEN, files kept) or the manual one (LOKADB_RUNNER_TOKEN and its runner.json).
+func (r *Runner) revokedMessage() string {
+	if r.Cfg.Embedded {
+		return "this LokaDB was removed from the panel or set up again elsewhere: take a new paste from the panel's setup page and put its LOKADB_TOKEN in your compose file or env, then restart; your files are kept (" + r.Cfg.State + " and the rest of " + Dir + ")"
+	}
+	return "the service refused this runner's secret (it was removed in the panel or registered again): take a new token from the panel's setup page, delete " + r.statePath() + ", and start the runner with the token in LOKADB_RUNNER_TOKEN"
+}
+
+// reregister: the service refused the stored identity. An embedded runner whose environment holds a
+// token it has not registered with yet registers again with it, replacing runner.json only (the
+// control plane, the keys, the CA and proxy.json stay) and carries on with the new key.
+func (r *Runner) reregister(ctx context.Context) bool {
+	r.mu.Lock()
+	spent := r.st.TokenHash
+	r.mu.Unlock()
+	if !r.Cfg.Embedded || r.Cfg.Token == "" || tokenHash(r.Cfg.Token) == spent || r.triedToken == tokenHash(r.Cfg.Token) {
+		return false
+	}
+	r.triedToken = tokenHash(r.Cfg.Token) // once per process: a spent token must not be tried every minute
+	r.Log.Warn("the service refused this runner's identity; registering again with the token in LOKADB_TOKEN")
+	if err := r.register(ctx); err != nil {
+		r.Log.Error("registering again failed", "err", err)
+		return false
+	}
+	r.mu.Lock()
+	k := r.st.Key
+	r.mu.Unlock()
+	if key, err := seal.ParseKey(k); err == nil && r.ops != nil {
+		r.ops.Key = key
+	}
+	return true
+}
 
 func (r *Runner) statePath() string { return filepath.Join(r.Cfg.State, "runner.json") }
 
@@ -237,7 +281,7 @@ func (r *Runner) register(ctx context.Context) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.st = State{RunnerID: res.RunnerID, Secret: res.Secret, Key: key.Private(), Service: r.Cfg.Service}
+	r.st = State{RunnerID: res.RunnerID, Secret: res.Secret, Key: key.Private(), Service: r.Cfg.Service, TokenHash: tokenHash(r.Cfg.Token)}
 	if err := r.saveState(); err != nil {
 		return err
 	}
@@ -315,6 +359,11 @@ func (r *Runner) sendInventory(ctx context.Context, inv *cloudproto.Inventory) {
 func (r *Runner) pollLoop(ctx context.Context) error {
 	backoff := time.Second
 	told := "" // the newer release already logged
+	first := r.RevokedWait
+	if first == 0 {
+		first = 30 * time.Second
+	}
+	revokedWait := first
 	for ctx.Err() == nil {
 		r.mu.Lock()
 		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}, Problems: r.problems, Info: r.Cfg.Info()}
@@ -332,7 +381,17 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 		case ctx.Err() != nil:
 			return nil
 		case code == http.StatusUnauthorized:
-			return ErrRevoked
+			if r.reregister(ctx) {
+				backoff = time.Second
+				revokedWait = first
+				continue
+			}
+			// no new token: say what to do and wait, longer each time, instead of ending (a supervisor
+			// would restart the process at once, in a loop)
+			r.Log.Error(r.revokedMessage(), "retry_in", revokedWait)
+			sleep(ctx, revokedWait)
+			revokedWait = min(revokedWait*2, 10*time.Minute)
+			continue
 		case code == http.StatusUpgradeRequired:
 			r.Log.Error("the service no longer speaks this runner's protocol: update the runner", "err", err)
 			sleep(ctx, time.Minute)
@@ -452,6 +511,13 @@ func (r *Runner) runJob(ctx, jctx context.Context, rj *job) {
 	} else {
 		log.Info("job ended", "status", res.Status)
 	}
+	// the new state (enabled, moved) goes to the service BEFORE the result: the panel moves on as soon as
+	// it sees the job done, and must then read the new state, not the one of the last status poll
+	if rj.j.Kind == cloudproto.KindMove || rj.j.Kind == cloudproto.KindMoveBack || rj.j.Kind == cloudproto.KindEnable || rj.j.Kind == cloudproto.KindDisable {
+		if inv, err := r.ops.Inventory(ctx); err == nil {
+			r.sendInventory(ctx, &inv)
+		}
+	}
 	r.postResult(ctx, rj.j.ID, res)
 	r.mu.Lock()
 	delete(r.running, rj.j.ID)
@@ -463,11 +529,6 @@ func (r *Runner) runJob(ctx, jctx context.Context, rj *job) {
 	}
 	_ = r.saveState()
 	r.mu.Unlock()
-	if rj.j.Kind == cloudproto.KindMove || rj.j.Kind == cloudproto.KindMoveBack || rj.j.Kind == cloudproto.KindEnable || rj.j.Kind == cloudproto.KindDisable {
-		if inv, err := r.ops.Inventory(ctx); err == nil {
-			r.sendInventory(ctx, &inv)
-		}
-	}
 }
 
 // do runs the job and makes its result.
