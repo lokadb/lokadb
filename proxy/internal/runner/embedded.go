@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -23,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lokadb/lokadb/proxy/internal/admin"
@@ -337,6 +339,7 @@ func (c *Config) watchApp(ctx context.Context, srv *proxy.Server) {
 	defer tick.Stop()
 	var prevDirect int64
 	for {
+		c.watchRole(ctx)
 		var via int64
 		var last time.Time
 		for _, u := range srv.Seen() {
@@ -369,6 +372,64 @@ func (c *Config) watchApp(ctx context.Context, srv *proxy.Server) {
 			return
 		case <-tick.C:
 		}
+	}
+}
+
+// appRoleRisk: why the proxy would refuse the application's role (it is, or can SET ROLE to, a
+// superuser, a BYPASSRLS or a REPLICATION role: the proxy's own words), "" when it would not.
+// Row level security does not apply to such a role, so the proxy lets none in; the official postgres
+// image makes POSTGRES_USER a superuser, and an application that uses it is refused at step 5.
+//
+// bootstrap: the role is the one the cluster was made with (POSTGRES_USER of the postgres image).
+// Postgres will not take SUPERUSER from it ("The bootstrap superuser must have the SUPERUSER
+// attribute"), so for it the fix is a new application role, not ALTER ROLE.
+func appRoleRisk(ctx context.Context, dsn, role string) (why string, bootstrap bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	conn, err := ownsql.Connect(ctx, dsn)
+	if err != nil {
+		return "", false, err
+	}
+	defer conn.Close(context.Background())
+	var name string
+	var super, bypass, repl, self bool
+	err = conn.QueryRow(ctx, `SELECT r.rolname::text, r.rolsuper, r.rolbypassrls, r.rolreplication, r.oid = a.oid
+		FROM pg_roles a JOIN pg_roles r ON r.oid = a.oid
+		  OR pg_has_role(a.oid, r.oid, CASE WHEN current_setting('server_version_num')::int >= 160000 THEN 'SET' ELSE 'MEMBER' END)
+		WHERE a.rolname = $1 AND (r.rolsuper OR r.rolbypassrls OR r.rolreplication)
+		ORDER BY (r.oid = a.oid) DESC, 1 LIMIT 1`, role).Scan(&name, &super, &bypass, &repl, &self)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	why = proxy.RoleAttrs(super, bypass, repl)
+	if !self {
+		why = "can SET ROLE to " + name + ", which " + why
+	}
+	if self && super {
+		err = conn.QueryRow(ctx, `SELECT oid = 10 FROM pg_roles WHERE rolname = $1`, role).Scan(&bootstrap)
+	}
+	return why, bootstrap, err
+}
+
+// watchRole keeps the panel's view of the application's role current (the owner fixes it while the
+// runner runs): "app_role" and, when the proxy would refuse it, "app_role_risk" with the reason.
+func (c *Config) watchRole(ctx context.Context) {
+	if c.found == nil {
+		return
+	}
+	why, bootstrap, err := appRoleRisk(ctx, c.adminDSN, c.found.User)
+	if err != nil {
+		return // keep what was known
+	}
+	c.setInfo("app_role", c.found.User)
+	c.setInfo("app_role_risk", why)
+	if bootstrap {
+		c.setInfo("app_role_bootstrap", "yes")
+	} else {
+		c.setInfo("app_role_bootstrap", "")
 	}
 }
 
@@ -527,6 +588,7 @@ func (c *Config) probeDB(ctx context.Context) {
 	} else {
 		c.setInfo("rights", "limited")
 	}
+	c.watchRole(ctx)
 	if cfg, err := pgconn.ParseConfig(c.DB); err == nil {
 		c.setInfo("db_user", cfg.User)
 		if p := ManagedProvider(cfg.Host); p != "" {

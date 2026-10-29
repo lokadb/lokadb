@@ -65,6 +65,9 @@ func (o *Ops) Check(ctx context.Context, a cloudproto.CheckArgs) (cloudproto.Che
 	}
 	spec := o.Cfg.spec
 	opt := check.Options{DSN: o.Cfg.DB, Spec: &spec, Proxy: o.Cfg.proxyCfg, ProxyFile: o.Cfg.ProxyConfig}
+	if o.Cfg.found != nil { // the application's role is known from its environment: the report says if the proxy would refuse it
+		opt.RLSRoles = []string{o.Cfg.found.User}
+	}
 	if a.Org != 0 {
 		app, err := o.AppDSN(ctx, a.Org)
 		if err != nil {

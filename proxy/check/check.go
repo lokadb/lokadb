@@ -223,6 +223,7 @@ type Options struct {
 	OrgTable    string
 	Workload    []string      // proxy recording files
 	AppRoles    []string      // pg_stat_statements of these roles only (default: all but the role running the check)
+	RLSRoles    []string      // roles known to be the application's (the runner reads them from its environment): only app_role_bypasses_rls looks at them
 	ProxyHosts  []string      // the addresses the application's role may reach the cloud from (the proxy, the relay): cloud_direct_access
 	Proxy       *proxy.Config // its fanout policy decides which queries the proxy refuses (nil: the default, reject)
 	ProxyFile   string        // where Proxy came from, for the report

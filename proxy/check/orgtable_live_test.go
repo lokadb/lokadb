@@ -665,3 +665,36 @@ func TestOrgTableUnsupportedKey(t *testing.T) {
 		t.Errorf("lone: %v", err)
 	}
 }
+
+// RLSRoles (the runner reads the application's role from its environment): a superuser role is a
+// blocker with the way out in it, an ordinary one is not, and the other roles are left alone.
+func TestAppRoleFromSettings(t *testing.T) {
+	dsn, d := orgDB(t, "org_rls_roles", laravelShape1)
+	ctx := context.Background()
+	for _, q := range []string{"DROP ROLE IF EXISTS rls_super", "DROP ROLE IF EXISTS rls_plain", "CREATE ROLE rls_super LOGIN SUPERUSER", "CREATE ROLE rls_plain LOGIN"} {
+		if _, err := d.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _, _ = d.Exec(ctx, "DROP ROLE IF EXISTS rls_super"); _, _ = d.Exec(ctx, "DROP ROLE IF EXISTS rls_plain") })
+	blockers := func(role string) []Finding {
+		rep, err := Run(ctx, Options{DSN: dsn, OrgTable: "public.tenants", CountLimit: -1, RLSRoles: []string{role}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []Finding
+		for _, f := range rep.Findings {
+			if f.Code == "app_role_bypasses_rls" {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
+	got := blockers("rls_super")
+	if len(got) != 1 || got[0].Severity != Blocker || !strings.Contains(got[0].Message, "rls_super") || !strings.Contains(got[0].Message, "ALTER ROLE rls_super NOSUPERUSER NOBYPASSRLS NOREPLICATION") {
+		t.Errorf("superuser: %d findings, first message: %q", len(got), func() string { if len(got) > 0 { return got[0].Message }; return "" }())
+	}
+	if got := blockers("rls_plain"); len(got) != 0 {
+		t.Errorf("ordinary role: %+v", got)
+	}
+}

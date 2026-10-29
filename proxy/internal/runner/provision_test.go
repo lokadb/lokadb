@@ -383,3 +383,56 @@ func TestPublicProxy(t *testing.T) {
 		t.Fatalf("not put back: %v", m)
 	}
 }
+
+// TestAppRoleRisk: the application's role is reported when the proxy would refuse it (a superuser,
+// BYPASSRLS, REPLICATION, or one that can SET ROLE to such a role), and not otherwise; the cluster's
+// first role (POSTGRES_USER of the image) is told apart, since Postgres will not demote it.
+func TestAppRoleRisk(t *testing.T) {
+	dsn := os.Getenv("INIT_TEST_DSN")
+	if dsn == "" {
+		t.Skip("INIT_TEST_DSN is not set")
+	}
+	ctx := context.Background()
+	admin, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(ctx)
+	roles := []string{"rr_plain", "rr_super", "rr_bypass", "rr_repl", "rr_member"}
+	drop := func() {
+		for _, r := range roles {
+			_, _ = admin.Exec(ctx, "DROP ROLE IF EXISTS "+r)
+		}
+	}
+	drop()
+	t.Cleanup(drop)
+	for _, q := range []string{
+		"CREATE ROLE rr_plain LOGIN", "CREATE ROLE rr_super LOGIN SUPERUSER", "CREATE ROLE rr_bypass LOGIN BYPASSRLS",
+		"CREATE ROLE rr_repl LOGIN REPLICATION", "CREATE ROLE rr_member LOGIN", "GRANT rr_bypass TO rr_member WITH SET TRUE",
+	} {
+		if _, err := admin.Exec(ctx, q); err != nil {
+			if strings.Contains(q, "WITH SET") { // before Postgres 16 a plain membership is the same
+				_, err = admin.Exec(ctx, "GRANT rr_bypass TO rr_member")
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+	}
+	for _, c := range []struct{ role, want string }{
+		{"rr_plain", ""}, {"rr_super", "is a superuser"}, {"rr_bypass", "has BYPASSRLS"}, {"rr_repl", "has REPLICATION"},
+		{"rr_member", "can SET ROLE to rr_bypass, which has BYPASSRLS"}, {"nobody_here", ""},
+	} {
+		why, boot, err := appRoleRisk(ctx, dsn, c.role)
+		if err != nil || boot || (c.want == "" && why != "") || !strings.HasPrefix(why, c.want) {
+			t.Errorf("%s: %q bootstrap %v, %v; want %q", c.role, why, boot, err, c.want)
+		}
+	}
+	var first string
+	if err := admin.QueryRow(ctx, "SELECT rolname FROM pg_roles WHERE oid = 10").Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if why, boot, err := appRoleRisk(ctx, dsn, first); err != nil || !boot || !strings.Contains(why, "superuser") {
+		t.Errorf("the cluster's first role %s: %q bootstrap %v, %v", first, why, boot, err)
+	}
+}

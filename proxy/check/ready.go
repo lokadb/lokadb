@@ -62,7 +62,19 @@ func (c *checker) appRolesRLS() error {
 			roles = append(roles, r)
 		}
 	}
-	if len(roles) == 0 {
+	rls := roles
+	if len(c.o.AppRoles) == 0 && len(c.o.RLSRoles) > 0 {
+		src = "the application's settings"
+		seen := map[string]bool{}
+		rls = nil
+		for _, r := range append(append([]string{}, c.o.RLSRoles...), roles...) {
+			if !seen[r] {
+				seen[r] = true
+				rls = append(rls, r)
+			}
+		}
+	}
+	if len(rls) == 0 {
 		r, err := c.rows(`SELECT rolname::text FROM pg_roles WHERE rolcanlogin AND (rolsuper OR rolbypassrls) AND rolname <> current_user ORDER BY 1`)
 		if err != nil {
 			return err
@@ -82,15 +94,17 @@ func (c *checker) appRolesRLS() error {
 		CASE WHEN a.rolname = b.rolname THEN '' ELSE ' (it can SET ROLE to ' || b.rolname || ')' END,
 		CASE WHEN b.rolsuper THEN 'superuser' WHEN b.rolbypassrls THEN 'BYPASSRLS role' ELSE 'REPLICATION role' END
 		FROM pg_roles a JOIN pg_roles b ON b.rolname = a.rolname OR pg_has_role(a.oid, b.oid, CASE WHEN current_setting('server_version_num')::int >= 160000 THEN 'SET' ELSE 'MEMBER' END)
-		WHERE a.rolname = ANY($1) AND (b.rolsuper OR b.rolbypassrls OR b.rolreplication) ORDER BY 1, 2`, roles)
+		WHERE a.rolname = ANY($1) AND (b.rolsuper OR b.rolbypassrls OR b.rolreplication) AND (b.rolname = a.rolname OR NOT a.rolsuper) ORDER BY 1, 2`, rls)
 	if err != nil {
 		return err
 	}
-	if err := c.cloudDirectAccess(roles); err != nil {
-		return err
+	if len(roles) > 0 {
+		if err := c.cloudDirectAccess(roles); err != nil {
+			return err
+		}
 	}
 	for _, x := range r {
-		c.add(Blocker, "app_role_bypasses_rls", x[0], fmt.Sprintf("the application's role %s (from %s)%s is a %s: row-level security does not apply to it (REPLICATION reads every organization's changes by logical decoding), so through the proxy its queries without the organization would read and change every organization's rows instead of being refused or kept to one, and the proxy does not let it in. Give the application a role without SUPERUSER, BYPASSRLS and REPLICATION that is not a member of one",
+		c.add(Blocker, "app_role_bypasses_rls", x[0], fmt.Sprintf("the application's role %s (from %s)%s is a %s: row-level security does not apply to it (REPLICATION reads every organization's changes by logical decoding), so through the proxy its queries without the organization would read and change every organization's rows instead of being refused or kept to one, and the proxy does not let it in. Give the application a role without SUPERUSER, BYPASSRLS and REPLICATION that is not a member of one: make a separate administrator for LokaDB (LOKADB_DB), then ALTER ROLE %[1]s NOSUPERUSER NOBYPASSRLS NOREPLICATION (it stays the owner of the tables, so migrations keep working)",
 			x[0], src, x[1], x[2]), nil)
 	}
 	return nil

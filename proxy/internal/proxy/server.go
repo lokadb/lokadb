@@ -722,23 +722,29 @@ func checkRole(ctx context.Context, conn *pgconn.PgConn) error {
 	return roleRefusal(rows)
 }
 
+// RoleAttrs: what makes a role one the proxy refuses, in the words of its refusal ("is a
+// superuser, has BYPASSRLS"); the runner and the panel say it the same way before the proxy does.
+func RoleAttrs(super, bypass, replication bool) string {
+	var attrs []string
+	if super {
+		attrs = append(attrs, "is a superuser")
+	}
+	if bypass {
+		attrs = append(attrs, "has BYPASSRLS")
+	}
+	if replication {
+		attrs = append(attrs, "has REPLICATION (logical decoding reads every organization's changes)")
+	}
+	return strings.Join(attrs, ", ")
+}
+
 // roleRefusal: the refusal checkRoleSQL's rows call for, nil for none.
 func roleRefusal(rows [][]string) error {
 	if len(rows) != 1 || len(rows[0]) != 6 {
 		return nil // none
 	}
 	r := rows[0]
-	var attrs []string
-	if r[3] == "true" {
-		attrs = append(attrs, "is a superuser")
-	}
-	if r[4] == "true" {
-		attrs = append(attrs, "has BYPASSRLS")
-	}
-	if r[5] == "true" {
-		attrs = append(attrs, "has REPLICATION (logical decoding reads every organization's changes)")
-	}
-	why := strings.Join(attrs, ", ")
+	why := RoleAttrs(r[3] == "true", r[4] == "true", r[5] == "true")
 	switch r[2] {
 	case "session":
 		why = "was logged in as " + r[1] + ", which " + why
