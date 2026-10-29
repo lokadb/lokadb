@@ -676,7 +676,10 @@ func TestAppRoleFromSettings(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Cleanup(func() { _, _ = d.Exec(ctx, "DROP ROLE IF EXISTS rls_super"); _, _ = d.Exec(ctx, "DROP ROLE IF EXISTS rls_plain") })
+	t.Cleanup(func() {
+		_, _ = d.Exec(ctx, "DROP ROLE IF EXISTS rls_super")
+		_, _ = d.Exec(ctx, "DROP ROLE IF EXISTS rls_plain")
+	})
 	blockers := func(role string) []Finding {
 		rep, err := Run(ctx, Options{DSN: dsn, OrgTable: "public.tenants", CountLimit: -1, RLSRoles: []string{role}})
 		if err != nil {
@@ -692,7 +695,12 @@ func TestAppRoleFromSettings(t *testing.T) {
 	}
 	got := blockers("rls_super")
 	if len(got) != 1 || got[0].Severity != Blocker || !strings.Contains(got[0].Message, "rls_super") || !strings.Contains(got[0].Message, "ALTER ROLE rls_super NOSUPERUSER NOBYPASSRLS NOREPLICATION") {
-		t.Errorf("superuser: %d findings, first message: %q", len(got), func() string { if len(got) > 0 { return got[0].Message }; return "" }())
+		t.Errorf("superuser: %d findings, first message: %q", len(got), func() string {
+			if len(got) > 0 {
+				return got[0].Message
+			}
+			return ""
+		}())
 	}
 	if got := blockers("rls_plain"); len(got) != 0 {
 		t.Errorf("ordinary role: %+v", got)

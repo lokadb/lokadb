@@ -2,9 +2,9 @@ package runner
 
 import "testing"
 
-// A customers table that looks like people lists keys only unless the person turns names on.
-func TestPeopleLikeTables(t *testing.T) {
-	cols := func(c ...string) map[string]bool {
+// The column that names a customer in the list: the name, else the e-mail, else a title, slug or username.
+func TestPickLabel(t *testing.T) {
+	have := func(c ...string) map[string]bool {
 		m := map[string]bool{}
 		for _, x := range c {
 			m[x] = true
@@ -12,31 +12,19 @@ func TestPeopleLikeTables(t *testing.T) {
 		return m
 	}
 	for _, c := range []struct {
-		table string
-		cols  map[string]bool
-		want  bool
+		cols map[string]bool
+		want string
 	}{
-		{"teams", cols("id", "name", "slug"), false},
-		{"organizations", cols("id", "name", "domain"), false},
-		{"tenants", cols("id", "name"), false},
-		{"accounts", cols("id", "name", "plan"), true}, // accounts of individuals: a name
-		{"accounts", cols("id", "plan"), false},
-		{"shops", cols("id", "owner_email"), false},
-		{"shops", cols("id", "email"), true},
-		{"companies", cols("id", "first_name"), true},
+		{have("id", "name", "email", "slug"), "name"},
+		{have("id", "email", "slug", "username"), "email"},
+		{have("id", "title", "slug"), "title"},
+		{have("id", "slug", "username"), "slug"},
+		{have("id", "username"), "username"},
+		{have("id", "plan"), ""},
 	} {
-		if got := peopleByColumns(c.table, c.cols); got != c.want {
-			t.Errorf("%s %v: %v, want %v", c.table, c.cols, got, c.want)
-		}
-	}
-	for _, n := range []string{"users", "members", "people", "customers"} {
-		if !peopleTables[n] {
-			t.Errorf("%s is not taken for people", n)
-		}
-	}
-	for _, n := range []string{"teams", "organizations", "companies", "tenants", "workspaces"} {
-		if peopleTables[n] {
-			t.Errorf("%s is taken for people", n)
+		want := c.want
+		if got := pickLabel(c.cols); got != want {
+			t.Errorf("%v: %q, want %q", c.cols, got, want)
 		}
 	}
 }

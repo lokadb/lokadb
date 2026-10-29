@@ -130,6 +130,10 @@ func (c *Config) ApplySettings(s *cloudproto.Settings) (bool, error) {
 		}
 	}
 	c.public, c.publicKnown = s.ProxyPublic, true
+	c.fanoutMode = s.Fanout
+	if c.applyFanout() {
+		changed = true
+	}
 	if c.applyPublicProxy() {
 		changed = true
 	}
@@ -191,6 +195,7 @@ func (c *Config) startEmbedded(ctx context.Context) error {
 	}
 	var err error
 	c.applyPublicProxy() // before the proxy reads its file
+	c.applyFanout()
 	embeddedOnce.Do(func() { err = c.runEmbedded(ctx); embeddedDone.Store(err == nil) })
 	return err
 }
@@ -740,4 +745,52 @@ func ensureSelfSigned(crt, key, name string) error {
 		return err
 	}
 	return os.WriteFile(key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kd}), 0o600)
+}
+
+// applyFanout makes proxy.json say the panel's fanout policy for the application's database: the
+// mode of its entry in "fanout". The entry's allow list, the entries of other databases and every
+// other key stay as they are (they may be the person's own edits). Nothing is chosen: nothing is
+// touched. A proxy that is already running is restarted, as for the public setting. It reports a change.
+func (c *Config) applyFanout() bool {
+	if c.fanoutMode == "" || c.found == nil || c.found.DBName == "" {
+		return false
+	}
+	path := filepath.Join(Dir, "proxy.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false // not made yet: Prepare calls this again after it is
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	fan := map[string]json.RawMessage{}
+	if m["fanout"] != nil && json.Unmarshal(m["fanout"], &fan) != nil {
+		return false // not an object: the person's file is not ours to rewrite
+	}
+	entry := map[string]json.RawMessage{}
+	if e := fan[c.found.DBName]; e != nil {
+		_ = json.Unmarshal(e, &entry)
+	}
+	if string(entry["mode"]) == strconv.Quote(c.fanoutMode) {
+		return false
+	}
+	entry["mode"], _ = json.Marshal(c.fanoutMode)
+	fan[c.found.DBName], _ = json.Marshal(entry)
+	m["fanout"], _ = json.Marshal(fan)
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return false
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, append(out, '\n'), 0o644) != nil || os.Rename(tmp, path) != nil {
+		return false
+	}
+	if c.Log != nil {
+		c.Log.Warn("the fanout policy changed: LokaDB restarts to apply it", "database", c.found.DBName, "mode", c.fanoutMode)
+	}
+	if embeddedStarted() {
+		c.restart = true
+	}
+	return true
 }

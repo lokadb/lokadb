@@ -384,6 +384,57 @@ func TestPublicProxy(t *testing.T) {
 	}
 }
 
+// TestFanoutPolicy: the panel's fanout policy goes into the application's database's entry of
+// proxy.json, keeping its allow list, the other databases' entries and the other keys (hand edits);
+// not chosen touches nothing; the same again changes nothing; a running proxy is asked to restart.
+func TestFanoutPolicy(t *testing.T) {
+	dir := useDir(t)
+	embeddedDone.Store(false)
+	orig := `{"listen": ":6432", "upstream": "env:LOKADB_UPSTREAM", "note": "mine", "fanout": {"*": {"mode": "log"}, "shop": {"mode": "reject", "allow": ["SELECT 1 FROM builds"]}, "other": {"mode": "allow"}}}`
+	write(t, dir+"/proxy.json", orig)
+	c := &Config{found: &Found{DBName: "shop"}}
+	if changed, err := c.ApplySettings(&cloudproto.Settings{}); err != nil || string(read(t, dir+"/proxy.json")) != orig || changed {
+		t.Fatalf("nothing chosen touched the file (changed %v, %v)", changed, err)
+	}
+	if _, err := c.ApplySettings(&cloudproto.Settings{Fanout: "log"}); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(read(t, dir+"/proxy.json"), &m); err != nil {
+		t.Fatal(err)
+	}
+	fan := m["fanout"].(map[string]any)
+	shop := fan["shop"].(map[string]any)
+	if shop["mode"] != "log" || len(shop["allow"].([]any)) != 1 || fan["other"].(map[string]any)["mode"] != "allow" || fan["*"].(map[string]any)["mode"] != "log" || m["note"] != "mine" || m["listen"] != ":6432" {
+		t.Fatalf("proxy.json: %v", m)
+	}
+	before := read(t, dir+"/proxy.json")
+	if c.applyFanout() || !bytes.Equal(read(t, dir+"/proxy.json"), before) {
+		t.Error("the same policy again changed the file")
+	}
+	if c.RestartRequested() {
+		t.Error("a restart asked for before the proxy ran")
+	}
+	embeddedDone.Store(true)
+	t.Cleanup(func() { embeddedDone.Store(false) })
+	c.fanoutMode = "reject-writes"
+	if !c.applyFanout() || !c.RestartRequested() {
+		t.Error("a changed policy of a running proxy asks for no restart")
+	}
+	// a database without an entry gets one; a file whose "fanout" is not an object is left alone
+	write(t, dir+"/proxy.json", `{"listen": ":6432"}`)
+	if !c.applyFanout() || !strings.Contains(string(read(t, dir+"/proxy.json")), `"shop"`) {
+		t.Error("no entry made")
+	}
+	write(t, dir+"/proxy.json", `{"fanout": "reject"}`)
+	if c.applyFanout() || string(read(t, dir+"/proxy.json")) != `{"fanout": "reject"}` {
+		t.Error("a file that is not ours to rewrite was rewritten")
+	}
+	if cloudproto.ValidFanout("nope") || !cloudproto.ValidFanout("") || !cloudproto.ValidFanout("reject-writes") {
+		t.Error("ValidFanout")
+	}
+}
+
 // TestAppRoleRisk: the application's role is reported when the proxy would refuse it (a superuser,
 // BYPASSRLS, REPLICATION, or one that can SET ROLE to such a role), and not otherwise; the cluster's
 // first role (POSTGRES_USER of the image) is told apart, since Postgres will not demote it.
