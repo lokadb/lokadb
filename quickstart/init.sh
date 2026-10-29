@@ -32,7 +32,7 @@ if psql "$ADMIN" -tAc "SELECT 1 FROM lokadb.orgs WHERE org = 1" 2>/dev/null | gr
   step "organization 1 is already moved (a previous run): skipping check, enable and move-org"
 else
   step "3. lokadb check: what blocks the move, what is not supported, what changes"
-  lokadb check -db "$ADMIN" -spec $Q/spec.json -proxy-config $Q/lokadb.json \
+  lokadb check -db "$ADMIN" -spec $Q/spec.json -proxy-config $Q/proxy.json \
     -customer "$CUST_ADMIN" -customer-app "$CUST_APP" -org 1 || true   # exit 2 = needs review
 
   step "4. lokadb enable: documents and document_versions become partitioned by organization (no row copy)"
@@ -41,7 +41,7 @@ else
   step "5. lokadb move-org: organization 1 moves to its own database while demo keeps writing"
   lokadb move-org -db "$ADMIN" -spec $Q/spec.json -owner app -org 1 \
     -customer "$CUST_ADMIN" -customer-app "$CUST_APP" \
-    -proxy-config $Q/lokadb.json -direct-role lokadb_dml
+    -proxy-config $Q/proxy.json -direct-role lokadb_dml
 fi
 
 step "6. where the rows are"

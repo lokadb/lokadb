@@ -326,7 +326,9 @@ func (e *env) enableSpec(body string) error {
 	if err != nil {
 		return err
 	}
-	_, err = e.lokadb("enable", "-db", e.cloud(), "-spec", p, "-owner", "app")
+	// the checks are about what enable does, not about its downtime: -allow-downtime lets
+	// a table of a million rows be converted in one step
+	_, err = e.lokadb("enable", "-db", e.cloud(), "-spec", p, "-owner", "app", "-allow-downtime")
 	return err
 }
 

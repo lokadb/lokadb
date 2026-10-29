@@ -61,7 +61,7 @@ func main() {
 	switch os.Args[1] {
 	case "proxy":
 		fs := flag.NewFlagSet("proxy", flag.ExitOnError)
-		cfgPath := fs.String("config", "lokadb.json", "config file")
+		cfgPath := fs.String("config", "/etc/lokadb/proxy.json", "config file")
 		record := fs.String("record", "", "record the workload into this file for lokadb check (overrides \"record\" in the config)")
 		parseArgs(fs)
 		var cfg proxy.Config
@@ -243,10 +243,13 @@ func main() {
 		}
 	case "relay":
 		fs := flag.NewFlagSet("relay", flag.ExitOnError)
-		cfgPath := fs.String("config", "relay.json", "config file")
+		cfgPath := fs.String("config", "/etc/lokadb/relay.json", "config file")
 		parseArgs(fs)
 		var cfg tunnel.RelayConfig
 		if err = readJSON(*cfgPath, &cfg); err != nil {
+			break
+		}
+		if err = cfg.PrepareCerts(log); err != nil {
 			break
 		}
 		cfg.ConfigPath = *cfgPath // "orgs" is re-read: a new organization needs no restart
@@ -281,14 +284,28 @@ func main() {
 		}
 	case "runner": // LokaDB Cloud's runner at the SaaS (private/cloud/DESIGN.md §4)
 		fs := flag.NewFlagSet("runner", flag.ExitOnError)
-		cfgPath := fs.String("config", "/etc/lokadb/runner.json", "runner config")
+		cfgPath := fs.String("config", filepath.Join(runner.Dir, "runner.json"), "runner config")
 		checkOnly := fs.Bool("check", false, "check the config (its files, the databases, the host names) and print every problem, without registering; exit 1 if there is any")
+		create := fs.Bool("create", false, "with -check: make the LokaDB directory's missing files now (control-plane role and database, credentials.key, relay.json, proxy.json), as the runner does when it starts; without it -check only says what it would make")
 		parseArgs(fs)
 		var cfg *runner.Config
-		if cfg, err = runner.LoadConfig(*cfgPath); err != nil {
+		if _, statErr := os.Stat(*cfgPath); os.IsNotExist(statErr) && (os.Getenv("LOKADB_TOKEN") != "" || os.Getenv("LOKADB_EMBEDDED") != "" || embeddedState()) {
+			// the panel's paste: no files, the database from the application's environment, the rest from the panel
+			cfg, err = runner.NewEmbedded(os.Getenv, log)
+		} else {
+			cfg, err = runner.LoadConfig(*cfgPath)
+		}
+		if err != nil {
 			break
 		}
+		cfg.Log = log
+		if cfg.Image == "" && regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(buildinfo.Version()) {
+			cfg.Image = "ghcr.io/lokadb/lokadb:" + buildinfo.Version()
+		}
 		if *checkOnly {
+			if _, err := cfg.Provision(context.Background(), !*create, os.Stdout); err != nil {
+				fmt.Printf("PROBLEM  %v\n", err)
+			}
 			probs := cfg.Check(context.Background())
 			for _, p := range probs {
 				fmt.Printf("PROBLEM  %s\n         fix: %s\n", p.Message, p.Fix)
@@ -416,7 +433,7 @@ func main() {
 		fs := flag.NewFlagSet("certs", flag.ExitOnError)
 		dir := fs.String("dir", "certs", "output directory")
 		relayHost := fs.String("relay-host", "relay", "relay host name or IP (several, comma separated)")
-		caKeyDir := fs.String("ca-key-dir", "", "where ca.key goes (default: next to the certificates, in -dir: then only the relay may mount -dir; the agent, the runner and the proxy get a copy of ca.crt alone, as `lokadb init` lays it out)")
+		caKeyDir := fs.String("ca-key-dir", "", "where ca.key goes (default: next to the certificates, in -dir: then only the relay may mount -dir; the agent, the runner and the proxy get a copy of ca.crt alone; `lokadb init` leaves the CA to the relay, which makes it in its own volume)")
 		orgs := fs.String("orgs", "", "comma-separated organization ids for static client certificates (normally none: agents enroll)")
 		force := fs.Bool("force", false, "replace an existing CA (every agent then needs a new certificate)")
 		parseArgs(fs)
@@ -690,6 +707,7 @@ func main() {
 		tenant := fs.String("tenant", "", "the organization by its uuid instead of -org (move-org; the number lokadb org-add gave it)")
 		lockTimeout := fs.Duration("lock-timeout", 5*time.Second, "max wait for the write lock at switch time (move-org; enable after -prepare, and -prepare's short catalog changes)")
 		// block 3 (1.4): enable in two steps
+		allowDowntime := fs.Bool("allow-downtime", false, "enable: convert without -prepare even when that locks the tables for more than 10 seconds (by the row estimate); without it such an enable is refused")
 		prepare := fs.Bool("prepare", false, "enable: prepare online (refs tables, organization columns of child tables, FKs, key indexes; can be stopped and run again); then enable without it switches in a short lock")
 		maxPause := fs.Duration("max-pause", 10*time.Second, "max write pause while the last changes arrive (move-org)")
 		retain := fs.Bool("retain-source", false, "keep the detached cloud partitions as <table>__o<N>_source (move-org)")
@@ -721,7 +739,7 @@ func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		if os.Args[1] == "enable" {
-			o := admin.EnableOptions{DSN: *db, Spec: spec, Owner: *owner, LockTimeout: *lockTimeout, Attempts: 5, Log: log}
+			o := admin.EnableOptions{DSN: *db, Spec: spec, Owner: *owner, LockTimeout: *lockTimeout, Attempts: 5, Log: log, AllowDowntime: *allowDowntime}
 			if *prepare {
 				err = admin.Prepare(ctx, o)
 			} else {
@@ -848,7 +866,9 @@ func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		err = admin.Disable(ctx, admin.DisableOptions{CloudDSN: *db, Spec: spec.Sorted(), DryRun: *dryRun, Grace: *grace, LockTimeout: *lockTimeout, Attempts: *attempts, Log: log})
-		if err == nil {
+		if err == nil && *dryRun {
+			log.Info("dry run: nothing changed")
+		} else if err == nil {
 			log.Info("disable done")
 		}
 	default:
@@ -935,7 +955,7 @@ Start:  lokadb check -db DSN -org-candidates     (which table is the organizatio
 Docs:   https://docs.lokadb.com   (install on your database: https://docs.lokadb.com/getting-started/install/)
 
 usage:
-  lokadb proxy -config lokadb.json [-record workload.json]
+  lokadb proxy -config /etc/lokadb/proxy.json [-record workload.json]
   lokadb check -db DSN (-spec spec.json | -org-table TABLE [-write-spec F] | -tenant-column COL [-write-spec F]) [-workload F[,F]] [-app-role R[,R]] [-proxy-config F]
               [-customer DSN [-customer-app DSN] [-customer-schema S] [-org N | -tenant UUID]] [-direct-forms forms.sql]
               [-profile fdw|fdw+direct|direct] [-rtt MS] [-patch patch.json] [-suggest patch.json] [-proxy-hosts A[,A]] [-count-limit N] [-json]
@@ -944,7 +964,7 @@ usage:
               [-ci [-baseline accepted.json]] [-write-baseline F]: exit 0 nothing new, 6 new items (CI of the application)
   lokadb relay -config relay.json
   lokadb runner -config runner.json   (LokaDB Cloud's runner: takes jobs from the service, runs them here)
-  lokadb runner -check -config runner.json   (its config checked: every problem printed, nothing registered; exit 1 if any)
+  lokadb runner -check [-create] [-config /etc/lokadb/runner.json]   (its config checked: every problem printed, nothing registered; exit 1 if any; -create makes the directory's missing files)
   lokadb issuer -config issuer.json   (signs agent certificates for the relays: the CA key lives only here)
   lokadb agent -relay HOST:PORT -ca F -state DIR -token-file F -db HOST:PORT [-cloud-listen ADDR [-cloud-allow A[,A]]] [-sessions N] [-max-conns N] [-enroll ADDR] [-server-name NAME] [-status-listen ADDR] [-status-url URL -status-token-file F] [-enroll-only]
   lokadb token  -cp DSN -org N [-ttl 15m]
@@ -1122,4 +1142,11 @@ func stallOption(d time.Duration) time.Duration {
 		return -1
 	}
 	return d
+}
+
+// embeddedState: this volume was an embedded runner's before (its state is there), so a restart
+// without the one-time token is still that runner.
+func embeddedState() bool {
+	_, err := os.Stat(filepath.Join(runner.Dir, "state", "runner.json"))
+	return err == nil
 }

@@ -107,7 +107,7 @@ The relay and agent pass bytes as they are, so TLS can run from `postgres_fdw`, 
 
 To make sure no one forgets, require TLS on the relay — for all organizations (`"org_tls": "require"`) or one (`org-endpoint -org N -tls require`). The relay then refuses a connection that does not start with `SSLRequest`, does not let a client continue in clear text if the database refuses TLS, and still passes `CancelRequest`.
 
-Between the application and the proxy, turn on `tls` in `lokadb.json`: the proxy receives the application's password in clear text to pass it to Postgres. See [Configuration](configuration.md#proxy-lokadbjson).
+Between the application and the proxy, turn on `tls` in `proxy.json`: the proxy receives the application's password in clear text to pass it to Postgres. See [Configuration](configuration.md#proxy-proxyjson).
 
 ## Limits
 

@@ -23,6 +23,8 @@ type DisableOptions struct {
 	CloudDSN string
 	Spec     Spec
 	DryRun   bool
+	// Report: filled by a dry run (and by a real one, before it changes anything).
+	Report *DisableReport
 	// Grace: how long the refs tables and schema lokadb stay after the commit (proxies with
 	// the old metadata still read the refs and call lokadb.org_lock until they reload it).
 	Grace time.Duration
@@ -156,21 +158,34 @@ func Disable(ctx context.Context, o DisableOptions) error {
 		return fmt.Errorf("the spec lists %d tables, lokadb.tables %d: disable takes the whole spec enable was given", len(o.Spec.Tables), len(enabled))
 	}
 
-	// What is outside DEFAULT moves into it: the pause grows with it.
+	// What is outside DEFAULT moves into it: the pause grows with it. Of those, the rows of no
+	// organization (the partition <table>__none) are counted apart: a lot of them means the
+	// organizations table was chosen wrong.
 	var total int64
+	rep := &DisableReport{}
 	for _, st := range o.Spec.Tables {
-		n, err := rowsOf(ctx, conn, fmt.Sprintf(`SELECT count(*)::text FROM %s WHERE tableoid <> %s::regclass`, qr(st.Name), lit(qr(hn(st.Name, "__cloud")))))
+		n, err := rowsOf(ctx, conn, fmt.Sprintf(`SELECT count(*) FILTER (WHERE tableoid <> %s::regclass)::text,
+			count(*) FILTER (WHERE tableoid = coalesce(to_regclass(%s), 0::oid::regclass))::text FROM %s`,
+			lit(qr(hn(st.Name, "__cloud"))), lit(qr(hn(st.Name, "__none"))), qr(st.Name)))
 		if err != nil {
 			return err
 		}
-		var c int64
+		var c, none int64
 		fmt.Sscan(n[0][0], &c)
+		fmt.Sscan(n[0][1], &none)
 		total += c
-		log.Info("rows outside DEFAULT", "table", st.Name, "rows", c)
+		rep.Tables = append(rep.Tables, DisableTableReport{Name: st.Name, Rows: c, NoOrgRows: none})
+		rep.NoOrgRows += none
+		log.Info("rows outside DEFAULT", "table", st.Name, "rows", c, "rows_without_organization", none)
+	}
+	rep.Rows = total
+	rep.Pause = (time.Duration(total/rowsPerSecond+1) * time.Second).String()
+	if o.Report != nil {
+		*o.Report = *rep
 	}
 	if o.DryRun {
-		log.Info("dry run: disable runs in one transaction; reads and writes of these tables wait while the rows outside DEFAULT are copied into it",
-			"rows_to_copy", total)
+		log.Info("dry run: nothing changed. A real disable runs in one transaction; reads and writes of these tables wait while the rows outside DEFAULT are copied into it",
+			"rows_to_copy", total, "rows_without_organization", rep.NoOrgRows, "expected_pause", rep.Pause)
 		return nil
 	}
 
@@ -839,4 +854,18 @@ func (r *runner) appRowSecurity(t string) ([]string, error) {
 		steps = append(steps, fmt.Sprintf("ALTER TABLE %s FORCE ROW LEVEL SECURITY", qr(t)))
 	}
 	return steps, nil
+}
+
+// DisableReport: what disable would do, counted without changing anything.
+type DisableReport struct {
+	Tables    []DisableTableReport
+	Rows      int64  // rows in partitions of organizations, copied back into the default one
+	NoOrgRows int64  // rows of no organization
+	Pause     string // the expected wait of the tables, an estimate
+}
+
+type DisableTableReport struct {
+	Name      string
+	Rows      int64
+	NoOrgRows int64
 }

@@ -9,7 +9,7 @@ Each step says which machine it runs on, gives the exact commands, and says what
 | [1. Get LokaDB](#1-get-lokadb) | the `lokadb` binary or image on the proxy host |
 | [2. Check](#2-check-your-database-and-workload) | a verdict, and the list of what to review |
 | [3. The spec](#3-write-the-spec) | `spec.json`: which tables move with an organization |
-| [4. `lokadb init`](#4-lokadb-init-the-control-plane-the-keys-and-the-configs) | the control plane, the credentials key, the certificates and the configs of the proxy and the relay, in one command |
+| [4. `lokadb init`](#4-lokadb-init-the-control-plane-the-keys-and-the-configs) | the control plane, the credentials key and the configs of the proxy and the relay, in one command, in one directory |
 | [5. The proxy](#5-the-proxy) | a proxy in front of your database |
 | [6. The application](#6-point-the-application-at-the-proxy) | the application working through the proxy |
 | [7. Enable](#7-enable) | the tables partitioned by organization |
@@ -46,7 +46,7 @@ Words in capitals are yours to replace, the same everywhere. Lowercase values (`
 | `ORG_DB_HOST`, `ORG_DB` | the organization's Postgres, as its agent reaches it, and the database in it | |
 | `ORG_ADMIN` | an administrator role of the organization's database | |
 | `1` (in `-org 1`) | the organization's number: the value of its key in your organizations table (an integer). For a uuid key, see [step 8](#8-the-tunnel-the-relay-and-the-agent) | |
-| `VERSION`, `IMAGE` | the release you install, and the image that runs it (step 1) | `0.1.0`, `ghcr.io/lokadb/lokadb:0.1.0` |
+| `VERSION`, `IMAGE` | the release you install, and the image that runs it (step 1) | `0.1.1`, `ghcr.io/lokadb/lokadb:0.1.1` |
 
 The commands take their database addresses as connection strings. Where a long one is used several times, it is a shell variable:
 
@@ -173,20 +173,27 @@ If the report suggests routing declarations (relations without a foreign key, co
 
 ## 4. `lokadb init`: the control plane, the keys and the configs
 
-*On the proxy host.* LokaDB keeps a few things of its own: a small **control plane** database (the tunnel's enrolment tokens and certificates, and, sealed, the credentials of organizations' databases), a **credentials key** that seals those, a **CA** that signs the agents' certificates, and the configs of the proxy and the relay. `lokadb init` makes all of it, and it types no password or path for you:
+*On the proxy host.* LokaDB keeps a few things of its own: a small **control plane** database (the tunnel's enrolment tokens and certificates, and, sealed, the credentials of organizations' databases), a **credentials key** that seals those, and the configs of the proxy and the relay. `lokadb init` makes all of it, and it types no password or path for you.
 
-- the control plane's role (`lokadb_cp`) and database (`lokadb_cp`) on your Postgres, with a random password that goes only into `/etc/lokadb/control-plane.dsn` (mode `0600`) and is never printed;
+**One directory.** All of LokaDB's files are in one directory on the host, `/etc/lokadb` here, and **every container mounts that directory at `/etc/lokadb`**: the host path appears once in each `docker run`, as `-v /etc/lokadb:/etc/lokadb`. The files have fixed names, and the configs find each other there: `runner.json`, `spec.json`, `proxy.json`, `relay.json`, `control-plane.dsn`, `credentials.key`, `ca.crt`.
+
+`lokadb init` makes:
+
+- the control plane's role (`lokadb_cp`) and database (`lokadb_cp`) on your Postgres, with a random password that goes only into `control-plane.dsn` (mode `0600`) and is never printed;
 - `credentials.key`: 32 random bytes, mode `0600`. **Keep it safe**: without it the stored credentials cannot be opened;
-- the CA and the relay's certificate in `/etc/lokadb/relay/`, which only the relay mounts, and the public `ca.crt` in `/etc/lokadb/`, which is the file the agents, the runner and the proxy need;
 - `relay.json` (ports 7443, 7444 and 7446) and `proxy.json` (the skeleton of step 5), and the `docker run` lines for the relay and the proxy.
 
-It is idempotent: what exists is kept and never overwritten (a key and a CA least of all), so running it again is safe.
+The **CA and the relay's certificate** are made by the relay itself when it first starts (`cert_names` in `relay.json`), in a Docker volume of its own, `lokadb-relay-ca`, which only the relay mounts. So the CA's private key is never in the directory that the proxy, the runner and the agents see; the relay writes the public `ca.crt` into the directory, and that is the file they need.
+
+It is idempotent: what exists is kept and never overwritten (a key least of all), so running it again is safe.
+
+> **With LokaDB Cloud you can skip this step.** The [runner](https://docs.lokadb.com/cloud/runner/) does the same work itself when it starts, from the administrator DSN it already has, and prints the `docker run` lines. This step is for the open-source way, without the runner.
 
 **A Postgres in docker-compose** (`NET="--network myapp_default"` is set; the commands run on that network, so `pgsql` is found and no SSL is asked):
 
 ```bash
 export PGPASSWORD=$ADMIN_PW
-lokadb init -relay-host RELAY_NAME -image "$IMAGE" -network myapp_default \
+lokadb init -relay-host RELAY_NAME,lokadb-relay -image "$IMAGE" -network myapp_default \
   -admin "host=pgsql port=5432 dbname=postgres user=ADMIN_ROLE sslmode=disable"
 ```
 
@@ -200,14 +207,14 @@ lokadb init -relay-host RELAY_NAME -image "$IMAGE" \
 
 (`-admin` carries no password: `PGPASSWORD` does. The role must be allowed to create roles and databases. Without `-admin` the command makes everything else and tells you to create the role and the database, and write their DSN to `control-plane.dsn`, yourself.)
 
-`RELAY_NAME` is the name the agents will dial; it goes into the relay's certificate. Several names, comma separated, are allowed. Other flags, all in `lokadb init -h`: `-dir` (where the files go on this machine, default `/etc/lokadb`), `-container-dir` (where the containers see it), `-cp-host`, `-cp-port` and `-cp-sslmode` (the control plane's address *as the containers reach it*, when it differs from `-admin`'s), `-cp-role`, `-cp-db`, `-org-allow`.
+`RELAY_NAME` is the name the agents will dial; it goes into the relay's certificate, with any other name the relay is reached by (`lokadb-relay`, the container's name, in docker-compose). Several names, comma separated, are allowed. Other flags, all in `lokadb init -h`: `-dir` (where the files go on this machine, default `/etc/lokadb`), `-container-dir` (where the containers see it), `-cp-host`, `-cp-port` and `-cp-sslmode` (the control plane's address *as the containers reach it*, when it differs from `-admin`'s), `-cp-role`, `-cp-db`, `-org-allow`.
 
 Every line it prints says created or kept. It ends with warnings and the commands to run next:
 
 - **`org_allow`** in `relay.json` is the three private ranges. It says who may reach an organization's port on the relay. Container addresses change, so a range is the right shape; narrow it to your own network in step 8.
-- The CA key is in `/etc/lokadb/relay/ca.key`: mount that directory into the relay and nowhere else.
+- The CA key is made by the relay in the `lokadb-relay-ca` volume: do not mount that volume into anything else, and never delete it (a new CA would leave every enrolled agent without a valid certificate).
 
-**Success:** `ls -l /etc/lokadb` shows `credentials.key` and `control-plane.dsn` as `-rw-------`, `ca.crt`, `relay.json` and `proxy.json`, and a `relay/` directory. The command ended without an error.
+**Success:** `ls -l /etc/lokadb` shows `credentials.key` and `control-plane.dsn` as `-rw-------`, `relay.json` and `proxy.json`. The command ended without an error. (`ca.crt` appears when the relay starts, step 8b.)
 
 The long way, without `init`, is at [the end of this page](#appendix-the-same-without-lokadb-init).
 
@@ -225,7 +232,7 @@ The long way, without `init`, is at [the end of this page](#appendix-the-same-wi
 }
 ```
 
-Add what is yours ([the proxy's keys](configuration.md#proxy-lokadbjson)):
+Add what is yours ([the proxy's keys](configuration.md#proxy-proxyjson)):
 
 ```json
   "tls": {"cert": "/etc/lokadb/proxy.crt", "key": "/etc/lokadb/proxy.key", "require": true},
@@ -237,17 +244,16 @@ Add what is yours ([the proxy's keys](configuration.md#proxy-lokadbjson)):
 - `tls` is the proxy's certificate for the application's connections: a certificate for `PROXY_HOST` from your CA, or, for a first try with `sslmode=require` (which does not verify the certificate), a self-signed one: `openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj /CN=PROXY_HOST -keyout /etc/lokadb/proxy.key -out /etc/lokadb/proxy.crt`. Leave `tls` out only on a private network for a first try: the proxy receives the application's password in clear text to pass it on. With docker-compose, inside the project's network and with only your own containers connecting, leaving it out is reasonable.
 - `metrics_listen` serves `/healthz`, `/status` and `/metrics` to your monitoring ([status and monitoring](https://docs.lokadb.com/operations/status-and-monitoring/)). In a container write `":9187"` (`127.0.0.1` is reachable from nowhere there) and do not publish the port.
 
-Stop the recording proxy of step 2 (Ctrl-C) and start this one. From the binary (`lokadb proxy -config /etc/lokadb/proxy.json`, as a service of your init system), or from the image, with the line `init` printed:
+Stop the recording proxy of step 2 (Ctrl-C) and start this one. From the binary (`lokadb proxy`, as a service of your init system; its config defaults to `/etc/lokadb/proxy.json`), or from the image, with the line `init` printed:
 
 ```bash
 docker run -d --name lokadb-proxy --restart unless-stopped $NET -p 6432:6432 -e LOKADB_UPSTREAM \
-  -v /etc/lokadb/proxy.json:/etc/lokadb/proxy.json:ro -v /etc/lokadb/credentials.key:/etc/lokadb/credentials.key:ro \
-  -v /etc/lokadb/control-plane.dsn:/etc/lokadb/control-plane.dsn:ro "$IMAGE" proxy -config /etc/lokadb/proxy.json
+  -v /etc/lokadb:/etc/lokadb:ro "$IMAGE" proxy
 ```
 
-(Add `-v /etc/lokadb/proxy.crt:… -v /etc/lokadb/proxy.key:…` for `tls`. With `--network host` leave out `-p`; with docker-compose and an application in the same project leave it out too: the application reaches `lokadb-proxy:6432` on the network.)
+(`tls` certificates in the same directory, `/etc/lokadb/proxy.crt` and `proxy.key`, need no further mount. With `--network host` leave out `-p`; with docker-compose and an application in the same project leave it out too: the application reaches `lokadb-proxy:6432` on the network.)
 
-The proxy does not drain: when it stops, the connections of the application are cut and the application reconnects. Restart it when that is acceptable ([restarts and upgrades](https://docs.lokadb.com/operations/restarts-and-upgrades/)). `SIGHUP` re-reads credentials and drops pooled connections ([the proxy's keys](configuration.md#proxy-lokadbjson)).
+The proxy does not drain: when it stops, the connections of the application are cut and the application reconnects. Restart it when that is acceptable ([restarts and upgrades](https://docs.lokadb.com/operations/restarts-and-upgrades/)). `SIGHUP` re-reads credentials and drops pooled connections ([the proxy's keys](configuration.md#proxy-proxyjson)).
 
 **Close the other way in.** The application's role must reach the database **only** through the proxy, or LokaDB protects nothing ([limits](limits.md#installation-direct-access-to-the-cloud-database-is-closed)). The check reads the `pg_hba.conf` rules and reports any that admits the application's role from another address:
 
@@ -316,7 +322,7 @@ EOF
 
 ### 8b. The relay
 
-*On the relay's machine (it can be the proxy host).* `lokadb init` (step 4) already made the relay's certificate, the CA that signs the agents' certificates, and `/etc/lokadb/relay.json`:
+*On the relay's machine (it can be the proxy host).* `lokadb init` (step 4) already made `/etc/lokadb/relay.json`:
 
 ```json
 {
@@ -325,6 +331,7 @@ EOF
   "health_listen": ":7446",
   "cert": "/etc/lokadb/relay/relay.crt", "key": "/etc/lokadb/relay/relay.key",
   "ca": "/etc/lokadb/relay/ca.crt", "ca_key": "/etc/lokadb/relay/ca.key",
+  "cert_names": "RELAY_NAME,lokadb-relay", "ca_public": "/etc/lokadb/ca.crt",
   "control_plane": "file:/etc/lokadb/control-plane.dsn",
   "orgs": {},
   "org_allow": ["the private ranges"]
@@ -333,20 +340,21 @@ EOF
 
 ([the relay's keys](configuration.md#relay-relayjson).) Organizations get their ports later, at their move; `orgs` stays empty for now. `org_allow` is required, and `init` filled it with the private ranges: edit it to the addresses that may reach an organization's port, which are the proxy, the machine your Postgres runs on (`postgres_fdw`) and any other machine from which you run `check` or `move-org`. An entry is an IP address, a CIDR range or a host name. [The tunnel page](tunnel.md#ports) lists every port in one table: the agents reach `7443` (the tunnel) and `7444` (enrolment) from outside, so those two must be open to them, and the organizations' ports and `7446` stay inside your network.
 
-Start the relay, with the line `init` printed:
+Start the relay, with the line `init` printed. The second `-v` is the relay's own volume for the CA and its certificate: the only place the CA key is.
 
 ```bash
 docker run -d --name lokadb-relay --restart unless-stopped $NET -p 7443:7443 -p 7444:7444 \
-  -v /etc/lokadb/relay.json:/etc/lokadb/relay.json:ro -v /etc/lokadb/relay:/etc/lokadb/relay:ro \
-  -v /etc/lokadb/control-plane.dsn:/etc/lokadb/control-plane.dsn:ro "$IMAGE" relay -config /etc/lokadb/relay.json
-# or from the binary:  lokadb relay -config /etc/lokadb/relay.json
+  -v /etc/lokadb:/etc/lokadb -v lokadb-relay-ca:/etc/lokadb/relay "$IMAGE" relay
+# or from the binary:  lokadb relay      (its config defaults to /etc/lokadb/relay.json)
 ```
 
 (`init` also publishes `-p 7446:7446` in its line; leave it out unless a load balancer outside the host needs it. With `--network host` leave out every `-p`.)
 
-**Success:** `docker logs lokadb-relay` shows it listening, or, from the host, `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7446/healthz` prints `200` when 7446 is published; and the relay has created its tables in the control plane.
+At its first start the relay makes the CA and its certificate for `cert_names` (`RELAY_NAME` for the agents, `lokadb-relay` for your network), keeps what already exists in `relay/` untouched, and writes the public CA to `/etc/lokadb/ca.crt`. If you change the names later, the relay says that its certificate lacks the new one and keeps it: delete `relay.crt` and `relay.key` from the volume to have a new one issued by the same CA.
 
-**The certificates live one year, and nothing renews them.** The CA and the relay's certificate that `lokadb init` and `lokadb certs` make are valid for a year; the relay logs, at start and daily, when one of them expires in less than 30 days. The agents' own certificates are renewed by the agents (`cert_ttl`), but they are signed by this CA, so a CA that has expired takes every tunnel down. There is no command that renews the CA: make a new one in an empty directory (`lokadb certs -dir NEW_DIR -relay-host RELAY_NAME`) and follow [rotating the CA without restarts](tunnel.md#rotating-the-ca-without-restarts), which moves the relays and the agents over without a new token. Put the date a month before the expiry in your calendar. For production, use your own CA with the lifetime you choose, and read [the CA key in a separate issuing service](tunnel.md#ca-key-in-a-separate-issuing-service).
+**Success:** `/etc/lokadb/ca.crt` exists, `docker logs lokadb-relay` shows it listening, or, from the host, `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7446/healthz` prints `200` when 7446 is published; and the relay has created its tables in the control plane.
+
+**The certificates live one year, and nothing renews them.** The CA and the relay's certificate that the relay and `lokadb certs` make are valid for a year; the relay logs, at start and daily, when one of them expires in less than 30 days. The agents' own certificates are renewed by the agents (`cert_ttl`), but they are signed by this CA, so a CA that has expired takes every tunnel down. There is no command that renews the CA: make a new one in an empty directory (`lokadb certs -dir NEW_DIR -relay-host RELAY_NAME`) and follow [rotating the CA without restarts](tunnel.md#rotating-the-ca-without-restarts), which moves the relays and the agents over without a new token. Put the date a month before the expiry in your calendar. For production, use your own CA with the lifetime you choose, and read [the CA key in a separate issuing service](tunnel.md#ca-key-in-a-separate-issuing-service).
 
 ### 8c. The token and the agent
 
@@ -451,11 +459,11 @@ docker network inspect myapp_default -f '{{(index .IPAM.Config 0).Subnet}}'     
 
 **The organization's side** (steps 8a and 8c) does not change: the agent runs in the organization's network and connects out to `RELAY_NAME:7443`. The DSNs of step 9 use `host=lokadb-relay port=15001`; their `sslmode` belongs to the *organization's* Postgres, not to your Docker network.
 
-**The runner**, if you use [LokaDB Cloud](#using-lokadb-cloud), must run on this network too, or it does not find `pgsql`. Add `--network myapp_default` to its command. In its `runner.json`: `"db"` is a DSN with `host=pgsql`, `relay.cloud_host` is `lokadb-relay`, and `relay.ca` is `/etc/lokadb/ca.crt`. [The runner page](https://docs.lokadb.com/cloud/runner/) has the rest.
+**The runner**, if you use [LokaDB Cloud](#using-lokadb-cloud), must run on this network too, or it does not find `pgsql`. Add `--network myapp_default` to its command. In its `runner.json`: `"db"` is a DSN with `host=pgsql` and `"network"` is `myapp_default`; it needs no path. [The runner page](https://docs.lokadb.com/cloud/runner/) has the rest.
 
 ## Appendix: the same without `lokadb init`
 
-What `init` does, by hand. Steps 4, 5 and 8b of the page are replaced by this; the rest is the same.
+What `init` does, by hand. Steps 4, 5 and 8b of the page are replaced by this; the rest is the same. The directory stays one: `/etc/lokadb`, mounted whole.
 
 **The control plane** (as `ADMIN_ROLE`; the password is yours to make up):
 
@@ -474,15 +482,16 @@ EOF
 ( umask 077; openssl rand -hex 32 | sudo tee /etc/lokadb/credentials.key >/dev/null )
 ```
 
-**The certificates:** `lokadb certs` makes a demo CA and the relay's certificate. It writes `ca.crt` (public), `ca.key` (**secret**: whoever has it can sign an agent's certificate), `relay.crt` and `relay.key`. Keep the directory to the relay, and copy the public file out for the others:
+**The certificates:** the relay makes its own (`cert_names` in `relay.json`, step 8b). To make them by hand instead, `lokadb certs` makes a demo CA and the relay's certificate. It writes `ca.crt` (public), `ca.key` (**secret**: whoever has it can sign an agent's certificate), `relay.crt` and `relay.key`. Put them where only the relay mounts them: a directory (or volume) of its own, mounted at `/etc/lokadb/relay` in the relay alone, with the public file copied out for the others. In the shared `/etc/lokadb/relay` they would be visible to every container.
 
 ```bash
-lokadb certs -dir /etc/lokadb/relay -relay-host RELAY_NAME
-sudo cp /etc/lokadb/relay/ca.crt /etc/lokadb/ca.crt
+lokadb certs -dir /srv/lokadb-relay -relay-host RELAY_NAME,lokadb-relay
+sudo cp /srv/lokadb-relay/ca.crt /etc/lokadb/ca.crt
+# the relay: docker run … -v /etc/lokadb:/etc/lokadb -v /srv/lokadb-relay:/etc/lokadb/relay "$IMAGE" relay
 ```
 
-**The configs:** `proxy.json` as in step 5 (with `"control_plane": "file:/etc/lokadb/control-plane.dsn"`), and `relay.json` as in step 8b, with `"org_allow"` filled in. Both read the control plane from the file, so no password is written in them.
+**The configs:** `proxy.json` as in step 5 (with `"control_plane": "file:/etc/lokadb/control-plane.dsn"`), and `relay.json` as in step 8b, with `"org_allow"` filled in (leave `cert_names` out if you made the certificates by hand). Both read the control plane from the file, so no password is written in them.
 
 ## Using LokaDB Cloud
 
-[LokaDB Cloud](https://docs.lokadb.com/cloud/) puts a web panel and an API on top of the same programs; it does not replace this page. Its **runner** (`lokadb runner`) does the checks, moves and move-backs for you, and it needs exactly what steps 1 to 8 give: the proxy with `control_plane` and `credentials_key`, and the relay with the control plane. Once they run, install the runner as [the runner page](https://docs.lokadb.com/cloud/runner/) says. With a Postgres in docker-compose, the runner joins the compose network: [see above](#postgres-in-docker-docker-compose).
+[LokaDB Cloud](https://docs.lokadb.com/cloud/) puts a web panel and an API on top of the same programs; it does not replace this page. Its **runner** (`lokadb runner`) does the checks, moves and move-backs for you, and it needs what steps 4 to 8 give: the proxy with `control_plane` and `credentials_key`, and the relay with the control plane. It makes the files of step 4 itself when they are missing, so with LokaDB Cloud you can start at [the runner page](https://docs.lokadb.com/cloud/runner/) instead. With a Postgres in docker-compose, the runner joins the compose network: [see above](#postgres-in-docker-docker-compose).

@@ -493,18 +493,29 @@ func dedup(s []string) []string {
 	return out
 }
 
-// warnDowntime says how long enable without Prepare is expected to lock the tables.
-func (r *runner) warnDowntime(p *plan) error {
+// maxUnpreparedDowntime: enable without Prepare is refused (unless forced) when its tables are
+// expected to stay locked longer than this.
+const maxUnpreparedDowntime = 10 * time.Second
+
+// warnDowntime says how long enable without Prepare is expected to lock the tables, and refuses
+// it when that is longer than maxUnpreparedDowntime and allow is not set. A table never
+// analyzed has reltuples 0 or -1: its size stands in (about 100 bytes a row).
+func (r *runner) warnDowntime(p *plan, allow bool) error {
 	if len(p.names) == 0 {
 		return nil
 	}
-	n, err := r.rows(`SELECT coalesce(sum(greatest(reltuples, 0)), 0)::bigint::text FROM pg_class
-		WHERE oid = ANY (SELECT to_regclass(lokadb.rel(t)) FROM unnest($1::text[]) t)`, p.names)
+	n, err := r.rows(`SELECT coalesce(sum(greatest(c.reltuples, pg_relation_size(c.oid) / 100, 0)), 0)::bigint::text FROM pg_class c
+		WHERE c.oid = ANY (SELECT to_regclass(lokadb.rel(t)) FROM unnest($1::text[]) t)`, p.names)
 	if err != nil {
 		return err
 	}
 	var rows int64
 	fmt.Sscan(n[0][0], &rows)
+	if !allow && time.Duration(rows/rowsPerSecond)*time.Second > maxUnpreparedDowntime {
+		return fmt.Errorf("enable without -prepare would lock the %d tables of the spec for about %s (%d rows), and every statement on them would wait: "+
+			"run lokadb enable -prepare first (online, can be repeated), then enable switches in a short lock; or -allow-downtime if that downtime is acceptable",
+			len(p.names), (time.Duration(rows/rowsPerSecond) * time.Second).String(), rows)
+	}
 	if rows > 5*rowsPerSecond {
 		r.log.Warn("enable without -prepare locks its tables, and every statement on them waits, until it is done",
 			"rows", rows, "expected", (time.Duration(rows/rowsPerSecond) * time.Second).String(),
@@ -560,6 +571,7 @@ func Prepare(ctx context.Context, o EnableOptions) error {
 		return nil
 	}
 	c := &prep{ctx: ctx, conn: conn, o: o, p: p}
+	o.Log.Info("preparing online (writes go on)", "tables", len(p.todo))
 	// parents before children: a child's organization comes from its parent's refs table
 	for _, st := range p.todo {
 		if err := c.table(st); err != nil {
@@ -585,8 +597,38 @@ func Prepare(ctx context.Context, o EnableOptions) error {
 			return err
 		}
 	}
-	o.Log.Info("prepared: run lokadb enable to switch", "tables", strings.Join(p.names, ", "))
+	o.Log.Info("prepared: the tables are ready for the switch (lokadb enable)", "tables", strings.Join(p.names, ", "))
 	return nil
+}
+
+// Prepared: every table of the spec that is not enabled yet has been prepared to the end
+// (Prepare reached "ready" with it). The switch still checks the tables itself.
+func Prepared(ctx context.Context, o EnableOptions) (bool, error) {
+	conn, err := connectPlain(ctx, o.DSN)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close(ctx)
+	var ok bool
+	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		r := &runner{ctx: ctx, tx: tx, log: o.Log}
+		if err := r.exec(baseSQL); err != nil {
+			return err
+		}
+		p, err := r.plan(o.Spec)
+		if err != nil {
+			return err
+		}
+		if len(p.todo) == 0 {
+			return nil
+		}
+		ok, err = r.preparedFor(p)
+		return err
+	})
+	if err != nil {
+		return false, nil // not started, or not finished: Prepare is what to do
+	}
+	return ok, nil
 }
 
 // stage records where Prepare is with a table (total: its estimated rows, 0: unchanged).

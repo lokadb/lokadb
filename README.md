@@ -72,7 +72,7 @@ The main steps, each of which can be stopped and undone. [Install on your databa
 | 1. Check | `lokadb check -db DSN -org-table TABLE -write-spec spec.json -workload workload.json` | Reads the schema, the workload the proxy recorded (`lokadb proxy -record`, see the install page) and, later, the organization's database, and reports what blocks the move, what LokaDB does not support yet, and what will behave differently. Changes nothing. |
 | 2. Enable | `lokadb enable -db DSN -spec spec.json -owner ROLE` | Converts the chosen tables to partitioned tables in place (online preparation with `enable -prepare` for large tables). All organizations stay in the cloud. |
 | 3. Connect | `lokadb relay -config relay.json`; `lokadb token -cp DSN -org 1`, then `lokadb agent …` in the organization's network | A relay in your network and an agent in the organization's: the agent opens the only connection, outbound, with a one-time token. |
-| 4. Move | `lokadb move-org -db DSN -spec spec.json -owner ROLE -org 1 -customer DSN -customer-app DSN -proxy-config lokadb.json -direct-role ROLE` | Moves one organization to its own database while the application keeps writing. At the switch-over the reads and writes of **all** organizations on the moved tables pause — seconds for an organization tens of milliseconds away (see [Performance](docs/performance.md#moving-an-organization-under-writes)). |
+| 4. Move | `lokadb move-org -db DSN -spec spec.json -owner ROLE -org 1 -customer DSN -customer-app DSN -proxy-config proxy.json -direct-role ROLE` | Moves one organization to its own database while the application keeps writing. At the switch-over the reads and writes of **all** organizations on the moved tables pause — seconds for an organization tens of milliseconds away (see [Performance](docs/performance.md#moving-an-organization-under-writes)). |
 | 5. Profile | `lokadb org-profile -db DSN -org 1 fdw+direct` | Chooses how the proxy reaches that organization. `move-org` already picks `fdw+direct` when the proxy has the direct path's credentials; this switches later. |
 | 6. Back | `lokadb move-back -db DSN -spec spec.json -org 1 -customer DSN` | Returns the organization to the cloud; `lokadb disable` then undoes `enable`. |
 
@@ -152,7 +152,7 @@ LokaDB is under active development by a small team. The core — `check`, `enabl
 |---|---|
 | [Install on your database](docs/install.md) | from nothing to a proxy in front of your own Postgres, then the first organization moved |
 | [Quickstart](docs/quickstart.md) | run the demo locally |
-| [Configuration](docs/configuration.md) | `lokadb.json` (proxy), `relay.json`, `issuer.json`, the spec file, passwords |
+| [Configuration](docs/configuration.md) | `proxy.json` (proxy), `relay.json`, `issuer.json`, the spec file, passwords |
 | [Compatibility check](docs/check.md) | `lokadb check`: findings, verdicts, suggestions, latency forecast, JSON, CI baseline |
 | [Routing](docs/routing.md) | how the organization is found, the policy for statements without one, declarations |
 | [Profiles and cooperative mode](docs/profiles-and-cooperative-mode.md) | `fdw`, `fdw+direct`, `direct`; the application naming the organization |

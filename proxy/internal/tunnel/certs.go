@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
@@ -270,4 +271,45 @@ func writePEM(path, typ string, der []byte) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return pem.Encode(f, &pem.Block{Type: typ, Bytes: der})
+}
+
+// PrepareCerts is what cert_names and ca_public of the relay's config ask for: the CA and the
+// relay's certificate made if missing (kept if there), the public CA copied to ca_public. The
+// CA key is made here and stays in the relay's own directory.
+func (c RelayConfig) PrepareCerts(log *slog.Logger) error {
+	if c.CertNames == "" {
+		return nil
+	}
+	dir := filepath.Dir(c.CA)
+	for _, f := range [][2]string{{c.CA, "ca.crt"}, {c.CAKey, "ca.key"}, {c.Cert, "relay.crt"}, {c.Key, "relay.key"}} {
+		if f[0] == "" || filepath.Dir(f[0]) != dir || filepath.Base(f[0]) != f[1] {
+			return fmt.Errorf("relay config: cert_names makes the certificates itself, so ca, ca_key, cert and key must be ca.crt, ca.key, relay.crt and relay.key of one directory (got %q, %q, %q, %q)", c.CA, c.CAKey, c.Cert, c.Key)
+		}
+	}
+	st, err := EnsureCerts(dir, dir, c.CertNames)
+	if err != nil {
+		return fmt.Errorf("relay certificates: %w", err)
+	}
+	log.Info("relay certificates", "dir", dir, "ca", st.CA, "relay", st.Relay, "names", strings.Join(st.RelayNames, ","))
+	if st.CA == "created" {
+		log.Warn("a new CA was made: agents enrolled against another CA must enroll again", "ca", c.CA)
+	}
+	if c.CAPublic == "" {
+		return nil
+	}
+	pem, err := os.ReadFile(c.CA)
+	if err != nil {
+		return err
+	}
+	switch old, err := os.ReadFile(c.CAPublic); {
+	case err == nil && string(old) == string(pem):
+	case err == nil:
+		log.Warn("the public CA certificate differs from the relay's and is kept: delete it to have it written again", "file", c.CAPublic)
+	default:
+		if err := os.WriteFile(c.CAPublic, pem, 0o644); err != nil {
+			return fmt.Errorf("ca_public: %w", err)
+		}
+		log.Info("public CA certificate written", "file", c.CAPublic)
+	}
+	return nil
 }

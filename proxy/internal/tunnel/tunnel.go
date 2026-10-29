@@ -127,6 +127,14 @@ type RelayConfig struct {
 	Key          string `json:"key"`
 	CA           string `json:"ca"`     // CA certificate
 	CAKey        string `json:"ca_key"` // CA key: signs agents' certificate requests
+	// CertNames: the relay makes the CA and its own certificate itself when they are missing,
+	// for these names (comma separated, the first is the common name): cert, key, ca and ca_key
+	// must then be relay.crt, relay.key, ca.crt and ca.key of one directory, which only the
+	// relay mounts (the CA key never leaves it). Existing files are never replaced.
+	CertNames string `json:"cert_names"`
+	// CAPublic: where the relay copies the public ca.crt for the agent, the runner and the proxy
+	// (written once, never replaced).
+	CAPublic string `json:"ca_public"`
 	// IssuerURL: the issuing service (lokadb issuer) that signs instead, so that the relay
 	// holds no CA key; the relay authenticates to it with its own certificate.
 	IssuerURL    string `json:"issuer_url"`

@@ -282,21 +282,86 @@ shape=$(cust_sql cust_richapp "SELECT (SELECT string_agg(extname, ',' ORDER BY e
 log "lokadb init: the first install's files in one command"
 init_out=$($C run --rm -T --entrypoint sh lokadb -c '
 adm="host=cloud dbname=postgres user=postgres password=pw sslmode=disable"
-lokadb init -dir /tmp/i -relay-host relay -admin "$adm" -cp-role init_cp -cp-db init_cp -cp-sslmode disable >/tmp/o1 2>&1 || { cat /tmp/o1; exit 1; }
-sum() { sha256sum /tmp/i/ca.crt /tmp/i/relay/ca.crt /tmp/i/relay/ca.key /tmp/i/relay/relay.crt /tmp/i/credentials.key /tmp/i/control-plane.dsn /tmp/i/relay.json | sha256sum; }
+lokadb init -dir /tmp/i -container-dir /tmp/i -relay-host relay -admin "$adm" -cp-role init_cp -cp-db init_cp -cp-sslmode disable >/tmp/o1 2>&1 || { cat /tmp/o1; exit 1; }
+sum() { sha256sum /tmp/i/credentials.key /tmp/i/control-plane.dsn /tmp/i/relay.json | sha256sum; }
 before=$(sum)
-lokadb init -dir /tmp/i -relay-host relay -admin "$adm" -cp-role init_cp -cp-db init_cp -cp-sslmode disable >/tmp/o2 2>&1 || { cat /tmp/o2; exit 1; }
+lokadb init -dir /tmp/i -container-dir /tmp/i -relay-host relay -admin "$adm" -cp-role init_cp -cp-db init_cp -cp-sslmode disable >/tmp/o2 2>&1 || { cat /tmp/o2; exit 1; }
 [ "$before" = "$(sum)" ] || { echo "a second run rewrote a file"; exit 1; }
 pw=$(grep -o "password=.[^ ]*" /tmp/i/control-plane.dsn | head -1 | cut -d"'"'"'" -f2)
 { [ ${#pw} -ge 24 ] && ! grep -qF "$pw" /tmp/o1 /tmp/o2; } || { echo "the password is short or printed"; exit 1; }
-[ ! -e /tmp/i/ca.key ] && [ "$(stat -c %a /tmp/i/relay/ca.key)" = 600 ] && [ "$(stat -c %a /tmp/i/control-plane.dsn)" = 600 ] || { echo "modes or the CA key place"; exit 1; }
+[ ! -e /tmp/i/ca.key ] && [ ! -e /tmp/i/ca.crt ] && [ ! -e /tmp/i/relay ] && [ "$(stat -c %a /tmp/i/credentials.key)" = 600 ] && [ "$(stat -c %a /tmp/i/control-plane.dsn)" = 600 ] || { echo "modes or the CA key place"; exit 1; }
 lokadb token -cp file:/tmp/i/control-plane.dsn -org 9 >/dev/null 2>&1 || { echo "the generated control-plane.dsn does not work"; exit 1; }
+timeout 6 lokadb relay -config /tmp/i/relay.json >/tmp/relay.log 2>&1
+{ [ -s /tmp/i/ca.crt ] && [ "$(stat -c %a /tmp/i/relay/ca.key)" = 600 ] && [ ! -e /tmp/i/ca.key ] && cmp -s /tmp/i/ca.crt /tmp/i/relay/ca.crt; } || { echo "the relay did not make its CA and write ca.crt"; cat /tmp/relay.log; exit 1; }
 echo INIT-OK' 2>&1)
 case "$init_out" in
-  *INIT-OK*) echo "PASS  lokadb init made the control plane role and database (random password, not printed), the keys (0600, the CA key apart), the certificates and configs; a second run changed nothing; the generated DSN works (lokadb token -cp file:...)" ;;
+  *INIT-OK*) echo "PASS  lokadb init made the control plane role and database (random password, not printed), the key (0600) and the configs, no CA key in the directory; the relay started on them makes the CA and its certificate in relay/ (key 0600) and writes the public ca.crt; a second run changed nothing; the generated DSN works (lokadb token -cp file:...)" ;;
   *) fail "lokadb init: $init_out" ;;
 esac
 cloud_sql postgres "DROP DATABASE IF EXISTS init_cp WITH (FORCE)" >/dev/null 2>&1; cloud_sql postgres "DROP ROLE IF EXISTS init_cp" >/dev/null 2>&1
+
+log "runner: one directory, nothing to create by hand"
+dir_out=$($C run --rm -T --entrypoint sh lokadb -c '
+mkdir -p /etc/lokadb
+cat > /etc/lokadb/runner.json <<J
+{"service": "https://api.invalid", "db": "env:LOKADB_DB", "owner": "app", "network": "e2e_default", "relay": {"agent": "relay.example.com:7443"}}
+J
+echo "{\"listen\": \":1\"}" > /etc/lokadb/spec.json
+export LOKADB_DB="host=cloud dbname=postgres user=postgres password=pw sslmode=disable"
+lokadb runner -check >/tmp/d0 2>&1
+grep -q "WOULD CREATE" /tmp/d0 && [ ! -e /etc/lokadb/proxy.json ] || { echo "the dry check made files or did not say what it would"; cat /tmp/d0; exit 1; }
+grep -q "no such file" /tmp/d0 && grep "no such file" /tmp/d0 | grep -qv "ca.crt" && { echo "the dry check reports a file it would make as missing"; cat /tmp/d0; exit 1; }
+lokadb runner -check -create >/tmp/d1 2>&1
+for f in credentials.key control-plane.dsn relay.json proxy.json; do [ -e /etc/lokadb/$f ] || { echo "$f not made"; cat /tmp/d1; exit 1; }; done
+[ ! -e /etc/lokadb/ca.key ] && [ ! -e /etc/lokadb/relay ] || { echo "a CA key in the shared directory"; exit 1; }
+grep -q "cert_names.*relay.example.com,lokadb-relay" /etc/lokadb/relay.json || { echo "relay.json lacks the relay names"; exit 1; }
+grep -q -- "-v HOSTDIR:/etc/lokadb\|-v /.*:/etc/lokadb" /tmp/d1 && grep -q -- "--network e2e_default" /tmp/d1 || { echo "no docker run lines"; cat /tmp/d1; exit 1; }
+pw=$(grep -o "password=.[^ ]*" /etc/lokadb/control-plane.dsn | head -1 | cut -d"'"'"'" -f2)
+{ [ ${#pw} -ge 24 ] && ! grep -qF "$pw" /tmp/d1; } || { echo "the password is short or printed"; exit 1; }
+sum() { sha256sum /etc/lokadb/credentials.key /etc/lokadb/control-plane.dsn /etc/lokadb/relay.json /etc/lokadb/proxy.json | sha256sum; }
+before=$(sum)
+lokadb runner -check -create >/tmp/d2 2>&1
+[ "$before" = "$(sum)" ] || { echo "a second run rewrote a file"; exit 1; }
+lokadb token -cp file:/etc/lokadb/control-plane.dsn -org 9 >/dev/null 2>&1 || { echo "the made control-plane.dsn does not work"; exit 1; }
+echo DIR-OK' 2>&1)
+case "$dir_out" in
+  *DIR-OK*) echo "PASS  runner -check says what it would create and makes nothing; -create (what the runner does at start) makes control-plane.dsn (role and database, random password not printed), credentials.key, relay.json, proxy.json in /etc/lokadb, no CA key there, prints the docker run lines; a second run changed nothing" ;;
+  *) fail "runner one directory: $dir_out" ;;
+esac
+cloud_sql postgres "DROP DATABASE IF EXISTS lokadb_cp WITH (FORCE)" >/dev/null 2>&1; cloud_sql postgres "DROP ROLE IF EXISTS lokadb_cp" >/dev/null 2>&1
+
+log "enable of a big table under writes: refused unprepared; prepare online, then a short switch"
+cloud_sql postgres "DROP DATABASE IF EXISTS bigdb WITH (FORCE)" >/dev/null 2>&1; cloud_sql postgres "CREATE DATABASE bigdb" >/dev/null
+cloud_sql bigdb "CREATE TABLE orgs (id int PRIMARY KEY); INSERT INTO orgs SELECT g FROM generate_series(1, 50) g;
+  CREATE TABLE items (id bigserial PRIMARY KEY, org_id int NOT NULL REFERENCES orgs(id), payload text);
+  INSERT INTO items (org_id, payload) SELECT 1 + g % 50, repeat('x', 60) FROM generate_series(1, 1000000) g; ANALYZE items" >/dev/null
+$C exec -T cloud sh -c 'cat > /tmp/w.sql <<EOF
+INSERT INTO items (org_id, payload) VALUES (1 + (random() * 49)::int, '"'"'w'"'"');
+UPDATE items SET payload = '"'"'u'"'"' WHERE id = 1 + (random() * 999999)::int;
+EOF
+rm -f /tmp/pgb.out'
+$C exec -T -d cloud sh -c 'pgbench -U postgres -n -c 8 -j 2 -T 1500 -P 1 -f /tmp/w.sql bigdb > /tmp/pgb.out 2>&1'
+sleep 5
+big_out=$($C run --rm -T --entrypoint sh lokadb -c '
+D="host=cloud dbname=bigdb user=postgres password=pw sslmode=disable"
+echo "{\"tables\": [{\"name\": \"items\", \"tenant_column\": \"org_id\"}]}" > /tmp/spec.json
+if lokadb enable -db "$D" -spec /tmp/spec.json -owner postgres >/tmp/e0 2>&1; then echo "an unprepared enable of a million rows was not refused"; exit 1; fi
+grep -q "enable -prepare" /tmp/e0 || { echo "the refusal does not say what to do"; cat /tmp/e0; exit 1; }
+lokadb enable -prepare -lock-timeout 2s -db "$D" -spec /tmp/spec.json -owner postgres >/tmp/e1 2>&1 || { echo "prepare failed"; cat /tmp/e1; exit 1; }
+lokadb enable -prepare -lock-timeout 2s -db "$D" -spec /tmp/spec.json -owner postgres >/tmp/e1b 2>&1 || { echo "a second prepare failed"; cat /tmp/e1b; exit 1; }
+lokadb enable -lock-timeout 2s -db "$D" -spec /tmp/spec.json -owner postgres >/tmp/e2 2>&1 || { echo "the switch failed"; cat /tmp/e2; exit 1; }
+echo BIG-OK' 2>&1)
+sleep 3
+$C exec -T cloud pkill -INT pgbench >/dev/null 2>&1; sleep 2
+zero=$($C exec -T cloud awk '/^progress:/ { t = $2 + 0; if (t > 2 && $4 + 0 == 0) z++ } END { print z + 0 }' /tmp/pgb.out | tr -d '\r')
+secs=$($C exec -T cloud awk '/^progress:/ { n++ } END { print n + 0 }' /tmp/pgb.out | tr -d '\r')
+case "$big_out" in
+  *BIG-OK*) [ "$zero" -le 3 ] && [ "$secs" -gt 20 ] \
+      && echo "PASS  a million-row table: the unprepared enable is refused (and says to prepare), prepare ran under 8 writers, a second prepare can be run again, the switch followed; writes stopped for $zero of $secs seconds (lock_timeout 2s)" \
+      || fail "enable under writes: $zero seconds with 0 writes of $secs" ;;
+  *) fail "enable of a big table: $big_out" ;;
+esac
+cloud_sql postgres "DROP DATABASE IF EXISTS bigdb WITH (FORCE)" >/dev/null 2>&1
 fi # part core
 
 # block 6: what the application sees of its schema (public), to compare before enable and after

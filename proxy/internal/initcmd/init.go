@@ -28,6 +28,7 @@ import (
 
 type Options struct {
 	Dir          string // where the files are written (on this machine)
+	HostDir      string // Dir on the host, for the printed docker run lines (default Dir)
 	ContainerDir string // where the containers see Dir (paths in the configs); default /etc/lokadb
 	RelayHost    string // the name (or IP) agents dial the relay by; several, comma separated
 	AdminDSN     string // creates the control plane role and database; "" leaves that to you
@@ -40,6 +41,7 @@ type Options struct {
 	Network      string // docker network for the printed docker run lines ("" none)
 	Image        string // default ghcr.io/lokadb/lokadb:latest
 	Out          io.Writer
+	NoNext       bool // do not print the warnings and the docker run lines
 }
 
 const (
@@ -72,38 +74,26 @@ func Run(ctx context.Context, o Options) error {
 		o.OrgAllow = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
 	}
 	say := func(format string, a ...any) { fmt.Fprintf(o.Out, format+"\n", a...) }
-	// the layout the docs describe: relay/ holds the CA (certificate and key) and the relay's
-	// certificate and only the relay mounts it; the public ca.crt is copied to Dir for the agent,
-	// the runner and the proxy
-	relayDir := filepath.Join(o.Dir, "relay")
 	if err := os.MkdirAll(o.Dir, 0o755); err != nil {
 		return err
 	}
 
-	// 1. the CA and the relay certificate; the CA key apart from what containers mount
-	if err := os.MkdirAll(relayDir, 0o700); err != nil { // the CA key is in it
-		return err
-	}
-	st, err := tunnel.EnsureCerts(relayDir, relayDir, o.RelayHost)
-	if err != nil {
-		return fmt.Errorf("init: certificates: %w", err)
-	}
-	say("CA key            %s  (%s; only the relay mounts relay/)", filepath.Join(relayDir, "ca.key"), st.CA)
-	say("relay certificate %s  (%s; names: %s)", filepath.Join(relayDir, "relay.crt"), st.Relay, strings.Join(st.RelayNames, ", "))
-	pub := filepath.Join(o.Dir, "ca.crt")
-	caPEM, err := os.ReadFile(filepath.Join(relayDir, "ca.crt"))
-	if err != nil {
-		return err
-	}
-	if old, err := os.ReadFile(pub); err == nil && string(old) == string(caPEM) {
-		say("CA certificate    %s  (kept; the public copy for the agent, the runner and the proxy)", pub)
-	} else if err == nil {
-		say("CA certificate    %s  (kept, but it is NOT the CA of relay/ca.crt: copy relay/ca.crt over it if relay/ is the CA you mean)", pub)
-	} else {
-		if err := writeNew(pub, caPEM, 0o644); err != nil {
-			return err
+	// 1. the CA and the relay certificate are the relay's own business: it makes them at its first
+	// start (relay.json: cert_names) in a directory only it mounts, so the CA key is never in the
+	// directory that the runner, the proxy and the agent mount. A CA that an earlier init or
+	// lokadb certs made in relay/ is kept, and its public certificate copied beside the configs.
+	if pem, err := os.ReadFile(filepath.Join(o.Dir, "relay", "ca.crt")); err == nil {
+		pub := filepath.Join(o.Dir, "ca.crt")
+		if _, err := os.Stat(pub); err != nil {
+			if err := writeNew(pub, pem, 0o644); err != nil {
+				return err
+			}
+			say("CA certificate    %s  (created: the public copy of relay/ca.crt)", pub)
+		} else {
+			say("CA certificate    %s  (kept)", pub)
 		}
-		say("CA certificate    %s  (created: the public copy for the agent, the runner and the proxy)", pub)
+	} else {
+		say("CA, relay cert   made by the relay at its first start, in %s/relay (names: %s); the relay writes the public ca.crt to %s", o.ContainerDir, o.RelayHost, o.ContainerDir)
 	}
 
 	// 2. the credentials key
@@ -136,7 +126,7 @@ func Run(ctx context.Context, o Options) error {
 	relayJSON := orderedJSON{
 		{"listen", ":7443"}, {"enroll_listen", ":7444"}, {"health_listen", ":7446"},
 		{"cert", cd + "/relay/relay.crt"}, {"key", cd + "/relay/relay.key"}, {"ca", cd + "/relay/ca.crt"},
-		{"ca_key", cd + "/relay/ca.key"}, {"control_plane", "file:" + cd + "/control-plane.dsn"},
+		{"ca_key", cd + "/relay/ca.key"}, {"cert_names", o.RelayHost}, {"ca_public", cd + "/ca.crt"}, {"control_plane", "file:" + cd + "/control-plane.dsn"},
 		{"orgs", relayCfg}, {"org_allow", o.OrgAllow},
 	}
 	proxyJSON := orderedJSON{
@@ -163,33 +153,49 @@ func Run(ctx context.Context, o Options) error {
 		say("%-17s %s  (created)", f.name, path)
 	}
 
-	// 5. what to run
+	// 5. what to run (not for an embedded runner: the relay and the proxy are its own process)
+	if o.NoNext {
+		return nil
+	}
+	say("\nWarnings\n"+
+		"  - org_allow in relay.json is %s: the addresses that may reach an organization's port on the relay. A CIDR is fine (container addresses change); narrow it to your proxy's network.\n"+
+		"  - The CA key is made by the relay in its own volume (%s), which the runner, the proxy and the agent never mount.",
+		strings.Join(o.OrgAllow, ", "), RelayVolume)
+	say("\nNext\n%s", RunLines(o))
+	return nil
+}
+
+// RelayVolume: the docker volume the relay keeps its CA and certificate in; the one place the
+// CA key is.
+const RelayVolume = "lokadb-relay-ca"
+
+// RunLines: the docker run lines of the relay and the proxy for the files of o.Dir. The host path
+// is written once in each, as the only -v of the directory every container mounts at
+// /etc/lokadb.
+func RunLines(o Options) string {
+	if o.ContainerDir == "" {
+		o.ContainerDir = defaultContainerDir
+	}
+	if o.Image == "" {
+		o.Image = defaultImage
+	}
+	host := o.HostDir
+	if host == "" {
+		host = o.Dir
+	}
 	net := ""
 	if o.Network != "" {
 		net = " --network " + o.Network
 	}
-	d := o.Dir
-	say(`
-Warnings
-  - %s holds the CA key: mount it into the relay only. The agent, the runner and the proxy need %s only (the public CA certificate).
-  - org_allow in relay.json is %s: the addresses that may reach an organization's port on the relay. A CIDR is fine (container addresses change); narrow it to your proxy's network.
+	cd := o.ContainerDir
+	return fmt.Sprintf(`  export LOKADB_UPSTREAM='host=<the database> port=5432 dbname=<db> user=<role> password=<...> sslmode=<...>'   # the proxy's upstream, never stored in a file
 
-Next
-  export LOKADB_UPSTREAM='host=<cloud database> port=5432 dbname=<db> user=<role> password=<...> sslmode=<...>'   # the proxy's upstream, not stored in a file
+  docker run -d --name lokadb-relay%[1]s --restart unless-stopped -p 7443:7443 -p 7444:7444 -p 7446:7446     -v %[2]s:%[3]s -v %[4]s:%[3]s/relay %[5]s relay -config %[3]s/relay.json
 
-  docker run -d --name lokadb-relay%s -p 7443:7443 -p 7444:7444 -p 7446:7446 \
-    -v %s/relay.json:%s/relay.json:ro -v %s/relay:%s/relay:ro \
-    -v %s/control-plane.dsn:%s/control-plane.dsn:ro %s relay -config %s/relay.json
-
-  docker run -d --name lokadb-proxy%s -p 6432:6432 -e LOKADB_UPSTREAM \
-    -v %s/proxy.json:%s/proxy.json:ro -v %s/credentials.key:%s/credentials.key:ro \
-    -v %s/control-plane.dsn:%s/control-plane.dsn:ro %s proxy -config %s/proxy.json
+  docker run -d --name lokadb-proxy%[1]s --restart unless-stopped -p 6432:6432 -e LOKADB_UPSTREAM     -v %[2]s:%[3]s:ro %[5]s proxy -config %[3]s/proxy.json
 
   Ports: 7443 agents (mutual TLS), 7444 enrollment, 7446 health and /sessions /status.`,
-		d+"/relay", d+"/ca.crt", strings.Join(o.OrgAllow, ", "),
-		net, d, cd, d, cd, d, cd, o.Image, cd,
-		net, d, cd, d, cd, d, cd, o.Image, cd)
-	return nil
+		net, host, cd, RelayVolume, o.Image)
 }
 
 // writeNew creates path and refuses to replace it.

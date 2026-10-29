@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/pem"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -97,4 +99,67 @@ func TestOrgAllowTakesCIDRs(t *testing.T) {
 			t.Errorf("%s: allowed %v, want %v", ip, got, want)
 		}
 	}
+}
+
+// TestPrepareCerts: with cert_names the relay makes its CA and certificate itself, writes the
+// public CA once, and keeps what exists on the next start.
+func TestPrepareCerts(t *testing.T) {
+	dir := t.TempDir()
+	pub := filepath.Join(dir, "shared", "ca.crt")
+	if err := os.MkdirAll(filepath.Dir(pub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rd := filepath.Join(dir, "relay")
+	cfg := RelayConfig{CertNames: "relay.example.com,lokadb-relay", CA: rd + "/ca.crt", CAKey: rd + "/ca.key", Cert: rd + "/relay.crt", Key: rd + "/relay.key", CAPublic: pub}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := cfg.PrepareCerts(log); err != nil {
+		t.Fatal(err)
+	}
+	ca, key := mustRead(t, rd+"/ca.crt"), mustRead(t, rd+"/ca.key")
+	if string(mustRead(t, pub)) != string(ca) {
+		t.Fatal("the public CA is not the relay's")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(pub), "ca.key")); err == nil {
+		t.Fatal("the CA key is in the shared directory")
+	}
+	if names, _ := certNames(rd + "/relay.crt"); strings.Join(names, ",") != "relay.example.com,lokadb-relay" {
+		t.Fatalf("names: %v", names)
+	}
+	if err := cfg.PrepareCerts(log); err != nil {
+		t.Fatal(err)
+	}
+	if string(mustRead(t, rd+"/ca.crt")) != string(ca) || string(mustRead(t, rd+"/ca.key")) != string(key) {
+		t.Fatal("the CA was replaced on a second start")
+	}
+	// a public copy that differs is kept
+	if err := os.WriteFile(pub, []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.PrepareCerts(log); err != nil || string(mustRead(t, pub)) != "other" {
+		t.Fatalf("a different public CA: %v", err)
+	}
+	// the CA certificate without its key: no new CA
+	os.Remove(rd + "/ca.key")
+	if err := cfg.PrepareCerts(log); err == nil || !strings.Contains(err.Error(), "CA key is lost") {
+		t.Fatalf("lost key: %v", err)
+	}
+	// files that are not one directory's
+	bad := cfg
+	bad.Cert = filepath.Join(dir, "elsewhere", "relay.crt")
+	if err := bad.PrepareCerts(log); err == nil {
+		t.Fatal("scattered files accepted")
+	}
+	// no cert_names: nothing is made
+	if err := (RelayConfig{}).PrepareCerts(log); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustRead(t *testing.T, p string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

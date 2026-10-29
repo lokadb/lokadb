@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -39,7 +40,27 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// Config: runner.json. Every secret may be "env:NAME" or "file:PATH".
+// Dir: the one directory of the install, mounted at the same place in every LokaDB container
+// (docker run -v HOSTDIR:/etc/lokadb): runner.json, spec.json, proxy.json, control-plane.dsn,
+// credentials.key, ca.crt, relay.json. The files of runner.json default to their names here;
+// the path fields below stay as overrides. A variable for the tests.
+var Dir = dirFromEnv()
+
+// dirFromEnv: LOKADB_DIR where the program runs without Docker (a systemd service of its own user has
+// no /etc/lokadb to write to); /etc/lokadb, the path every container mounts, otherwise.
+func dirFromEnv() string {
+	if d := os.Getenv("LOKADB_DIR"); d != "" {
+		return filepath.Clean(d)
+	}
+	return "/etc/lokadb"
+}
+
+// RelayName: the relay container's name, and so its host name on a Docker network; the default
+// of relay.cloud_host.
+const RelayName = "lokadb-relay"
+
+// Config: runner.json. Every secret may be "env:NAME" or "file:PATH". Paths default to the
+// files of Dir.
 type Config struct {
 	// Service: LokaDB Cloud's API (https://api.lokadb.com).
 	Service string `json:"service"`
@@ -52,14 +73,25 @@ type Config struct {
 	Token string `json:"token"`
 
 	DB    string `json:"db"`    // admin DSN of the SaaS database (as lokadb move-org -db)
-	Spec  string `json:"spec"`  // the spec enable was given
+	Spec  string `json:"spec"`  // the spec enable was given (default Dir/spec.json)
 	Owner string `json:"owner"` // the role owning the application's tables (move-org -owner)
-	// ProxyConfig: the proxy's config, optional: check reads its fanout policy (without it, the
-	// default: reject); control_plane and credentials_key default from it.
+	// ProxyConfig: the proxy's config (default Dir/proxy.json): check reads its fanout policy;
+	// control_plane and credentials_key default from it. Naming control_plane or
+	// credentials_key here instead leaves the proxy config out (default none).
 	ProxyConfig       string `json:"proxy_config"`
 	ControlPlane      string `json:"control_plane"`
 	CredentialsKey    string `json:"credentials_key"`
 	CredentialsKeyOld string `json:"credentials_key_old"`
+
+	// Network: the Docker network the relay and the proxy run on, for the docker run lines the
+	// runner prints ("host" for --network host; "" none). Image: their image (default the
+	// runner's own release).
+	Network string `json:"network"`
+	Image   string `json:"image"`
+
+	// Embedded: one process with the relay and the proxy, files made in the volume, the rest
+	// from the panel's settings (set when there is no runner.json and the paste gave a token).
+	Embedded bool `json:"embedded"`
 
 	Relay Relay `json:"relay"`
 	// ProxyStatus: the proxies' status URLs (block 8), forwarded in the status snapshots.
@@ -75,6 +107,12 @@ type Config struct {
 	dbRaw, cpRaw, keyRaw, keyOldRaw string
 	spec                            admin.Spec
 	proxyCfg                        *proxy.Config
+	found                           *Found               // the application's database and role, from its environment
+	adminDSN                        string               // the DSN the runner works as (the application's, or LOKADB_DB's)
+	settings                        *cloudproto.Settings // the panel's, as last applied
+	info                            map[string]string
+	Log                             *slog.Logger
+	willMake                        map[string]bool // files a dry Provision found it would create
 }
 
 type Relay struct {
@@ -82,8 +120,9 @@ type Relay struct {
 	Agent      string `json:"agent"`
 	Enroll     string `json:"enroll"`      // default: the first agent host, port 7444
 	ServerName string `json:"server_name"` // name in the relay certificates
-	CA         string `json:"ca"`          // the CA certificate file (public), handed to installers
-	// CloudHost: the relay as this network reaches an organization's port (the proxy, move-org).
+	CA         string `json:"ca"`          // the CA certificate file (public), handed to installers (default Dir/ca.crt)
+	// CloudHost: the relay as this network reaches an organization's port (the proxy, move-org);
+	// default lokadb-relay, the name of the relay container the runner's docker run line gives.
 	CloudHost string `json:"cloud_host"`
 	PortMin   int    `json:"port_min"` // organizations' ports (default 15000-15999)
 	PortMax   int    `json:"port_max"`
@@ -98,7 +137,7 @@ type Relay struct {
 func LoadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w%s", err, whereOnHost(path))
+		return nil, fmt.Errorf("%w%s%s", err, whereOnHost(path), noDirHint(path))
 	}
 	var c Config
 	if err := json.Unmarshal(b, &c); err != nil {
@@ -124,12 +163,38 @@ func (c *Config) finish() error {
 	if c.Token == "" {
 		c.Token = os.Getenv("LOKADB_RUNNER_TOKEN")
 	}
+	if c.Token == "" {
+		c.Token = os.Getenv("LOKADB_TOKEN")
+	}
 	if c.Token, err = Secret(c.Token); err != nil {
 		return err
 	}
 	c.Service = strings.TrimRight(c.Service, "/")
 	if c.Service == "" {
 		return fmt.Errorf("runner config: service required (the LokaDB API, https://api.lokadb.com)")
+	}
+	if c.Spec == "" {
+		c.Spec = filepath.Join(Dir, "spec.json")
+	}
+	if c.Relay.CA == "" {
+		c.Relay.CA = filepath.Join(Dir, "ca.crt")
+	}
+	if c.Relay.CloudHost == "" {
+		c.Relay.CloudHost = RelayName
+		if c.Embedded {
+			// the compose service of the paste: the container's own name; the program on a plain host
+			// (a systemd service) reaches its own relay at the loopback
+			c.Relay.CloudHost = "127.0.0.1"
+			if _, _, inContainer := hostPath("/"); inContainer {
+				c.Relay.CloudHost = "lokadb"
+			}
+		}
+	}
+	switch {
+	case c.ProxyConfig == "" && c.ControlPlane == "" && c.CredentialsKey == "":
+		c.ProxyConfig = filepath.Join(Dir, "proxy.json")
+	case c.ProxyConfig == "" && c.CredentialsKey == "":
+		c.CredentialsKey = filepath.Join(Dir, "credentials.key")
 	}
 	c.dbRaw, c.cpRaw, c.keyRaw, c.keyOldRaw = c.DB, c.ControlPlane, c.CredentialsKey, c.CredentialsKeyOld
 	if c.State == "" {
@@ -183,12 +248,19 @@ func (c *Config) Check(ctx context.Context) []cloudproto.Problem {
 		{"spec", c.Spec, "the path of your spec.json: the tables that move with an organization"},
 		{"owner", c.Owner, "the role that owns your application's tables (as lokadb move-org -owner; psql's \\dt shows it)"},
 		{"relay.agent", c.Relay.Agent, "host:port of your relay that your customers' agents connect to (port 7443)"},
-		{"relay.ca", c.Relay.CA, "the path of your relay's CA certificate, the public ca.crt of lokadb certs, copied out of /etc/lokadb/relay to /etc/lokadb/ca.crt (install step 8b)"},
+		{"relay.ca", c.Relay.CA, "the path of your relay's public CA certificate (default /etc/lokadb/ca.crt, which the relay writes)"},
 		{"relay.cloud_host", c.Relay.CloudHost, "how this network reaches the relay's organization ports"},
 	} {
-		if kv[1] == "" {
+		if kv[1] == "" && c.Embedded {
+			add(kv[0], kv[0]+": not chosen yet", "enter it on the panel's setup page, step 1: "+kv[2])
+		} else if kv[1] == "" {
 			add(kv[0], kv[0]+": not set in runner.json", "set it: "+kv[2])
 		}
+	}
+	// an embedded runner with no relay address yet: that is the one thing to do now (the panel's
+	// step 1); the files, the relay and the proxy follow from it, so they are not problems of their own
+	if c.Embedded && c.Relay.Agent == "" {
+		return humanize(out)
 	}
 	if c.Relay.PortMin <= 0 || c.Relay.PortMax < c.Relay.PortMin || c.Relay.PortMax > 65535 {
 		add("relay.port_min", "relay.port_min/port_max: not a range of ports", "two ports, port_min up to port_max (default 15000-15999)")
@@ -199,7 +271,9 @@ func (c *Config) Check(ctx context.Context) []cloudproto.Problem {
 		add("db", "db: "+err.Error(), "pass it to the container: export LOKADB_DB='host=… dbname=… user=… password=…', then docker run -e LOKADB_DB …")
 		dbOK = false
 	}
-	if c.Spec != "" {
+	// an embedded runner takes the tables from the panel (step 2), which needs the runner ready: a
+	// missing spec is no problem there, the jobs that need it say so
+	if _, noSpec := os.Stat(c.Spec); c.Spec != "" && !(c.Embedded && noSpec != nil && len(c.spec.Tables) == 0) {
 		var sp admin.Spec
 		if file(c.readFile("spec", c.Spec, &sp, fmt.Sprintf(specFix, c.Spec))) {
 			c.spec = sp.Sorted()
@@ -211,7 +285,7 @@ func (c *Config) Check(ctx context.Context) []cloudproto.Problem {
 	c.proxyCfg = nil
 	if c.ProxyConfig != "" {
 		pc := &proxy.Config{}
-		if file(c.readFile("proxy_config", c.ProxyConfig, pc, "your LokaDB proxy's config, the file you start the proxy with (install step 5: /etc/lokadb/lokadb.json)")) {
+		if file(c.readFile("proxy_config", c.ProxyConfig, pc, c.proxyFix())) {
 			c.proxyCfg = pc
 			if cp == "" {
 				cp = pc.ControlPlane
@@ -249,20 +323,23 @@ func (c *Config) Check(ctx context.Context) []cloudproto.Problem {
 	c.CredentialsKey, c.CredentialsKeyOld = key, keyOld
 	for _, kv := range [][2]string{{"credentials_key", key}, {"credentials_key_old", keyOld}} {
 		if kv[1] != "" {
-			file(c.readFile(kv[0], kv[1], nil, "the key file of install step 4 (/etc/lokadb/credentials.key), the same your proxy uses: the runner reads it at this path"))
+			file(c.readFile(kv[0], kv[1], nil, "the credentials key, /etc/lokadb/credentials.key in the LokaDB directory, the same file your proxy uses"))
 		}
 	}
 	if c.Relay.CA != "" {
-		file(c.readFile("relay.ca", c.Relay.CA, nil, "your relay's public CA: ca.crt of lokadb certs, copied out of /etc/lokadb/relay to /etc/lokadb/ca.crt (install step 8b)"))
+		file(c.readFile("relay.ca", c.Relay.CA, nil, c.caFix()))
 	}
 	if h := c.Relay.CloudHost; h != "" {
 		if p := resolveProblem(ctx, "relay.cloud_host", "the relay", h); p != nil {
+			if h == RelayName {
+				p.Fix = "the relay container is named " + RelayName + ": start it on this network with the docker run line the runner printed (docker logs lokadb-runner; the panel shows it too), then the name resolves. " + p.Fix
+			}
 			out = append(out, *p)
 		}
 	}
 	if dbOK {
 		if err := pingErr(ctx, c.DB); err != nil {
-			out = append(out, connProblem("db", "the SaaS database", c.DB, err))
+			out = append(out, c.embeddedDBProblem(connProblem("db", "the SaaS database", c.DB, err), err))
 		}
 	}
 	if cpOK {
@@ -270,7 +347,7 @@ func (c *Config) Check(ctx context.Context) []cloudproto.Problem {
 			out = append(out, connProblem("control_plane", "the control plane", c.ControlPlane, err))
 		}
 	}
-	return out
+	return humanize(out)
 }
 
 // dockerFix: what to do when a host name does not resolve in the runner's container.
@@ -349,6 +426,9 @@ func connProblem(key, what, dsn string, err error) cloudproto.Problem {
 // readFile reads a file the config names (as JSON into v, unless v is nil); a failure is a
 // problem that names the path in the container and on the host.
 func (c *Config) readFile(key, path string, v any, fix string) *cloudproto.Problem {
+	if c.willMake[path] {
+		return nil
+	}
 	b, err := os.ReadFile(path)
 	if err == nil {
 		if v == nil {
@@ -375,7 +455,7 @@ func (c *Config) readFile(key, path string, v any, fix string) *cloudproto.Probl
 			p.Message += fmt.Sprintf(" (in the container; on the host: %s)", host)
 		} else {
 			p.Message += fmt.Sprintf(" (in the container, where %s is not mounted from the host)", filepath.Dir(path))
-			p.Fix = fmt.Sprintf("keep the file under /etc/lokadb on the host (docker run -v /etc/lokadb:/etc/lokadb:ro), or add -v %s:%s:ro to docker run. %s", path, path, fix)
+			p.Fix = fmt.Sprintf("keep the file in the LokaDB directory (docker run -v HOSTDIR:%s, the one mount of every LokaDB container), or add -v %s:%s:ro to docker run. %s", Dir, path, path, fix)
 		}
 	}
 	return p
@@ -475,4 +555,64 @@ func Secret(v string) (string, error) {
 		return strings.TrimSpace(string(b)), err
 	}
 	return v, nil
+}
+
+// noDirHint: for a runner.json that is not there, the mount that puts the LokaDB directory in.
+func noDirHint(path string) string {
+	if filepath.Dir(path) != Dir {
+		return ""
+	}
+	return fmt.Sprintf(". Every LokaDB container mounts the directory with the configs once: docker run -v HOSTDIR:%s … (HOSTDIR holds %s)", Dir, filepath.Base(path))
+}
+
+// proxyFix: what to do about a proxy config that is not there.
+func (c *Config) proxyFix() string {
+	if c.ProxyConfig == filepath.Join(Dir, "proxy.json") {
+		return "your LokaDB proxy's config, proxy.json in the LokaDB directory. The runner makes it, with the control plane and the key, when the directory is mounted without :ro and LOKADB_DB may create roles and databases; or run lokadb init -dir HOSTDIR"
+	}
+	return "your LokaDB proxy's config, the file you start the proxy with"
+}
+
+// caFix: what to do about a relay CA that is not there.
+func (c *Config) caFix() string {
+	if c.Relay.CA == filepath.Join(Dir, "ca.crt") {
+		return "the relay makes the CA and writes the public ca.crt here when it starts: start it with the docker run line the runner printed (docker logs lokadb-runner; the panel shows it too)"
+	}
+	return "your relay's public CA certificate"
+}
+
+// plain: how a problem's subject is named in its first line, in words and not in runner.json's
+// keys (the panel and the log show Message first).
+var plain = map[string]string{
+	"db":                  "Your database",
+	"spec":                "The list of tables to move (spec.json)",
+	"owner":               "The owner role",
+	"relay.agent":         "The relay's public address",
+	"relay.ca":            "The relay's public certificate (ca.crt)",
+	"relay.cloud_host":    "The relay's name on your network",
+	"relay.port_min":      "The relay's port range",
+	"proxy_config":        "The proxy's settings (proxy.json)",
+	"control_plane":       "The control plane database",
+	"credentials_key":     "The key for stored passwords (credentials.key)",
+	"credentials_key_old": "The old key for stored passwords",
+}
+
+// humanize replaces the leading "key: " of each message by its plain name; a message that
+// already says what it is about ("the control plane at host …") only gets a capital.
+func humanize(ps []cloudproto.Problem) []cloudproto.Problem {
+	for i, p := range ps {
+		rest, ok := strings.CutPrefix(p.Message, p.Key+": ")
+		if !ok {
+			continue
+		}
+		name := plain[p.Key]
+		switch {
+		case name == "":
+		case strings.HasPrefix(rest, "the "):
+			ps[i].Message = strings.ToUpper(rest[:1]) + rest[1:]
+		default:
+			ps[i].Message = name + ": " + rest
+		}
+	}
+	return ps
 }

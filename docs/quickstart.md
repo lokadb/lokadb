@@ -33,7 +33,7 @@ The cloud network and the customer network share nothing: the cloud containers c
 2. wait until cust_demo answers through relay:15001
 3. lokadb check  -db … -spec /quickstart/spec.json -customer … -customer-app … -org 1
 4. lokadb enable -db … -spec /quickstart/spec.json -owner app        documents and document_versions become partitioned (no row copy)
-5. lokadb move-org -org 1 -customer … -customer-app … -proxy-config lokadb.json -direct-role lokadb_dml
+5. lokadb move-org -org 1 -customer … -customer-app … -proxy-config proxy.json -direct-role lokadb_dml
 6. counts: organization 1's rows in the cloud (0) and in its database; organization 2's in the cloud
 ```
 
@@ -92,7 +92,7 @@ Clean up with `docker compose -f quickstart/compose.yml down -v`. It removes the
 |---|---|
 | `-customer` and `-customer-app` | two connections to the customer database: an administrator that prepares it, and a plain role that will **own** the moved tables and is what the cloud uses afterwards. See [Moving organizations](moving.md) |
 | `-owner app` | the role that owns the application's tables in the cloud database |
-| `-proxy-config lokadb.json`, `-direct-role lokadb_dml` | the proxy's config and the role it uses for the direct path (profile `fdw+direct`), see [Profiles and cooperative mode](profiles-and-cooperative-mode.md) |
+| `-proxy-config proxy.json`, `-direct-role lokadb_dml` | the proxy's config and the role it uses for the direct path (profile `fdw+direct`), see [Profiles and cooperative mode](profiles-and-cooperative-mode.md) |
 | trigger mode | the move copies rows and captures changes with triggers instead of logical replication, see [Moving organizations](moving.md) |
 | `fanout` policy `reject` | a statement that names no organization is refused instead of being sent to every database, see [Routing](routing.md) |
 | `org_allow` | which addresses may use an organization's endpoint on the relay, see [The tunnel](tunnel.md) |
@@ -107,7 +107,7 @@ Clean up with `docker compose -f quickstart/compose.yml down -v`. It removes the
 | `quickstart/compose.yml` | the services above; `LOKADB_SRC` points at the LokaDB Go module (default `../proxy`) |
 | `quickstart/initdb/cloud.sql`, `customer.sql` | the two databases as they are before LokaDB |
 | `quickstart/spec.json` | which tables move with an organization |
-| `quickstart/lokadb.json` | the proxy: upstream, the direct-path credentials of organization 1, `fanout` policy `reject` |
+| `quickstart/proxy.json` | the proxy: upstream, the direct-path credentials of organization 1, `fanout` policy `reject` |
 | `quickstart/relay.json` | the relay: certificates, registry, organization 1's endpoint, `org_allow` (the cloud network) |
 | `quickstart/init.sh`, `demo.sh` | the steps above and the writing application |
 

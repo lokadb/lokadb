@@ -12,7 +12,7 @@ The proxy resolves table names as the cloud does: a qualified name by its key, a
 
 The row key is what `__refs` uses to find a row's organization: a single-column primary key, or `id`.
 
-- **Types:** `smallint`, `integer`, `bigint`, `uuid`, and `text` / `varchar` with a deterministic collation. Other types (`numeric`, `char(n)`, `citext`, `bytea`, dates, enums, domains, non-deterministic collations) are reported by `check` (`id_type`) and refused by `enable`.
+- **Types:** `smallint`, `integer`, `bigint`, `uuid`, and `text` / `varchar` with a deterministic collation, and `character(n)` (Laravel's `ulid()`; trailing spaces do not count). Other types (`numeric`, `citext`, `bytea`, dates, enums, domains, non-deterministic collations) are reported by `check` (`id_type`) and refused by `enable`.
 - **Keys from a default** (`gen_random_uuid()`, `uuidv7()`, an extension function) are computed in the cloud on insert; `RETURNING id` returns them.
 - **The proxy** reads key values in any form Postgres accepts (`'A0EEBC99-…'`, `'{a0eebc99…}'`, without dashes), as a literal or a parameter in text or binary (pgx sends `uuid` as 16 bytes), as `uuid[]` or `IN (…)`. A value that does not read as a key names no organization.
 - Moving, moving back, `disable`, `refs-diff` / `refs-sync` and the direct path work with every supported key type.

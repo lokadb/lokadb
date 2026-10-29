@@ -21,6 +21,9 @@ const (
 	KindLookup      = "org.lookup"
 	KindCheck       = "check"
 	KindEnable      = "enable"
+	KindDisable     = "disable"
+	KindOrgTables   = "org.tables"
+	KindOrgList     = "org.list"
 	KindPrepare     = "agent.prepare"
 	KindCredentials = "credentials.store"
 	KindMove        = "move"
@@ -30,14 +33,14 @@ const (
 )
 
 // Kinds: what a runner of this version does, as capabilities.
-var Kinds = []string{KindInventory + "@1", KindLookup + "@1", KindCheck + "@1", KindEnable + "@1", KindPrepare + "@1",
+var Kinds = []string{KindInventory + "@1", KindLookup + "@1", KindCheck + "@1", KindEnable + "@1", KindDisable + "@1", KindOrgTables + "@1", KindOrgList + "@1", KindPrepare + "@1",
 	KindCredentials + "@1", KindMove + "@1", KindMoveBack + "@1", KindRelease + "@1", KindExtSync + "@1"}
 
 // Exclusive: kinds of which a runner runs one at a time (the open module's own locks say so too).
-var Exclusive = map[string]bool{KindMove: true, KindMoveBack: true, KindEnable: true}
+var Exclusive = map[string]bool{KindMove: true, KindMoveBack: true, KindEnable: true, KindDisable: true}
 
 // Idempotent: kinds the service may hand out again when their lease expired.
-var Idempotent = map[string]bool{KindInventory: true, KindLookup: true, KindCheck: true, KindPrepare: true,
+var Idempotent = map[string]bool{KindOrgTables: true, KindOrgList: true, KindInventory: true, KindLookup: true, KindCheck: true, KindPrepare: true,
 	KindCredentials: true, KindRelease: true, KindExtSync: true}
 
 // --- registration and polling ---
@@ -65,6 +68,9 @@ type PollRequest struct {
 	// Problems: what keeps the runner from working (its config, a file, a database); while
 	// there are any, it takes no jobs and sends no inventory. None: ready.
 	Problems []Problem `json:"problems,omitempty"`
+	// Info: facts for the setup wizard, nothing secret ("database": "pgsql:5432/app as forge",
+	// "relay": "up", "proxy": "up", ...): what the runner found and started.
+	Info map[string]string `json:"info,omitempty"`
 }
 
 // Problem: one thing to fix on the runner's side, in words for the panel.
@@ -77,14 +83,56 @@ type Problem struct {
 	Mounted *bool  `json:"mounted,omitempty"` // in a container: whether Path is under a mount from the host
 }
 
+// Settings: what the person chose in the panel, sent with every poll answer (the service keeps
+// them for the account; nothing secret is in them). An embedded runner (one container with the
+// relay and the proxy, no files typed by hand) takes them as its config.
+type Settings struct {
+	RelayPublic string `json:"relay_public,omitempty"` // host:port the customers' agents dial (7443)
+	RelayName   string `json:"relay_name,omitempty"`   // the relay's name inside the runner's network (default lokadb)
+	Owner       string `json:"owner,omitempty"`        // the role that owns the application's tables
+	// Spec: the tables that move with an organization, built from the person's choice.
+	Spec json.RawMessage `json:"spec,omitempty"`
+	// OnlyKeys: the organizations list shows keys only, no names (strict SaaSes).
+	OnlyKeys bool `json:"only_keys,omitempty"`
+	// OrgTable and OrgKey: the table of customers and its key column (what the person chose in
+	// step 2); OrgLabel: the column to show as the customer's name (found by name when empty).
+	OrgTable string `json:"org_table,omitempty"`
+	OrgKey   string `json:"org_key,omitempty"`
+	OrgLabel string `json:"org_label,omitempty"`
+}
+
+// OrgListArgs asks for a page of the customers table, read live; the service keeps nothing of
+// the answer but the job's result for a few minutes.
+type OrgListArgs struct {
+	Q    string `json:"q,omitempty"`
+	Page int    `json:"page,omitempty"`
+	Mode string `json:"mode,omitempty"` // "smallest": the customers with the fewest rows
+}
+
+type OrgListResult struct {
+	Orgs        []OrgListItem `json:"orgs"`
+	Total       int64         `json:"total"`
+	Page        int           `json:"page"`
+	PageSize    int           `json:"page_size"`
+	LabelColumn string        `json:"label_column,omitempty"`
+	OnlyKeys    bool          `json:"only_keys,omitempty"`
+}
+
+type OrgListItem struct {
+	Key   string `json:"key"`
+	Label string `json:"label,omitempty"`
+	Rows  int64  `json:"rows"` // in the spec's root tables
+}
+
 type PollResponse struct {
-	Jobs            []Job    `json:"jobs"`
-	Cancel          []string `json:"cancel"`
-	WantInventory   bool     `json:"want_inventory"`
-	StatusIntervalS int      `json:"status_interval_s"`
-	LatestVersion   string   `json:"latest_version,omitempty"`
-	MinVersion      string   `json:"min_version,omitempty"`
-	RunnerImage     string   `json:"runner_image,omitempty"` // the latest release's image, tag included
+	Settings        *Settings `json:"settings,omitempty"`
+	Jobs            []Job     `json:"jobs"`
+	Cancel          []string  `json:"cancel"`
+	WantInventory   bool      `json:"want_inventory"`
+	StatusIntervalS int       `json:"status_interval_s"`
+	LatestVersion   string    `json:"latest_version,omitempty"`
+	MinVersion      string    `json:"min_version,omitempty"`
+	RunnerImage     string    `json:"runner_image,omitempty"` // the latest release's image, tag included
 }
 
 type Job struct {
@@ -169,6 +217,45 @@ type CheckResult struct {
 
 type EnableArgs struct {
 	ConfirmDB string `json:"confirm_db"` // the SaaS database's name, as the person typed it
+}
+
+// OrgTablesArgs asks which table is "one customer of yours". Without OrgTable: the candidates,
+// best first, each with the number of tables it would split. With it: the tables that would move
+// with an organization taken from that table, and the spec to enable.
+type OrgTablesArgs struct {
+	OrgTable string `json:"org_table,omitempty"`
+}
+
+// OrgTablesResult: Candidates is a list of check.OrgCandidate, Discovery a check.Discovery (the
+// spec and for every table why), kept as JSON so this package stays free of the check module.
+type OrgTablesResult struct {
+	Candidates json.RawMessage `json:"candidates,omitempty"`
+	Discovery  json.RawMessage `json:"discovery,omitempty"`
+}
+
+// DisableArgs: turn LokaDB off again (while no organization is moved). DryRun changes nothing and
+// answers with a DisableResult: what would be copied and for how long the tables would wait.
+type DisableArgs struct {
+	ConfirmDB string `json:"confirm_db"`
+	DryRun    bool   `json:"dry_run"`
+}
+
+// DisableResult is the answer of a dry run.
+type DisableResult struct {
+	// Rows: rows outside the default partition (in partitions of organizations, or of no
+	// organization); disable copies them back, and the tables wait meanwhile. NoOrgRows: of those,
+	// the rows of no organization: on a database where the organizations table was chosen wrong,
+	// these are most of the rows.
+	Tables    []DisableTable `json:"tables"`
+	Rows      int64          `json:"rows_to_copy"`
+	Pause     string         `json:"expected_pause"`
+	NoOrgRows int64          `json:"rows_without_organization"`
+}
+
+type DisableTable struct {
+	Name      string `json:"name"`
+	Rows      int64  `json:"rows_to_copy"`
+	NoOrgRows int64  `json:"rows_without_organization"`
 }
 
 type PrepareArgs struct {

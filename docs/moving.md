@@ -50,7 +50,7 @@ Where the tables go:
 ```bash
 lokadb move-org -db env:CLOUD_DSN -spec spec.json -owner app -org 1 \
   -customer env:CUST_ADMIN_DSN -customer-app env:CUST_APP_DSN \
-  -proxy-config lokadb.json -direct-role lokadb_dml
+  -proxy-config proxy.json -direct-role lokadb_dml
 ```
 
 | Flag | Meaning |

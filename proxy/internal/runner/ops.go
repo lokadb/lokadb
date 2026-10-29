@@ -60,6 +60,9 @@ func (o *Ops) Lookup(ctx context.Context, a cloudproto.LookupArgs) (cloudproto.L
 // Check: lokadb check; with an organization, against its database as the cloud's role there
 // (the role move-org will use: what it cannot do is what the move could not).
 func (o *Ops) Check(ctx context.Context, a cloudproto.CheckArgs) (cloudproto.CheckResult, error) {
+	if len(o.Cfg.spec.Tables) == 0 {
+		return cloudproto.CheckResult{}, errNoSpec
+	}
 	spec := o.Cfg.spec
 	opt := check.Options{DSN: o.Cfg.DB, Spec: &spec, Proxy: o.Cfg.proxyCfg, ProxyFile: o.Cfg.ProxyConfig}
 	if a.Org != 0 {
@@ -80,8 +83,14 @@ func (o *Ops) Check(ctx context.Context, a cloudproto.CheckArgs) (cloudproto.Che
 	return cloudproto.CheckResult{Exit: rep.ExitCode(), Verdict: string(rep.Verdict), Report: b}, nil
 }
 
+// errNoSpec: a job that works on the chosen tables ran before any were chosen.
+var errNoSpec = &cloudproto.JobError{Code: "no_spec", Message: "No tables are chosen yet to move with a customer.", Hint: "choose them in step 2 of the setup (what is one customer of yours)"}
+
 // Enable: lokadb enable of the spec, when the person typed this database's name.
 func (o *Ops) Enable(ctx context.Context, a cloudproto.EnableArgs, log *slog.Logger) error {
+	if len(o.Cfg.spec.Tables) == 0 {
+		return errNoSpec
+	}
 	db, err := o.cloudDB()
 	if err != nil {
 		return err
@@ -89,7 +98,89 @@ func (o *Ops) Enable(ctx context.Context, a cloudproto.EnableArgs, log *slog.Log
 	if a.ConfirmDB != db {
 		return &cloudproto.JobError{Code: "confirm", Message: fmt.Sprintf("enable: the database typed (%q) is not this runner's (%q)", a.ConfirmDB, db)}
 	}
-	return admin.EnableWith(ctx, admin.EnableOptions{DSN: o.Cfg.DB, Spec: o.Cfg.spec, Owner: o.Cfg.Owner, LockTimeout: o.Cfg.LockTimeout.Duration, Attempts: 5, Log: log})
+	// Two phases, always: the preparation does the work that takes time, online (the tables keep
+	// working, no long lock; resumable, and a no-op when it is done); the switch then only
+	// changes the catalog, each wait for a lock limited by lock_timeout and tried again. The
+	// phase is in every progress line, so the panel can show where it is.
+	opt := admin.EnableOptions{DSN: o.Cfg.DB, Spec: o.Cfg.spec, Owner: o.Cfg.Owner, LockTimeout: o.Cfg.LockTimeout.Duration, Attempts: 5, Log: log.With("phase", "prepare")}
+	prepare := func() error {
+		log.Info("Enable, phase 1 of 2: preparing the tables while the application runs", "phase", "prepare")
+		opt.Log = log.With("phase", "prepare")
+		if err := admin.Prepare(ctx, opt); err != nil {
+			return fmt.Errorf("preparing the tables (nothing was switched, and running enable again resumes where this stopped): %w", err)
+		}
+		return nil
+	}
+	// Already prepared to the end: no second pass over the rows (a pass can take hours); the
+	// switch checks the tables itself, and if the application's writes left them out of step it
+	// asks for the preparation again, once.
+	if done, _ := admin.Prepared(ctx, opt); !done {
+		if err := prepare(); err != nil {
+			return err
+		}
+	} else {
+		log.Info("Enable, phase 1 of 2: the tables are already prepared", "phase", "prepare")
+	}
+	opt.Log = log.With("phase", "switch")
+	log.Info("Enable, phase 2 of 2: switching the tables (a short lock)", "phase", "switch")
+	err = admin.EnableWith(ctx, opt)
+	if err != nil && strings.Contains(err.Error(), "enable -prepare") {
+		log.Warn("the tables changed since they were prepared: preparing them again", "why", err.Error())
+		if err := prepare(); err != nil {
+			return err
+		}
+		opt.Log = log.With("phase", "switch")
+		err = admin.EnableWith(ctx, opt)
+	}
+	return err
+}
+
+// OrgTables: the candidates for the organizations table, or the spec for the chosen one (read-only).
+func (o *Ops) OrgTables(ctx context.Context, a cloudproto.OrgTablesArgs) (cloudproto.OrgTablesResult, error) {
+	var res cloudproto.OrgTablesResult
+	conn, err := ownsql.Connect(ctx, o.Cfg.DB)
+	if err != nil {
+		return res, err
+	}
+	defer conn.Close(context.Background())
+	if a.OrgTable == "" {
+		c, err := check.OrgTableCandidates(ctx, conn)
+		if err != nil {
+			return res, err
+		}
+		if c == nil {
+			c = []check.OrgCandidate{}
+		}
+		res.Candidates, err = json.Marshal(c)
+		return res, err
+	}
+	d, err := check.DiscoverByOrgTable(ctx, conn, a.OrgTable)
+	if err != nil {
+		return res, err
+	}
+	res.Discovery, err = json.Marshal(d)
+	return res, err
+}
+
+// Disable: turn LokaDB off again, when the person typed this database's name and no
+// organization is in its own database. DryRun counts what would be copied and changes nothing.
+func (o *Ops) Disable(ctx context.Context, a cloudproto.DisableArgs, log *slog.Logger) (cloudproto.DisableResult, error) {
+	var res cloudproto.DisableResult
+	db, err := o.cloudDB()
+	if err != nil {
+		return res, err
+	}
+	if a.ConfirmDB != db {
+		return res, &cloudproto.JobError{Code: "confirm", Message: fmt.Sprintf("disable: the database typed (%q) is not this runner's (%q)", a.ConfirmDB, db)}
+	}
+	var rep admin.DisableReport
+	err = admin.Disable(ctx, admin.DisableOptions{CloudDSN: o.Cfg.DB, Spec: o.Cfg.spec, DryRun: a.DryRun, Report: &rep,
+		LockTimeout: o.Cfg.LockTimeout.Duration, Attempts: 5, Log: log})
+	res.Rows, res.NoOrgRows, res.Pause = rep.Rows, rep.NoOrgRows, rep.Pause
+	for _, t := range rep.Tables {
+		res.Tables = append(res.Tables, cloudproto.DisableTable{Name: t.Name, Rows: t.Rows, NoOrgRows: t.NoOrgRows})
+	}
+	return res, err
 }
 
 // Prepare: what the installer needs: the relay port (lokadb org-endpoint), an enrollment

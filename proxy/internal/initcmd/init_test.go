@@ -25,40 +25,35 @@ func read(t *testing.T, path string) []byte {
 	return b
 }
 
-// Without an admin DSN: the certificates, the key and the two configs are made, the CA key is
-// apart from what containers mount, nothing is overwritten on a second run, and the configs
-// load as what the relay and the proxy read.
+// Without an admin DSN: the key and the two configs are made, no CA key is made here (the relay
+// makes the CA in its own volume), nothing is overwritten on a second run, and the configs load
+// as what the relay and the proxy read.
 func TestInitWithoutDatabase(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	o := Options{Dir: dir, RelayHost: "relay,10.1.2.3", Out: &out}
+	o := Options{Dir: dir, HostDir: "/srv/lokadb", RelayHost: "relay,10.1.2.3", Network: "app_default", Out: &out}
 	if err := Run(context.Background(), o); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"ca.crt", "relay/ca.crt", "relay/relay.crt", "relay/relay.key", "relay/ca.key", "credentials.key", "relay.json", "proxy.json"} {
+	for _, f := range []string{"credentials.key", "relay.json", "proxy.json"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, "ca.key")); err == nil {
-		t.Fatal("ca.key is in the directory the agent, the runner and the proxy mount")
-	}
-	if string(read(t, filepath.Join(dir, "ca.crt"))) != string(read(t, filepath.Join(dir, "relay", "ca.crt"))) {
-		t.Fatal("the public ca.crt is not the CA of relay/")
-	}
-	for f, want := range map[string]os.FileMode{"relay/ca.key": 0o600, "credentials.key": 0o600, "relay/relay.key": 0o600, "ca.crt": 0o644} {
-		if fi, _ := os.Stat(filepath.Join(dir, f)); fi.Mode().Perm() != want {
-			t.Errorf("%s has mode %v", f, fi.Mode().Perm())
+	for _, f := range []string{"ca.key", "ca.crt", "relay"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			t.Fatalf("%s was made in the directory every container mounts", f)
 		}
 	}
-	if fi, _ := os.Stat(filepath.Join(dir, "relay")); fi.Mode().Perm() != 0o700 {
-		t.Errorf("relay/ has mode %v", fi.Mode().Perm())
+	if fi, _ := os.Stat(filepath.Join(dir, "credentials.key")); fi.Mode().Perm() != 0o600 {
+		t.Errorf("credentials.key has mode %v", fi.Mode().Perm())
 	}
 	var rc tunnel.RelayConfig
 	if err := json.Unmarshal(read(t, filepath.Join(dir, "relay.json")), &rc); err != nil {
 		t.Fatal(err)
 	}
-	if rc.CA != "/etc/lokadb/relay/ca.crt" || rc.CAKey != "/etc/lokadb/relay/ca.key" || rc.Cert != "/etc/lokadb/relay/relay.crt" || rc.ControlPlane != "file:/etc/lokadb/control-plane.dsn" || rc.HealthListen != ":7446" {
+	if rc.CA != "/etc/lokadb/relay/ca.crt" || rc.CAKey != "/etc/lokadb/relay/ca.key" || rc.Cert != "/etc/lokadb/relay/relay.crt" ||
+		rc.CertNames != "relay,10.1.2.3" || rc.CAPublic != "/etc/lokadb/ca.crt" || rc.ControlPlane != "file:/etc/lokadb/control-plane.dsn" || rc.HealthListen != ":7446" {
 		t.Fatalf("relay.json: %+v", rc)
 	}
 	var pc proxy.Config
@@ -68,13 +63,19 @@ func TestInitWithoutDatabase(t *testing.T) {
 	if pc.Upstream != "env:LOKADB_UPSTREAM" || pc.CredentialsKey != "/etc/lokadb/credentials.key" || pc.ControlPlane != "file:/etc/lokadb/control-plane.dsn" {
 		t.Fatalf("proxy.json: %+v", pc)
 	}
-	if !strings.Contains(out.String(), "not made: give -admin") || !strings.Contains(out.String(), "docker run -d --name lokadb-relay") {
+	// the docker run lines: the host path once per line, the relay's own volume for the CA key
+	if !strings.Contains(out.String(), "not made: give -admin") ||
+		!strings.Contains(out.String(), "-v /srv/lokadb:/etc/lokadb -v "+RelayVolume+":/etc/lokadb/relay") ||
+		!strings.Contains(out.String(), "-v /srv/lokadb:/etc/lokadb:ro") || !strings.Contains(out.String(), "--network app_default") {
 		t.Fatalf("output:\n%s", out.String())
+	}
+	if n := strings.Count(out.String(), "/srv/lokadb"); n != 2 {
+		t.Fatalf("the host path appears %d times, want once per container line:\n%s", n, out.String())
 	}
 
 	// a second run keeps every file byte for byte
 	before := map[string][]byte{}
-	for _, f := range []string{"ca.crt", "relay/ca.crt", "relay/ca.key", "relay/relay.crt", "credentials.key", "relay.json", "proxy.json"} {
+	for _, f := range []string{"credentials.key", "relay.json", "proxy.json"} {
 		before[f] = read(t, filepath.Join(dir, f))
 	}
 	out.Reset()
@@ -86,38 +87,29 @@ func TestInitWithoutDatabase(t *testing.T) {
 			t.Errorf("%s was rewritten", f)
 		}
 	}
-	if strings.Count(out.String(), "(kept") < 6 {
+	if strings.Count(out.String(), "(kept") < 3 {
 		t.Fatalf("second run:\n%s", out.String())
-	}
-
-	// another relay name: the certificate is kept, and the output says it lacks the name
-	out.Reset()
-	o.RelayHost = "other.example.com"
-	if err := Run(context.Background(), o); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "kept, but it is for") || !bytes.Equal(read(t, filepath.Join(dir, "relay/relay.crt")), before["relay/relay.crt"]) {
-		t.Fatalf("a changed relay name:\n%s", out.String())
 	}
 }
 
-// The CA key lost: a new CA is not made.
-func TestInitRefusesANewCA(t *testing.T) {
+// A CA that an earlier init or lokadb certs made in relay/ is kept, its public certificate
+// copied beside the configs once.
+func TestInitKeepsAnEarlierCA(t *testing.T) {
 	dir := t.TempDir()
-	o := Options{Dir: dir, RelayHost: "relay"}
-	if err := Run(context.Background(), o); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "relay"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(dir, "relay", "ca.key")); err != nil {
+	if _, err := tunnel.EnsureCerts(filepath.Join(dir, "relay"), filepath.Join(dir, "relay"), "relay"); err != nil {
 		t.Fatal(err)
 	}
-	before := read(t, filepath.Join(dir, "relay", "ca.crt"))
-	err := Run(context.Background(), o)
-	if err == nil || !strings.Contains(err.Error(), "CA key is lost") {
-		t.Fatalf("init after the CA key is lost: %v", err)
+	if err := Run(context.Background(), Options{Dir: dir, RelayHost: "relay"}); err != nil {
+		t.Fatal(err)
 	}
-	if !bytes.Equal(read(t, filepath.Join(dir, "relay", "ca.crt")), before) {
-		t.Fatal("the CA certificate was replaced")
+	if !bytes.Equal(read(t, filepath.Join(dir, "ca.crt")), read(t, filepath.Join(dir, "relay", "ca.crt"))) {
+		t.Fatal("the public ca.crt is not the CA of relay/")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ca.key")); err == nil {
+		t.Fatal("the CA key is beside the configs")
 	}
 }
 

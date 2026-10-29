@@ -73,8 +73,8 @@ services:
 
   proxy:
     <<: *lokadb
-    command: ["proxy", "-config", "/etc/lokadb.json"]
-    volumes: ["./lokadb.json:/etc/lokadb.json:ro"]
+    command: ["proxy", "-config", "/etc/proxy.json"]
+    volumes: ["./proxy.json:/etc/proxy.json:ro"]
     ports: ["6432:6432"]
     depends_on: {certs: {condition: service_completed_successfully}, cloud: {condition: service_healthy}}
     networks: [cloudnet]

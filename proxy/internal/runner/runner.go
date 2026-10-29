@@ -49,6 +49,9 @@ type Runner struct {
 	ops     *Ops
 	started time.Time
 
+	settings   *cloudproto.Settings // the panel's, from the last poll answer
+	recheckNow chan struct{}        // new settings: check again now, not in 30 s
+
 	mu        sync.Mutex
 	st        State
 	running   map[string]*job
@@ -103,6 +106,7 @@ func (r *Runner) saveState() error {
 // run left, then polls for jobs and sends status until ctx ends.
 func (r *Runner) Run(ctx context.Context) error {
 	r.started = time.Now()
+	r.recheckNow = make(chan struct{}, 1)
 	r.running = map[string]*job{}
 	r.interval = 30 * time.Second
 	if r.HTTP == nil {
@@ -168,7 +172,10 @@ func (r *Runner) Run(ctx context.Context) error {
 // its problems, so the panel shows them; it logs each once and checks again every Recheck.
 func (r *Runner) untilReady(ctx context.Context) error {
 	if r.check == nil {
-		r.check = r.Cfg.Check
+		r.check = func(ctx context.Context) []cloudproto.Problem {
+			r.applySettings()
+			return r.Cfg.Prepare(ctx)
+		}
 	}
 	probs := r.check(ctx)
 	if len(probs) == 0 {
@@ -205,6 +212,7 @@ func (r *Runner) untilReady(ctx context.Context) error {
 		case err := <-polled:
 			return err
 		case <-time.After(r.Recheck):
+		case <-r.recheckNow:
 		}
 		probs = r.check(ctx)
 	}
@@ -306,7 +314,7 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 	told := "" // the newer release already logged
 	for ctx.Err() == nil {
 		r.mu.Lock()
-		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}, Problems: r.problems}
+		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}, Problems: r.problems, Info: r.Cfg.Info()}
 		ready := r.ops != nil
 		for id := range r.running {
 			req.Running = append(req.Running, id)
@@ -333,6 +341,28 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 			continue
 		}
 		backoff = time.Second
+		if res.Settings != nil {
+			r.mu.Lock()
+			changed := r.settings == nil || !settingsEqual(r.settings, res.Settings)
+			r.settings = res.Settings
+			r.mu.Unlock()
+			if changed && r.recheckNow != nil {
+				select {
+				case r.recheckNow <- struct{}{}:
+				default:
+				}
+			}
+			// a runner that is working takes the new settings now (the tables the person chose, a
+			// new relay address), unless a job is running on the old ones: that job's start applies them
+			if changed {
+				r.mu.Lock()
+				idle := r.ops != nil && len(r.running) == 0
+				r.mu.Unlock()
+				if idle {
+					r.applySettings()
+				}
+			}
+		}
 		if res.StatusIntervalS > 0 {
 			r.mu.Lock()
 			r.interval = time.Duration(res.StatusIntervalS) * time.Second
@@ -405,6 +435,9 @@ func (r *Runner) runJob(ctx, jctx context.Context, rj *job) {
 	flushed := make(chan struct{})
 	go func() { defer close(flushed); r.flushEvents(ctx, rj, done) }()
 	log.Info("job started", "attempt", rj.j.Attempt)
+	if rj.j.Kind == cloudproto.KindCheck || rj.j.Kind == cloudproto.KindEnable || rj.j.Kind == cloudproto.KindDisable {
+		r.applySettings() // the tables the person chose since the last job
+	}
 	res := r.do(jctx, rj, eventLogger(rj.ev, log))
 	close(done)
 	<-flushed
@@ -427,7 +460,7 @@ func (r *Runner) runJob(ctx, jctx context.Context, rj *job) {
 	}
 	_ = r.saveState()
 	r.mu.Unlock()
-	if rj.j.Kind == cloudproto.KindMove || rj.j.Kind == cloudproto.KindMoveBack || rj.j.Kind == cloudproto.KindEnable {
+	if rj.j.Kind == cloudproto.KindMove || rj.j.Kind == cloudproto.KindMoveBack || rj.j.Kind == cloudproto.KindEnable || rj.j.Kind == cloudproto.KindDisable {
 		if inv, err := r.ops.Inventory(ctx); err == nil {
 			r.sendInventory(ctx, &inv)
 		}
@@ -467,6 +500,21 @@ func (r *Runner) do(ctx context.Context, rj *job, log *slog.Logger) cloudproto.R
 		var a cloudproto.EnableArgs
 		if decode(&a) {
 			err = r.ops.Enable(ctx, a, log)
+		}
+	case cloudproto.KindOrgList:
+		var a cloudproto.OrgListArgs
+		if decode(&a) {
+			out, err = r.ops.OrgList(ctx, a)
+		}
+	case cloudproto.KindOrgTables:
+		var a cloudproto.OrgTablesArgs
+		if decode(&a) {
+			out, err = r.ops.OrgTables(ctx, a)
+		}
+	case cloudproto.KindDisable:
+		var a cloudproto.DisableArgs
+		if decode(&a) {
+			out, err = r.ops.Disable(ctx, a, log)
 		}
 	case cloudproto.KindPrepare:
 		var a cloudproto.PrepareArgs

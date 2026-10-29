@@ -1028,6 +1028,9 @@ type EnableOptions struct {
 	LockTimeout time.Duration
 	Attempts    int
 	Log         *slog.Logger
+	// AllowDowntime: enable without Prepare of tables that take longer than maxUnpreparedDowntime
+	// to convert under the lock is refused unless this is set (the CLI's -allow-downtime).
+	AllowDowntime bool
 }
 
 // EnableWith is Enable. After Prepare it is the switch: it checks what Prepare made, and the
@@ -1061,6 +1064,11 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 	}
 	defer tx.Rollback(ctx)
 	r := &runner{ctx: ctx, tx: tx, log: log}
+	// no statement of enable, prepared or not, waits for a lock without a limit: past it the
+	// transaction ends, gives back every lock it holds, and EnableWith tries again
+	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", o.LockTimeout.Milliseconds())); err != nil {
+		return err
+	}
 
 	if err := r.exec(baseSQL); err != nil {
 		return err
@@ -1082,7 +1090,7 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 		if err := r.verifyPrepared(p, fks, o.LockTimeout); err != nil {
 			return err
 		}
-	} else if err := r.warnDowntime(p); err != nil {
+	} else if err := r.warnDowntime(p, o.AllowDowntime); err != nil {
 		return err
 	}
 	for _, l := range lookups {

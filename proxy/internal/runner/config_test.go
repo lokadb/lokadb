@@ -47,7 +47,7 @@ func TestLoadConfig(t *testing.T) {
 			t.Errorf("no fix for %q", p.Message)
 		}
 	}
-	for _, k := range []string{"db", "spec", "owner", "control_plane", "relay.agent", "relay.ca", "relay.cloud_host"} {
+	for _, k := range []string{"db", "spec", "owner", "proxy_config", "relay.agent", "relay.ca", "relay.cloud_host"} {
 		if !keys[k] {
 			t.Errorf("no problem for the missing %s: %v", k, keys)
 		}
@@ -145,7 +145,7 @@ func TestNoProxyConfig(t *testing.T) {
 	if p := byKey["credentials_key"]; !strings.Contains(p.Message, "cred.key: no such file") {
 		t.Fatalf("credentials_key: %+v", p)
 	}
-	if p := byKey["control_plane"]; !strings.Contains(p.Message, "the control plane at host 127.0.0.1 does not answer") {
+	if p := byKey["control_plane"]; !strings.Contains(p.Message, "he control plane at host 127.0.0.1 does not answer") {
 		t.Fatalf("control_plane: %+v", p)
 	}
 	write(t, filepath.Join(dir, "cred.key"), "k")

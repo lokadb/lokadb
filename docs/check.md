@@ -3,7 +3,7 @@
 `lokadb check` answers "can the organizations of this database and this application be moved?" before anything is changed. It reads the catalog, `pg_stat_statements` and the proxy's workload recording. It does not infer permissions from the catalog: it **tries** what `enable` and `move-org` will do (`CREATE TABLE`, `CREATE EXTENSION`, `CREATE SERVER`, `CREATE SUBSCRIPTION … WITH (connect = false)`, `ALTER TABLE … OWNER TO`) in a transaction that is always rolled back. The answer is therefore right for any role, for managed-service roles (`rds_superuser`, `cloudsqlsuperuser`, `azure_pg_admin`) and settings (`default_transaction_read_only`, a replica).
 
 ```bash
-lokadb check -db env:CLOUD_DSN -spec spec.json -workload workload.json -proxy-config lokadb.json \
+lokadb check -db env:CLOUD_DSN -spec spec.json -workload workload.json -proxy-config proxy.json \
   -customer env:CUST_ADMIN_DSN -customer-app env:CUST_APP_DSN -org 1
 ```
 

@@ -17,7 +17,7 @@ import (
 // cleartext password the proxy asks for then travels encrypted. With "require" a client
 // that starts without TLS is refused before it sends its password.
 
-// TLSConfig of the proxy listener ("tls" in lokadb.json).
+// TLSConfig of the proxy listener ("tls" in proxy.json).
 type TLSConfig struct {
 	Cert string `json:"cert"` // PEM certificate chain and key; replaced files are picked up without a restart
 	Key  string `json:"key"`

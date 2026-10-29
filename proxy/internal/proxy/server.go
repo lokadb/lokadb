@@ -143,6 +143,7 @@ type Server struct {
 	metaCache  *metaCache             // the shared cache of the metadata (meta_cache.go); nil: off
 	types      typeCache              // the statements' types of the direct path, for every session (direct_types.go)
 	creds      credStore              // the organizations' credentials of the control plane (credentials.go)
+	seen       roleSeen               // the roles that connected (seen.go)
 }
 
 func NewServer(cfg Config, log *slog.Logger) *Server {
@@ -405,6 +406,7 @@ func (s *Server) handle(c net.Conn) {
 		return
 	}
 	ph.mark("password") // the exchange with the client for its password
+	s.seen.note(user, db)
 
 	cfg, err := s.upstreamConfig()
 	if err != nil {
@@ -447,7 +449,8 @@ func (s *Server) handle(c net.Conn) {
 			sendError(be, err)
 			return
 		}
-		ph.mark("upstream") // the connection to Postgres: TCP, authentication, the server's startup
+		s.seen.notePID(conn.PID()) // the backend is the proxy's (the setup wizard tells it from a direct one)
+		ph.mark("upstream")        // the connection to Postgres: TCP, authentication, the server's startup
 		poolErr, roleErr, listening := s.checkNew(ctx, conn)
 		s.learnInstallation(ctx, conn) // once per process (credentials.go)
 		listened = listening

@@ -26,7 +26,7 @@ Use it at the end of a contract, to stop using LokaDB for this organization, or 
 ## `lokadb repoint`: a new database with the same rows
 
 ```bash
-lokadb repoint -db env:CLOUD_DSN -org 1 -customer-app env:NEW_CUST_APP_DSN -proxy-config lokadb.json
+lokadb repoint -db env:CLOUD_DSN -org 1 -customer-app env:NEW_CUST_APP_DSN -proxy-config proxy.json
 ```
 
 For a restore on another host, a failover to a replica, a new password.

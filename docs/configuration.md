@@ -28,7 +28,11 @@ The spec names the tables whose rows move with an organization, and how each tab
 
 `lokadb check -org-table organizations -write-spec spec.json` proposes a spec from the schema: it follows the foreign keys to the organizations table, whatever the organization column of each table is called (`tenant_id`, `owner_company_id`), and says why every other table stays in the cloud ([Compatibility check](check.md#without-a-spec)). `-tenant-column organization_id` does the same for a schema where all tables share one column name. Which data leaves the cloud is a human decision: review it.
 
-## Proxy: `lokadb.json`
+<a id="proxy-lokadbjson"></a>
+
+## Proxy: `proxy.json`
+
+`lokadb proxy` reads `/etc/lokadb/proxy.json` unless `-config` says otherwise, and `lokadb relay` reads `/etc/lokadb/relay.json`: LokaDB's containers mount one directory at `/etc/lokadb`, with these fixed file names ([install, step 4](install.md#4-lokadb-init-the-control-plane-the-keys-and-the-configs)).
 
 ```json
 {
@@ -97,6 +101,7 @@ The spec names the tables whose rows move with an organization, and how each tab
 | `enroll_listen` | — | enrolment and renewal (token → certificate) |
 | `health_listen` | — | `GET /healthz` (200 / 503 while draining), `GET /sessions`. Internal only |
 | `cert`, `key`, `ca`, `ca_key` | — | relay certificate, CA bundle, CA key (not needed with `issuer_url`). Re-read when the files change |
+| `cert_names`, `ca_public` | — | with `cert_names` (a name or several, comma separated) the relay makes the CA and its own certificate at start when they are missing, and never replaces ones that exist; `cert`, `key`, `ca`, `ca_key` must then be `relay.crt`, `relay.key`, `ca.crt`, `ca.key` of one directory that only the relay mounts. `ca_public` is where the relay writes the public `ca.crt` for the proxy, the runner and the agents (once, never replaced). This is what `lokadb init` and the runner write |
 | `issuer_url` | — | sign agent certificates through a separate issuing service instead of holding the CA key |
 | `cert_ttl` | `1h` | lifetime of agent certificates; agents renew at 2/3 of it |
 | `renew_expired` | `24h` | still renew a certificate that expired at most this long ago (`"0"` disables) |
@@ -147,7 +152,7 @@ A password written in the argument still works, with a warning. Commands never p
 
 ## Credentials in the control plane
 
-The proxy needs credentials of every organization database it reaches directly (the direct-path role, and the owner role for DDL replay). Instead of keeping them in `lokadb.json`, store them encrypted in the control-plane database:
+The proxy needs credentials of every organization database it reaches directly (the direct-path role, and the owner role for DDL replay). Instead of keeping them in `proxy.json`, store them encrypted in the control-plane database:
 
 ```bash
 lokadb org-credentials -db env:CLOUD_DSN -control-plane file:/etc/lokadb/control-plane.dsn -key /keys/lokadb.key -org 1 -kind direct -dsn -   # DSN from stdin
