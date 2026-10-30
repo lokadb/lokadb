@@ -2561,16 +2561,29 @@ func (s *session) refuse(sql string, an *Analysis, unknown bool) bool {
 	}
 	switch v {
 	case FanoutRefused:
-		s.srv.unrouted.note(sql, an, true)
-		s.log.Warn("refused: names no organization", "table", fanoutTable(an), "policy", s.fanout.Mode, "gap", an.GapText(), "sql", brief(sql))
+		l := s.srv.unrouted.note(sql, an, true)
+		if l.first || l.refused {
+			s.log.Warn("refused: the statement names no customer; decide it in the panel (setup, step 5)", "table", fanoutTable(an), "policy", s.fanout.Mode,
+				"gap", an.GapText(), "sql", brief(sql), "refused_since_last_line", l.since)
+		}
+		s.logUnroutedSummary(l)
 		return true
 	case FanoutRun:
-		s.srv.unrouted.note(sql, an, false)
-		if s.fanout.Mode == FanoutLog {
-			s.log.Warn("runs in every organization's database", "table", fanoutTable(an), "sql", brief(sql))
+		l := s.srv.unrouted.note(sql, an, false)
+		if l.first && s.fanout.Mode == FanoutLog {
+			s.log.Warn("a statement names no customer (logged; refused once a customer has moved unless you decide it): decide it in the panel (setup, step 5)",
+				"table", fanoutTable(an), "sql", brief(sql))
 		}
+		s.logUnroutedSummary(l)
 	}
 	return false
+}
+
+// logUnroutedSummary: every ten minutes, one line for all the statements without a customer.
+func (s *session) logUnroutedSummary(l unroutedLog) {
+	if l.summary {
+		s.log.Info("statements without a customer: see the panel (setup, step 5)", "shapes", l.shapes, "runs", l.runs, "since", l.start.UTC().Format(time.RFC3339))
+	}
 }
 
 // brief is sql fit for the log: literals replaced by $n (they are the organizations' data),

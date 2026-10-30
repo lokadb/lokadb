@@ -3,6 +3,7 @@ package proxy
 import (
 	"strings"
 	"testing"
+	"time"
 
 	pg "github.com/pganalyze/pg_query_go/v6"
 )
@@ -121,5 +122,38 @@ func TestUnroutedCollected(t *testing.T) {
 	}
 	if list[0].SQL != "SELECT * FROM builds WHERE slug = $1" {
 		t.Errorf("literals not removed: %q", list[0].SQL)
+	}
+}
+
+// The log tells a statement without a customer once per shape, a refused one once a minute with how
+// many times since, and all of them in a summary every ten minutes: not a line per query.
+func TestUnroutedLogOnce(t *testing.T) {
+	var u unroutedSet
+	an := func() *Analysis { return &Analysis{Lokadb: true, Unhinted: true, UnhintedTable: "builds"} }
+	if l := u.note("SELECT * FROM builds WHERE slug = 'a'", an(), false); !l.first {
+		t.Fatal("the first time is not logged")
+	}
+	for i := 0; i < 50; i++ {
+		if l := u.note("SELECT * FROM builds WHERE slug = 'x'", an(), false); l.first || l.refused || l.summary {
+			t.Fatalf("run %d is logged again: %+v", i, l)
+		}
+	}
+	if l := u.note("DELETE FROM builds WHERE done", an(), true); !l.first {
+		t.Fatal("the first refusal is not logged")
+	}
+	for i := 0; i < 5; i++ {
+		if l := u.note("DELETE FROM builds WHERE done", an(), true); l.refused {
+			t.Fatal("a refusal within the minute is logged")
+		}
+	}
+	for _, x := range u.m {
+		x.loggedAt = x.loggedAt.Add(-2 * time.Minute)
+	}
+	if l := u.note("DELETE FROM builds WHERE done", an(), true); !l.refused || l.since != 5 {
+		t.Fatalf("after the minute: %+v", l)
+	}
+	u.summary = u.summary.Add(-11 * time.Minute)
+	if l := u.note("SELECT * FROM builds WHERE slug = 'y'", an(), false); !l.summary || l.shapes != 2 || l.runs != 52 {
+		t.Fatalf("summary: %+v", l)
 	}
 }

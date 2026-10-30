@@ -22,6 +22,9 @@ type Unrouted struct {
 	Refused     bool      `json:"refused,omitempty"` // the last time: the client got an error
 	Count       int64     `json:"count"`
 	First, Last time.Time `json:"-"`
+
+	loggedAt time.Time // the last time this shape was written to the log
+	quiet    int64     // the times since then it was not
 }
 
 const unroutedMax = 500 // shapes kept; more are counted in Overflow
@@ -30,9 +33,30 @@ type unroutedSet struct {
 	mu       sync.Mutex
 	m        map[string]*Unrouted
 	overflow int64
+	runs     int64     // the statements run without a customer since the start
+	summary  time.Time // the last summary line
 }
 
-func (u *unroutedSet) note(sql string, an *Analysis, refused bool) {
+// How often the log tells a statement without a customer: a shape that runs once (it is in the panel
+// from then on), a refused shape once a minute with how many times since, and a summary of all every
+// ten minutes.
+const (
+	unroutedRefusedEvery = time.Minute
+	unroutedSummaryEvery = 10 * time.Minute
+)
+
+// unroutedLog: what the session writes to the log for this statement; zero: nothing.
+type unroutedLog struct {
+	first   bool  // the first time this shape is seen
+	refused bool  // a refused shape whose minute is up
+	since   int64 // the times it was not written since the last line
+	// a summary: the shapes and the runs since the start
+	summary      bool
+	shapes, runs int64
+	start        time.Time
+}
+
+func (u *unroutedSet) note(sql string, an *Analysis, refused bool) (out unroutedLog) {
 	fp := an.fp
 	if fp == "" {
 		fp, _ = pg.Fingerprint(sql)
@@ -49,13 +73,39 @@ func (u *unroutedSet) note(sql string, an *Analysis, refused bool) {
 	if x == nil {
 		if len(u.m) >= unroutedMax {
 			u.overflow++
-			return
+			return out
 		}
 		x = &Unrouted{Fingerprint: fp, SQL: brief(sql), Full: full(sql), Table: fanoutTable(an), Gaps: append([]Gap(nil), an.Gaps...), Write: an.Write, First: time.Now()}
 		u.m[fp] = x
+		out.first = true
 	}
+	now := time.Now()
 	x.Count++
-	x.Refused, x.Last = refused, time.Now()
+	x.Refused, x.Last = refused, now
+	if !refused {
+		u.runs++
+	}
+	switch {
+	case out.first:
+		x.loggedAt = now
+	case refused && now.Sub(x.loggedAt) >= unroutedRefusedEvery:
+		out.refused, out.since = true, x.quiet
+		x.loggedAt, x.quiet = now, 0
+	default:
+		x.quiet++
+	}
+	if u.summary.IsZero() {
+		u.summary = now
+	} else if now.Sub(u.summary) >= unroutedSummaryEvery {
+		u.summary = now
+		out.summary, out.shapes, out.runs = true, int64(len(u.m))+u.overflow, u.runs
+		for _, y := range u.m {
+			if out.start.IsZero() || y.First.Before(out.start) {
+				out.start = y.First
+			}
+		}
+	}
+	return out
 }
 
 // Unrouted: the statement shapes without an organization seen since the start, most often first,
