@@ -202,7 +202,7 @@ BEGIN
           RETURN NULL;
         END $b$ $f$, fn);
     END IF;
-    EXECUTE format('ALTER FUNCTION lokadb.%I() OWNER TO %I', fn, r.ref_owner);
+    PERFORM lokadb.owner_to('FUNCTION', format('lokadb.%I()', fn), r.ref_owner);
     EXECUTE format('ALTER FUNCTION lokadb.%I() SET search_path = pg_catalog, pg_temp', fn);
     -- on each foreign partition, not on the parent: the cloud's partitions have the FK and
     -- their writes pay nothing
@@ -222,7 +222,7 @@ BEGIN
           RETURN NULL;
         END $b$ $f$, fn);
     END IF;
-    EXECUTE format('ALTER FUNCTION lokadb.%I() OWNER TO %I', fn, r.owner);
+    PERFORM lokadb.owner_to('FUNCTION', format('lokadb.%I()', fn), r.owner);
     EXECUTE format('ALTER FUNCTION lokadb.%I() SET search_path = pg_catalog, pg_temp', fn);
     trg := left('lokadb_fk_' || r.parent || '_' || r.con, 63);
     IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = r.ref AND tgname = trg) THEN

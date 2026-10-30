@@ -15,6 +15,7 @@ import (
 
 	"github.com/lokadb/lokadb/proxy/internal/ext"
 	"github.com/lokadb/lokadb/proxy/internal/rel"
+	"github.com/lokadb/lokadb/proxy/internal/trig"
 )
 
 // ValueRef is a value found in SQL: a literal or a $n parameter.
@@ -781,6 +782,8 @@ func (a *Analysis) statement(n *pg.Node, text string, m *Meta) string {
 			}
 		}
 		return ""
+	case n.GetCreateFunctionStmt() != nil:
+		return triggerFunction(n, m)
 	case n.GetCreateExtensionStmt() != nil:
 		// block 7 (extensions after a move): an extension the application installs in the cloud
 		// is installed in the moved organizations' databases too, by the same replay
@@ -1015,6 +1018,48 @@ func (a *Analysis) doBlock(do *pg.DoStmt, m *Meta) {
 	}
 }
 
+// triggerFunction: a PL/pgSQL trigger function the application creates in a LokaDB database,
+// rewritten so that TG_TABLE_NAME, TG_TABLE_SCHEMA and TG_RELID name the LokaDB parent when
+// the trigger fires on a partition (risk hunt R04, internal/trig; enable does the same to the
+// functions of the triggers it moves). The calls give any other relation itself: a function
+// of other tables' triggers works as before. "" = left as it is.
+func triggerFunction(n *pg.Node, m *Meta) string {
+	f := n.GetCreateFunctionStmt()
+	if m == nil || f.ReturnType == nil || len(f.ReturnType.Names) == 0 ||
+		f.ReturnType.Names[len(f.ReturnType.Names)-1].GetString_().GetSval() != "trigger" {
+		return ""
+	}
+	var body *pg.String
+	lang := ""
+	for _, o := range f.Options {
+		de := o.GetDefElem()
+		if de == nil {
+			continue
+		}
+		switch de.Defname {
+		case "language":
+			lang = de.Arg.GetString_().GetSval()
+		case "as":
+			if l := de.Arg.GetList(); l != nil && len(l.Items) == 1 {
+				body = l.Items[0].GetString_()
+			}
+		}
+	}
+	if lang != "plpgsql" || body == nil {
+		return ""
+	}
+	rewritten := trig.Rewrite(body.Sval)
+	if rewritten == body.Sval {
+		return ""
+	}
+	body.Sval = rewritten
+	out, err := deparseStmt(n)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 // policyStmt: the application's own CREATE or DROP POLICY on LokaDB table t (lokadb_* policies
 // are refused by the guard). lokadb_tenant has to allow on its own, as a permissive policy,
 // and narrow what the application's policies allow next to them, as a restrictive one: a
@@ -1127,6 +1172,7 @@ func (a *Analysis) scan(n *pg.Node, m *Meta) {
 			for _, f := range s.FromClause {
 				sc.collect(f)
 			}
+			sc.exprs = append(append(append(sc.exprs, s.TargetList...), s.HavingClause), s.SortClause...)
 			a.scope(sc, s.WhereClause, m)
 		case *pg.UpdateStmt:
 			sc := newScope(m)
@@ -1135,6 +1181,7 @@ func (a *Analysis) scan(n *pg.Node, m *Meta) {
 				sc.collect(f)
 			}
 			a.Write = a.Write || m.table(s.Relation) != nil || m.view(s.Relation) != nil
+			sc.exprs = s.TargetList
 			a.scope(sc, s.WhereClause, m)
 		case *pg.DeleteStmt:
 			sc := newScope(m)
@@ -1179,6 +1226,10 @@ type scope struct {
 	// quals: ON conditions of inner joins outside any outer join: they restrict the rows of
 	// the scope as WHERE does. Those of an outer join restrict one side only.
 	quals []*pg.Node
+	// exprs: the select list, HAVING and ORDER BY (an UPDATE's SET): they restrict nothing, but
+	// their subqueries may refer to the scope's rows as those of the conditions do (Laravel's
+	// withCount: (SELECT count(*) FROM tasks WHERE projects.id = tasks.project_id) AS tasks_count)
+	exprs []*pg.Node
 }
 
 func newScope(m *Meta) *scope {
@@ -1485,10 +1536,11 @@ func (a *Analysis) scope(sc *scope, where *pg.Node, m *Meta) {
 	}
 }
 
-// correlate: the subqueries in the conditions of a scope that names its organization may
-// refer to its rows (EXISTS (SELECT 1 FROM v WHERE v.document_id = d.id)).
+// correlate: the subqueries in the conditions, the select list, HAVING and ORDER BY of a scope
+// that names its organization may refer to its rows (EXISTS (SELECT 1 FROM v WHERE
+// v.document_id = d.id), (SELECT count(*) FROM v WHERE v.document_id = d.id) AS versions_count).
 func (a *Analysis) correlate(sc *scope, where *pg.Node) {
-	for _, n := range append([]*pg.Node{where}, sc.quals...) {
+	for _, n := range append(append([]*pg.Node{where}, sc.quals...), sc.exprs...) {
 		if n == nil {
 			continue
 		}

@@ -86,6 +86,9 @@ func MoveBack(ctx context.Context, o MoveBackOptions) (err error) {
 		return err
 	}
 	defer cloud.Close(context.Background())
+	if err := requireCloudVersion(ctx, cloud, "move-back"); err != nil {
+		return err
+	}
 	var mine bool
 	if err := cloud.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", moveLockKey).Scan(&mine); err != nil {
 		return err
@@ -109,7 +112,7 @@ func MoveBack(ctx context.Context, o MoveBackOptions) (err error) {
 	if err := mo.resolve(ctx, cloud); err != nil {
 		return err
 	}
-	tables, _, err := describe(ctx, cloud, o.Spec, mo.org())
+	tables, _, err := describe(ctx, cloud, o.Spec, mo.org(), 0)
 	if err != nil {
 		return err
 	}
@@ -513,7 +516,7 @@ func switchBack(ctx context.Context, cloud, apply, cust, locker *pgx.Conn, lockT
 	if err := verifyCounts(ctx, tx, snapTx, tables, o.Log, "nothing switched, the organization stays in its own database; run move-back again (it copies from the start)"); err != nil {
 		return fail(err)
 	}
-	owner, err := rowsOf(ctx, tx, `SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid = $1::regclass`, qr(tables[0].name))
+	owner, err := rowsOf(ctx, tx, `SELECT pg_get_userbyid(relowner)::text, (current_setting('server_version_num')::int >= 150000)::text FROM pg_class WHERE oid = $1::regclass`, qr(tables[0].name))
 	if err != nil {
 		return fail(err)
 	}
@@ -528,7 +531,7 @@ func switchBack(ctx context.Context, cloud, apply, cust, locker *pgx.Conn, lockT
 		if err != nil {
 			return fail(err)
 		}
-		steps = append(append(append(steps, refs...), fks...), swapSteps(t, owner[0][0])...)
+		steps = append(append(append(steps, refs...), fks...), swapSteps(t, owner[0][0], owner[0][1] == "true")...)
 	}
 	// the copy left in its database, until it is marked as returned (review3 R3-13, returned.go)
 	dbID, err := rowsOf(ctx, tx, `SELECT coalesce(to_jsonb(o) ->> 'db_id', '') FROM lokadb.orgs o WHERE org = $1`, o.Org)
@@ -672,15 +675,21 @@ func rowDiff(ctx context.Context, cloud, cust querier, tables []moveTable) strin
 
 // swapSteps puts the local partition in the foreign one's place. The foreign table is kept
 // (renamed) until the server goes; a view under its name sends what a proxy with the old
-// metadata addresses to it into the parent, and so into the new partition.
-func swapSteps(t moveTable, owner string) []string {
+// metadata addresses to it into the parent, and so into the new partition. invoker: the cloud
+// has security_invoker views (Postgres 15); before 15 the view runs as its owner, the tables'
+// owner, whom the policy binds as well (FORCE ROW LEVEL SECURITY), and nobody else may use it.
+func swapSteps(t moveTable, owner string, invoker bool) []string {
+	with := ""
+	if invoker {
+		with = " WITH (security_invoker = true)"
+	}
 	return []string{
 		fmt.Sprintf("ALTER TABLE %s DETACH PARTITION %s", qr(t.name), qr(t.foreign())),
 		fmt.Sprintf("DROP POLICY IF EXISTS %s ON %s", q(fmt.Sprintf("lokadb_bind_org%d", t.org)), qr(t.name)),
 		fmt.Sprintf("ALTER TABLE %s ATTACH PARTITION %s FOR VALUES IN (%s)", qr(t.name), qr(t.local()), t.val),
 		fmt.Sprintf("ALTER FOREIGN TABLE %s RENAME TO %s", qr(t.foreign()), q(nameOf(t.gone()))),
-		fmt.Sprintf("CREATE VIEW %s WITH (security_invoker = true) AS SELECT * FROM %s WHERE %s = %s",
-			qr(t.bridge()), qr(t.name), q(t.tenant), t.val),
+		fmt.Sprintf("CREATE VIEW %s%s AS SELECT * FROM %s WHERE %s = %s",
+			qr(t.bridge()), with, qr(t.name), q(t.tenant), t.val),
 		fmt.Sprintf("ALTER VIEW %s OWNER TO %s", qr(t.bridge()), q(owner)),
 	}
 }
@@ -832,7 +841,7 @@ func abandon(ctx context.Context, cloud *pgx.Conn, o MoveOptions, tables []moveT
 	if err := staging(ctx, cloud, o, tables, log); err != nil {
 		return err
 	}
-	owner, err := rowsOf(ctx, cloud, `SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid = $1::regclass`, qr(tables[0].name))
+	owner, err := rowsOf(ctx, cloud, `SELECT pg_get_userbyid(relowner)::text, (current_setting('server_version_num')::int >= 150000)::text FROM pg_class WHERE oid = $1::regclass`, qr(tables[0].name))
 	if err != nil {
 		return err
 	}
@@ -850,7 +859,7 @@ func abandon(ctx context.Context, cloud *pgx.Conn, o MoveOptions, tables []moveT
 		if err != nil {
 			return err
 		}
-		steps = append(append(steps, fks...), swapSteps(t, owner[0][0])...)
+		steps = append(append(steps, fks...), swapSteps(t, owner[0][0], owner[0][1] == "true")...)
 	}
 	// Children first; cloud tables' FKs on the refs tables act as declared (CASCADE, SET NULL)
 	// or refuse (RESTRICT, NO ACTION): then nothing changes.

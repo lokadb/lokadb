@@ -15,5 +15,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 
 FROM debian:bookworm-slim
 COPY --from=build /out/ /usr/local/bin/
+# PR1 fetches Cal.com's migrations over HTTPS
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 ENTRYPOINT ["defects"]
 CMD ["/usr/local/bin/lokadb"]

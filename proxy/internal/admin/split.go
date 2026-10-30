@@ -45,13 +45,14 @@ func ensureKeyIndex(ctx context.Context, conn *pgx.Conn, t, key string, log *slo
 	return nil
 }
 
-var errNoReplicaRole = errors.New("session_replication_role cannot be set")
-
 // splitOrg gives the organization a partition of its own in every spec table that has none
 // yet (move-org's first step: enable leaves every organization in DEFAULT). Online when it
 // can: the organization pauses (org_lock), the others go on, and DEFAULT is locked only for
-// the attach (splitTable: copied in batches, moved in one short transaction). Without the right to set session_replication_role it falls
-// back to lokadb.partition_org, which locks DEFAULT for the whole split.
+// the attach (splitTable: copied in batches, moved in one short transaction). Without the right
+// to set session_replication_role (a managed Postgres: RDS, Cloud SQL, Yandex) it does the same
+// with the triggers and the FK checks left on where they cannot do harm and the application's
+// triggers switched off for the DELETE (splitTable); lokadb.partition_org, which locks DEFAULT
+// for the whole split, is no longer used by move-org.
 func splitOrg(ctx context.Context, cloud *pgx.Conn, o MoveOptions, log *slog.Logger) error {
 	var todo []SpecTable
 	for _, st := range o.Spec.Tables {
@@ -81,35 +82,27 @@ func splitOrg(ctx context.Context, cloud *pgx.Conn, o MoveOptions, log *slog.Log
 				st.Name, st.Name, r[0][0], st.Name)
 		}
 	}
-	err := splitOnline(ctx, cloud, o, todo, log)
-	if !errors.Is(err, errNoReplicaRole) {
-		return err
-	}
-	log.Warn("this role cannot set session_replication_role: the organization is split out of DEFAULT under a lock on it (reads and writes of every cloud organization wait)")
-	for _, st := range todo {
-		start := time.Now()
-		if err := splitOut(ctx, cloud, o, st.Name); err != nil {
-			return err
-		}
-		log.Warn("organization split out of DEFAULT under a lock", "table", st.Name, "took", time.Since(start).Round(time.Millisecond))
-	}
-	return nil
+	return splitOnline(ctx, cloud, o, todo, log)
 }
 
 func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []SpecTable, log *slog.Logger) error {
+	repl := true // false: this role may not set session_replication_role
 	if err := pgx.BeginFunc(ctx, cloud, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, "SET LOCAL session_replication_role = replica")
 		return err
 	}); err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "42501" {
-			return errNoReplicaRole
+		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			return err
 		}
-		return err
+		repl = false
+		log.Info("this role cannot set session_replication_role: the organization is split out of DEFAULT online all the same (the FKs of its partition are added after the copy)")
 	}
+	o.noReplica = !repl
 	chk := fmt.Sprintf("lokadb_not_org%d", o.Org)
 	var prep []string
 	guard := map[string]string{} // table -> its CHECK on DEFAULT, added right before its split
+	later, validate := map[string][]string{}, map[string][]string{} // noReplica: the FKs of the partition, after the copy
 	for _, st := range todo {
 		t := st.Name
 		tc, err := rowsOf(ctx, cloud, `SELECT tenant_column FROM lokadb.tables WHERE table_name = $1`, t)
@@ -168,6 +161,13 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 			return err
 		}
 		for _, f := range fks {
+			if o.noReplica {
+				// rows copied in batches meet their FKs in no order (a comment under a comment of a
+				// later batch): the FKs go on after the copy, NOT VALID and then validated
+				later[t] = append(later[t], fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s %s", qr(part), q(f[0]), notValid(f[1])))
+				validate[t] = append(validate[t], fmt.Sprintf("ALTER TABLE %s VALIDATE CONSTRAINT %s", qr(part), q(f[0])))
+				continue
+			}
 			prep = append(prep, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s %s", qr(part), q(f[0]), f[1]))
 		}
 		valid, err := rowsOf(ctx, cloud, `SELECT convalidated::text FROM pg_constraint WHERE conrelid = $1::regclass AND conname = $2`, qr(def), chk)
@@ -204,10 +204,29 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		return err
 	}
 	go beat(hbCtx, o.CloudDSN, o.Org, log)
+	// attached: the tables whose last transaction has committed. Their partition holds the only
+	// copy of the organization's rows (the rows left DEFAULT in that transaction): whatever
+	// fails after it, it is not touched, and the error says which tables are split.
+	attached := map[string]bool{}
 	truncateAll := func() {
 		for _, t := range tables {
-			truncateCopy(cloud, o, t.local(), log)
+			if !attached[t.name] {
+				truncateCopy(cloud, o, t.local(), log)
+			}
 		}
+	}
+	splitState := func(err error) error {
+		var done []string
+		for _, t := range tables {
+			if attached[t.name] {
+				done = append(done, t.name)
+			}
+		}
+		if len(done) == 0 || err == nil {
+			return err
+		}
+		return fmt.Errorf("%w\n  already split out of DEFAULT, and left so (their rows are in their partitions <table>__o%d): %s; the next move-org goes on with the other tables",
+			err, o.Org, strings.Join(done, ", "))
 	}
 	copyDeadline := time.Now().Add(o.copyTimeout())
 	for _, t := range tables {
@@ -219,6 +238,18 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		if err != nil {
 			truncateAll()
 			return fmt.Errorf("split %s out of DEFAULT: copying the rows: %w; they stay in DEFAULT", t.name, err)
+		}
+	}
+	for _, t := range tables {
+		// NOT VALID takes the referenced table for a moment; the validation reads the copy and
+		// holds nobody back (the organization still writes, the others too)
+		if err := lockedDDL(ctx, cloud, o, later[t.name]); err != nil {
+			truncateAll()
+			return fmt.Errorf("split %s out of DEFAULT: the FKs of its partition: %w; the rows stay in DEFAULT", t.name, err)
+		}
+		if err := execAll(ctx, cloud, validate[t.name]); err != nil {
+			truncateAll()
+			return fmt.Errorf("split %s out of DEFAULT: the FKs of its partition: %w; the rows stay in DEFAULT", t.name, err)
 		}
 	}
 	// what changed meanwhile, the organization still writing (rounds until the log is short)
@@ -255,7 +286,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		// before the organization resumes (MoveOrg's cleanup tries again on a new connection).
 		dropGuards(cloud, o, log)
 		truncateAll()
-		return err
+		return splitState(err)
 	}
 	// Table by table: the CHECK on its DEFAULT (right before its own last transaction, so that
 	// an application's transaction past the proxy, a cascade of a user into another table's rows,
@@ -272,7 +303,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		}
 		for {
 			if time.Since(pausedAt) > o.maxSplitPause() {
-				return fail(fmt.Errorf("%w (%s): the log of the copy not applied; the rows stay in DEFAULT", errSplitPause, o.maxSplitPause()))
+				return fail(fmt.Errorf("%w (%s): the log of the copy not applied; the rows of %s and of the tables after it stay in DEFAULT", errSplitPause, o.maxSplitPause(), t.name))
 			}
 			if err := captureOK(ctx, cloud, o.Org); err != nil {
 				return fail(err)
@@ -288,6 +319,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		if err := splitTable(ctx, cloud, o, t.name, t.tenant, pausedAt, log); err != nil {
 			return fail(fmt.Errorf("split %s out of DEFAULT: %w", t.name, err))
 		}
+		attached[t.name] = true
 	}
 	return nil
 }
@@ -344,7 +376,9 @@ END $$`, captureFunc(o.Org, out), o.Org, lit(t.name), keyText(t, "OLD")))
 			{"i", "INSERT", fmt.Sprintf("NEW.%s = %s", col, val), captureFunc(o.Org, def)},
 			{"u", "UPDATE", fmt.Sprintf("NEW.%s = %s", col, val), captureFunc(o.Org, def)},
 			{"x", "UPDATE", fmt.Sprintf("OLD.%s = %s AND NEW.%s IS DISTINCT FROM %s", col, val, col, val), captureFunc(o.Org, out)},
-			{"d", "DELETE", fmt.Sprintf("OLD.%s = %s", col, val), captureFunc(o.Org, def)},
+			// not for the split's own DELETE from DEFAULT (splitTable sets lokadb.moving): without the
+			// right to set session_replication_role the capture would log every row that leaves
+			{"d", "DELETE", fmt.Sprintf("OLD.%s = %s AND NOT lokadb.moving()", col, val), captureFunc(o.Org, def)},
 		} {
 			stmts = append(stmts,
 				fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", q(splitTrigger(o.Org, tr.kind)), qr(def)),
@@ -605,14 +639,28 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 			if left <= 0 {
 				return errSplitPause
 			}
-			for _, s := range []string{
-				fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", max(left.Milliseconds(), 1)),
-				"SET LOCAL session_replication_role = replica",   // neither the application's triggers nor FK checks fire for the move
-				"SELECT set_config('lokadb.moving', 'on', true)", // the refs keep pointing at the moved rows
-			} {
+			stmts := []string{fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", max(left.Milliseconds(), 1))}
+			if !o.noReplica { // neither the application's triggers nor FK checks fire for the move
+				stmts = append(stmts, "SET LOCAL session_replication_role = replica")
+			}
+			// the refs keep pointing at the moved rows (lokadb's own triggers on DEFAULT stand down)
+			for _, s := range append(stmts, "SELECT set_config('lokadb.moving', 'on', true)") {
 				if _, err := tx.Exec(ctx, s); err != nil {
 					return err
 				}
+			}
+			// Autovacuum skips a table somebody holds against vacuum (it only tries for the lock):
+			// held first, DEFAULT and the partition are not picked up by a worker while the rows
+			// leave (the DELETE leaves 480 000 dead rows: a worker would start at once and
+			// make VALIDATE and ATTACH wait for it, try after try, and each try is the whole
+			// transaction again). A worker that runs already is asked to stop between tries.
+			// The parent first: an application's CREATE INDEX holds SHARE on it and then asks for the
+			// partitions, so DEFAULT held before the parent made a deadlock with it (MV37). SHARE
+			// UPDATE EXCLUSIVE on the parent lets writers through.
+			if err := locked(tx, fmt.Sprintf("LOCK TABLE ONLY %s IN SHARE UPDATE EXCLUSIVE MODE", qr(t)),
+				fmt.Sprintf("LOCK TABLE ONLY %s IN SHARE UPDATE EXCLUSIVE MODE", qr(def)),
+				fmt.Sprintf("LOCK TABLE ONLY %s IN SHARE UPDATE EXCLUSIVE MODE", qr(part))); err != nil {
+				return err
 			}
 			for _, f := range fks {
 				if _, err := tx.Exec(ctx, f[0]); err != nil {
@@ -624,14 +672,18 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 			// as a delete of the organization's rows (review 3, R3-3). They are switched off for the
 			// DELETE, as partition_org does; that takes the table, so the parent is locked first
 			// (EXCLUSIVE, as for the ATTACH below: writers wait, reads go on, for the DELETE too).
-			always, err := rowsOf(ctx, tx, `SELECT tgname::text, tgenabled::text FROM pg_trigger
-				WHERE tgrelid = $1::regclass AND NOT tgisinternal AND tgenabled IN ('A', 'R') ORDER BY tgname`, qr(def))
+			// Without that role they all fire, the application's origin ones too: the same.
+			// LokaDB's own (refs, key map) return at once while lokadb.moving is on, and its
+			// capture of the split does not fire for a DELETE with it on (splitTrigger).
+			always, err := rowsOf(ctx, tx, `SELECT g.tgname::text, g.tgenabled::text FROM pg_trigger g
+				WHERE g.tgrelid = $1::regclass AND NOT g.tgisinternal AND (g.tgenabled IN ('A', 'R') OR ($2 AND g.tgenabled = 'O'))
+				  AND g.tgfoid NOT IN (SELECT oid FROM pg_proc WHERE pronamespace = 'lokadb'::regnamespace) ORDER BY g.tgname`, qr(def), o.noReplica)
 			if err != nil {
 				return err
 			}
 			if len(always) > 0 {
 				if tries == 1 {
-					log.Warn("the table has triggers enabled ALWAYS or REPLICA: the split holds it (writers wait) while the organization's rows leave DEFAULT, with those triggers off",
+					log.Warn("the table has triggers of the application that would see the move as a delete of the organization's rows (enabled ALWAYS or REPLICA, or any when this role may not set session_replication_role): the split holds it (writers wait) while the organization's rows leave DEFAULT, with those triggers off",
 						"table", t, "triggers", len(always))
 				}
 				if err := locked(tx, fmt.Sprintf("LOCK TABLE %s IN EXCLUSIVE MODE", qr(t))); err != nil {
@@ -671,7 +723,7 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 				log.Info("rows deleted during the split are not moved", "table", t, "rows", stale)
 			}
 			for _, g := range always { // as they were: ALWAYS or REPLICA
-				mode := map[string]string{"A": "ALWAYS", "R": "REPLICA"}[g[1]]
+				mode := map[string]string{"A": "ALWAYS", "R": "REPLICA", "O": ""}[g[1]]
 				if _, err := tx.Exec(ctx, fmt.Sprintf("ALTER TABLE %s ENABLE %s TRIGGER %s", qr(def), mode, q(g[0]))); err != nil {
 					return err
 				}
@@ -693,12 +745,17 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 		if tries == 1 || tries%10 == 0 {
 			log.Warn("table busy, the last transaction of the split again", "table", t, "try", tries, "err", pgErr.Message)
 		}
+		// the autovacuum worker the DELETE of an earlier try, or the copy, woke up holds DEFAULT
+		// or the partition and does not give way to a wait under deadlock_timeout
+		if _, stuck := yieldAutovacuum(ctx, cloud, []string{qr(def), qr(part), qr(t)}, log); stuck {
+			try = time.Duration(patientTry(deadlockMs)) * time.Millisecond
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.Is(err, errSplitPause) || errors.As(err, &pgErr) && pgErr.Code == "57014" && !time.Now().Before(deadline) {
-			err = fmt.Errorf("%w (%s): the rows stay in DEFAULT", errSplitPause, limit)
+			err = fmt.Errorf("%w (%s): the rows of %s stay in DEFAULT", errSplitPause, limit, t)
 		}
 		truncateCopy(cloud, o, part, log)
 		return err
@@ -735,10 +792,14 @@ func splitCopy(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, def, part
 	}
 	defer writer.Close(context.Background())
 	list := strings.Join(cols, ", ")
+	var setup []string
+	if !o.noReplica { // no FK checks: the rows are valid where they come from
+		setup = []string{"SET LOCAL session_replication_role = replica"}
+	}
 	p := newProgress(log, "split", t, total, 0)
 	_, err = copyChunked(cctx, reader.PgConn(), fmt.Sprintf("COPY (SELECT %s FROM %s WHERE %s = %s) TO STDOUT", list, qr(def), key, o.org().Lit()),
 		writer, fmt.Sprintf("COPY %s (%s) FROM STDIN", qr(part), list), o.batchRows(),
-		[]string{"SET LOCAL session_replication_role = replica"}, p.add) // no FK checks: the rows are valid where they come from
+		setup, p.add)
 	if err != nil {
 		return err
 	}
@@ -747,9 +808,25 @@ func splitCopy(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, def, part
 }
 
 // truncateCopy empties the organization's partition after a split that did not attach it.
+// An attached partition is never emptied, and one that cannot be told from one is not either:
+// the last transaction may have committed though its answer did not arrive, and then the partition
+// holds the only copy of the rows.
 func truncateCopy(cloud *pgx.Conn, o MoveOptions, part string, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	conn, err := connect(ctx, o.CloudDSN)
+	if err == nil {
+		defer conn.Close(context.Background())
+		var att bool
+		if err = conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = to_regclass($1))", qr(part)).Scan(&att); err == nil && att {
+			log.Warn("the partition of the split is attached: its rows are the organization's only copy, not emptied", "table", part)
+			return
+		}
+	}
+	if err != nil {
+		log.Warn("the copy of the split stays in its partition (whether it is attached is not known); the next move-org looks at it", "table", part, "err", err)
+		return
+	}
 	if err := lockedDDL(ctx, cloud, o, []string{"TRUNCATE " + qr(part)}); err != nil {
 		log.Warn("the copy of the split stays in its partition (not attached: the application does not see it); the next move-org drops it", "table", part, "err", err)
 	}
@@ -770,4 +847,13 @@ func copyColsOf(ctx context.Context, conn querier, table string) ([]string, erro
 		return nil, fmt.Errorf("%s has no columns to copy", table)
 	}
 	return cols, nil
+}
+
+// notValid: the definition of a foreign key as ADD CONSTRAINT takes it without the scan of the
+// rows (VALIDATE CONSTRAINT follows).
+func notValid(def string) string {
+	if strings.HasSuffix(def, " NOT VALID") {
+		return def
+	}
+	return def + " NOT VALID"
 }

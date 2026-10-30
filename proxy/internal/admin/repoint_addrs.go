@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 
 	"github.com/lokadb/lokadb/proxy/internal/creds"
 )
@@ -60,7 +62,7 @@ func databaseMark(ctx context.Context, conn *pgx.Conn) (sameDB, error) {
 	return func(ctx context.Context, dsn string) error {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		c, err := pgx.Connect(ctx, dsn)
+		c, err := tunnel.PGXConnect(ctx, dsn)
 		if err != nil {
 			return fmt.Errorf("does not connect: %v", err)
 		}

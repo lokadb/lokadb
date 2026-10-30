@@ -40,6 +40,16 @@ func isOrgMark(m string, org int64) bool {
 	return m == base || strings.HasPrefix(m, base+" database ")
 }
 
+// markedOrg: the organization whose mark m is (with or without a database id), 0 if m is none's.
+func markedOrg(m string) int64 {
+	var org int64
+	var rest string
+	if n, _ := fmt.Sscanf(m, TableMark+" organization %d%s", &org, &rest); n >= 1 && (isOrgMark(m, org)) {
+		return org
+	}
+	return 0
+}
+
 // nullLit: s as a literal, NULL for "".
 func nullLit(s string) string {
 	if s == "" {

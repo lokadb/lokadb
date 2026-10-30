@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lokadb/lokadb/proxy/internal/rel"
+	"github.com/lokadb/lokadb/proxy/internal/trig"
 )
 
 type Spec struct {
@@ -68,6 +69,35 @@ func (r *runner) rows(sql string, args ...any) ([][]string, error) {
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+// atLeast: the server is version v (server_version_num) or later.
+func (r *runner) atLeast(v int) (bool, error) {
+	rows, err := r.rows(`SELECT (current_setting('server_version_num')::int >= $1)::text`, v)
+	if err != nil {
+		return false, err
+	}
+	return rows[0][0] == "true", nil
+}
+
+// publications gives the publications that hold table t (by OID), each with what it publishes
+// of it: the column list and the row filter. They came with Postgres 15: before it a
+// publication publishes the whole table and pg_publication_rel has no prattrs or prqual.
+func (r *runner) publications(t string) ([][]string, error) {
+	pg15, err := r.atLeast(150000)
+	if err != nil {
+		return nil, err
+	}
+	if !pg15 {
+		return r.rows(`SELECT quote_ident(p.pubname), '' FROM pg_publication_rel pr JOIN pg_publication p ON p.oid = pr.prpubid
+			WHERE pr.prrelid = $1::regclass ORDER BY 1`, t)
+	}
+	return r.rows(`SELECT quote_ident(p.pubname),
+			coalesce(' (' || (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) FROM pg_attribute a
+				WHERE a.attrelid = pr.prrelid AND a.attnum = ANY (pr.prattrs::int2[])) || ')', '')
+			|| coalesce(' WHERE (' || pg_get_expr(pr.prqual, pr.prrelid) || ')', '')
+		FROM pg_publication_rel pr JOIN pg_publication p ON p.oid = pr.prpubid
+		WHERE pr.prrelid = $1::regclass ORDER BY 1`, t)
 }
 
 func q(s string) string { return pgx.Identifier{s}.Sanitize() }
@@ -130,6 +160,18 @@ END $e$;
 
 var baseSQL = `
 CREATE SCHEMA IF NOT EXISTS lokadb;
+-- owner_to gives an object of schema lokadb (a table, a function) to role owner. Without a
+-- superuser (a managed Postgres: the admin is a member of the tables' owner, with CREATEROLE)
+-- Postgres wants the new owner to have CREATE on the schema: the owner gets it for this
+-- statement only, then it is taken back (it would let the application's role put objects of
+-- its own among lokadb's). A superuser needs none of it.
+CREATE OR REPLACE FUNCTION lokadb.owner_to(kind text, obj text, owner text) RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE lend boolean := NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AND NOT has_schema_privilege(owner, 'lokadb', 'CREATE');
+BEGIN
+  IF lend THEN EXECUTE format('GRANT CREATE ON SCHEMA lokadb TO %I', owner); END IF;
+  EXECUTE format('ALTER %s %s OWNER TO %I', kind, obj, owner);
+  IF lend THEN EXECUTE format('REVOKE CREATE ON SCHEMA lokadb FROM %I', owner); END IF;
+END $$;
 ` + keySQL + `
 -- The policy's functions (org, org_lo_uuid, org_hi_uuid) run in the application's session, with
 -- its search_path: every name in them is pg_catalog's, written out (the review of routing, 2nd
@@ -520,12 +562,14 @@ END $$;
 -- of an organization of 20 000 rows was expected to return 50 (review of performance, F7). The
 -- dependency and the combinations tell it they are one. Not on the organizations' own partitions
 -- (one organization each: nothing to be correlated). Dropped by disable; ANALYZE once, when made.
+-- Statistics on an expression are Postgres 14: a Postgres 13 cloud goes without them (the
+-- estimate of F7, nothing else).
 CREATE OR REPLACE FUNCTION lokadb.key_stats(parent text, tc text, cloud text) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
   st text := lokadb.helper(parent, '__ks');
   c regclass := to_regclass(lokadb.qrel(cloud));
 BEGIN
-  IF c IS NULL OR EXISTS (SELECT FROM pg_statistic_ext WHERE stxrelid = c AND stxname = (parse_ident(lokadb.qrel(st)))[array_upper(parse_ident(lokadb.qrel(st)), 1)]) THEN
+  IF current_setting('server_version_num')::int < 140000 OR c IS NULL OR EXISTS (SELECT FROM pg_statistic_ext WHERE stxrelid = c AND stxname = (parse_ident(lokadb.qrel(st)))[array_upper(parse_ident(lokadb.qrel(st)), 1)]) THEN
     RETURN;
   END IF;
   EXECUTE format('CREATE STATISTICS %s (mcv, dependencies) ON %I, (%s) FROM %s', lokadb.qrel(st), tc, lokadb.tenant_key(parent, tc), lokadb.qrel(cloud));
@@ -931,7 +975,62 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   ORDER BY o.org
 $$;
 REVOKE ALL ON FUNCTION lokadb.replay_targets() FROM PUBLIC;
+-- The names a row trigger of a LokaDB table sees (risk hunt R04): Postgres fires a parent's
+-- row trigger on the partition, whose name TG_TABLE_NAME then is. enable rewrites the
+-- application's trigger functions to call these (internal/trig): a partition of a LokaDB
+-- table gives its parent, any other relation itself. They run as the writing role: every role
+-- may read lokadb.tables (below) and the catalog.
+CREATE OR REPLACE FUNCTION lokadb.tg_relid(r oid) RETURNS oid
+LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT coalesce((SELECT i.inhparent FROM pg_inherits i
+    WHERE i.inhrelid = r AND EXISTS (SELECT 1 FROM lokadb.tables t WHERE to_regclass(lokadb.qrel(t.table_name)) = i.inhparent)), r)
+$$;
+CREATE OR REPLACE FUNCTION lokadb.tg_name(r oid, n name) RETURNS name
+LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT CASE WHEN p = r THEN n ELSE (SELECT c.relname FROM pg_class c WHERE c.oid = p) END FROM lokadb.tg_relid(r) p
+$$;
+CREATE OR REPLACE FUNCTION lokadb.tg_schema(r oid, n name) RETURNS name
+LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT CASE WHEN p = r THEN n ELSE (SELECT s.nspname FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace WHERE c.oid = p) END
+  FROM lokadb.tg_relid(r) p
+$$;
 ` + fkCloudSQL + fkCascadeSQL
+
+// ownSequencesSQL: a statement that makes every sequence behind a default of table t's
+// columns owned by that column (and by the table's owner, as OWNED BY needs), but those named
+// in none, which it makes owned by no column. A sequence of a column is what
+// pg_get_serial_sequence finds.
+func ownSequencesSQL(t string, none []string) string {
+	arr := "ARRAY[]::text[]"
+	if len(none) > 0 {
+		var l []string
+		for _, n := range none {
+			l = append(l, lit(n))
+		}
+		arr = "ARRAY[" + strings.Join(l, ", ") + "]::text[]"
+	}
+	return fmt.Sprintf(`DO $lokadb$ DECLARE r record; BEGIN
+  FOR r IN SELECT DISTINCT a.attname, s.oid::regclass::text AS seq, c.relowner AS towner, s.relowner AS sowner,
+        s.relnamespace = c.relnamespace AS same_schema
+      FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+      JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+      JOIN pg_depend dep ON dep.classid = 'pg_attrdef'::regclass AND dep.objid = d.oid AND dep.refclassid = 'pg_class'::regclass
+      JOIN pg_class s ON s.oid = dep.refobjid AND s.relkind = 'S'
+      WHERE c.oid = %[1]s::regclass LOOP
+    IF r.seq::regclass = ANY (SELECT to_regclass(x) FROM unnest(%[2]s) x) THEN
+      EXECUTE format('ALTER SEQUENCE %%s OWNED BY NONE', r.seq);
+      CONTINUE;
+    END IF;
+    IF NOT r.same_schema THEN
+      CONTINUE; -- OWNED BY takes a table of the sequence's schema only: left as it was
+    END IF;
+    IF r.sowner <> r.towner THEN
+      EXECUTE format('ALTER SEQUENCE %%s OWNER TO %%I', r.seq, pg_get_userbyid(r.towner));
+    END IF;
+    EXECUTE format('ALTER SEQUENCE %%s OWNED BY %%s.%%I', r.seq, %[1]s::regclass, r.attname);
+  END LOOP;
+END $lokadb$`, lit(qr(t)), arr)
+}
 
 // unsupported refuses a table whose behaviour enable would silently change. The table
 // becomes the DEFAULT partition of a new parent: its triggers move to the parent, views and
@@ -1063,6 +1162,9 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := requireCloudVersion(ctx, tx, "enable"); err != nil {
+		return err
+	}
 	r := &runner{ctx: ctx, tx: tx, log: log}
 	// no statement of enable, prepared or not, waits for a lock without a limit: past it the
 	// transaction ends, gives back every lock it holds, and EnableWith tries again
@@ -1219,6 +1321,14 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 		if err != nil {
 			return err
 		}
+		// The PL/pgSQL functions of those triggers: fired on a partition, they would see its name
+		// in TG_TABLE_NAME (risk hunt R04); rewritten to see the parent's (trig.Rewrite).
+		tfuncs, err := r.rows(`SELECT DISTINCT pg_get_functiondef(p.oid), p.prosrc FROM pg_trigger g
+			JOIN pg_proc p ON p.oid = g.tgfoid JOIN pg_language l ON l.oid = p.prolang
+			WHERE g.tgrelid = $1::regclass AND NOT g.tgisinternal AND l.lanname = 'plpgsql'`, qr(t))
+		if err != nil {
+			return err
+		}
 		deps, err := Dependents(r.rows, t)
 		if err != nil {
 			return err
@@ -1229,12 +1339,7 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 
 		// A publication holds the table by OID: it would go on publishing only DEFAULT. The
 		// parent takes its place, with the same columns and row filter.
-		pubs, err := r.rows(`SELECT quote_ident(p.pubname),
-				coalesce(' (' || (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) FROM pg_attribute a
-					WHERE a.attrelid = pr.prrelid AND a.attnum = ANY (pr.prattrs)) || ')', '')
-				|| coalesce(' WHERE (' || pg_get_expr(pr.prqual, pr.prrelid) || ')', '')
-			FROM pg_publication_rel pr JOIN pg_publication p ON p.oid = pr.prpubid
-			WHERE pr.prrelid = $1::regclass ORDER BY 1`, qr(t))
+		pubs, err := r.publications(qr(t))
 		if err != nil {
 			return err
 		}
@@ -1279,6 +1384,11 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 			fmt.Sprintf("CREATE TRIGGER lokadb_refs AFTER INSERT OR DELETE OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.refs_sync(%s, %s, %s)",
 				trigCols(key[t], tc), qr(t), lit(refs), lit(tc), lit(key[t])),
 		)
+		for _, f := range tfuncs {
+			if body := trig.Rewrite(f[1]); body != f[1] {
+				steps = append(steps, strings.Replace(f[0], f[1], body, 1))
+			}
+		}
 		for _, g := range trgs {
 			steps = append(steps, g[1]) // its definition names the table: now the parent
 			switch g[2] {
@@ -1311,12 +1421,19 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 			fmt.Sprintf("ALTER TABLE %s OWNER TO %s", qr(refs), q(owner)),
 			fmt.Sprintf("INSERT INTO lokadb.tables (table_name, tenant_column, refs_table, cloud_partition, key_column, orig_owner, identities, orig_rls) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
 				lit(t), lit(tc), lit(refs), lit(cloud), lit(key[t]), lit(orig[0][0]), lit(orig[0][1]), lit(orig[0][2])),
-			fmt.Sprintf("INSERT INTO lokadb.lookups VALUES (%s, %s, NULL), (%s, %s, %s)", lit(t), lit(tc), lit(t), lit(key[t]), lit(refs)),
+			// a key that is the organization column itself (Cal.com's PlatformBilling.id, the
+			// organization's id): the column tells the organization, its refs lookup goes
+			fmt.Sprintf("INSERT INTO lokadb.lookups VALUES (%s, %s, NULL), (%s, %s, %s) ON CONFLICT DO NOTHING", lit(t), lit(tc), lit(t), lit(key[t]), lit(refs)),
 			fmt.Sprintf("SELECT lokadb.key_stats(%s, %s, %s)", lit(t), lit(tc), lit(cloud)),
 		)
 		for _, s := range seqs {
 			steps = append(steps, fmt.Sprintf("ALTER SEQUENCE %s OWNER TO %s", s, q(owner)))
 		}
+		// The sequences of the parent's defaults are owned by its columns (risk hunt R03): the
+		// serial ones by the original table's (now DEFAULT), the identities' by none.
+		// pg_get_serial_sequence(parent, column) then finds them, as Django's
+		// sqlsequencereset/loaddata and Rails' reset_pk_sequence! ask it.
+		steps = append(steps, ownSequencesSQL(t, nil))
 		for _, g := range grants {
 			opt := ""
 			if g[2] == "true" {
@@ -1378,8 +1495,10 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 				fmt.Sprintf("ALTER TABLE %s OWNER TO %s", qr(m), q(owner)),
 				fmt.Sprintf("INSERT INTO %s SELECT %s, %s FROM %s WHERE %s IS NOT NULL ON CONFLICT DO NOTHING", qr(m), q(u), q(tc), qr(dst), q(u)),
 				fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", q(urefTrigger(u)), qr(dst)),
-				fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s, %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.refs_sync(%s, %s, %s)",
-					q(urefTrigger(u)), q(u), q(tc), qr(dst), lit(m), lit(tc), lit(u)),
+				// trigCols: the unique column may be the organization column itself (Cal.com's
+				// OrganizationSettings.organizationId): named once
+				fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.refs_sync(%s, %s, %s)",
+					q(urefTrigger(u)), trigCols(u, tc), qr(dst), lit(m), lit(tc), lit(u)),
 				fmt.Sprintf("INSERT INTO lokadb.unique_refs VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", lit(dst), lit(u), lit(m)),
 			} {
 				if err := r.exec(st); err != nil {
@@ -1447,15 +1566,25 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 	// publication's: it is set only when no other partitioned table is published by it.
 	// Before the parent replaces DEFAULT in it (below): Postgres takes a column list or a row
 	// filter of a partitioned table only with publish_via_partition_root.
+	// FOR TABLES IN SCHEMA (pg_publication_namespace) is Postgres 15.
+	pg15, err := r.atLeast(150000)
+	if err != nil {
+		return err
+	}
+	inSchema, schemaPub := "", ""
+	if pg15 {
+		inSchema = `OR c.relnamespace IN (SELECT pnnspid FROM pg_publication_namespace WHERE pnpubid = p.oid)`
+		schemaPub = `OR EXISTS (SELECT 1 FROM pg_publication_namespace WHERE pnpubid = p.oid AND pnnspid IN (SELECT relnamespace FROM pg_class WHERE oid IN (SELECT oid FROM bt)))`
+	}
 	pubs, err := r.rows(`WITH bt AS (SELECT to_regclass(lokadb.qrel(table_name)) AS oid FROM lokadb.tables
 			UNION SELECT to_regclass(lokadb.qrel(cloud_partition)) FROM lokadb.tables)
 		SELECT quote_ident(p.pubname), coalesce((SELECT string_agg(c.oid::regclass::text, ', ' ORDER BY 1) FROM pg_class c
 			WHERE c.relkind = 'p' AND c.oid NOT IN (SELECT oid FROM bt)
 			  AND (p.puballtables OR c.oid IN (SELECT prrelid FROM pg_publication_rel WHERE prpubid = p.oid)
-			    OR c.relnamespace IN (SELECT pnnspid FROM pg_publication_namespace WHERE pnpubid = p.oid))), ''), p.pubname::text
+			    ` + inSchema + `)), ''), p.pubname::text
 		FROM pg_publication p WHERE NOT p.pubviaroot AND p.pubname NOT LIKE 'lokadb\_%'
 		  AND (p.puballtables OR EXISTS (SELECT 1 FROM pg_publication_rel WHERE prpubid = p.oid AND prrelid IN (SELECT oid FROM bt))
-		    OR EXISTS (SELECT 1 FROM pg_publication_namespace WHERE pnpubid = p.oid AND pnnspid IN (SELECT relnamespace FROM pg_class WHERE oid IN (SELECT oid FROM bt))))
+		    ` + schemaPub + `)
 		ORDER BY 1`)
 	if err != nil {
 		return err

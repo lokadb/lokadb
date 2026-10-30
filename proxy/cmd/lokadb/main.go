@@ -37,6 +37,13 @@ import (
 )
 
 func main() {
+	// LOKADB_CONTROL_PLANE: every command proves its address to the relays before it connects to
+	// one of their organizations' ports (R01; -cp and a proxy's control_plane do the same)
+	if v := os.Getenv("LOKADB_CONTROL_PLANE"); v != "" {
+		if dsn, err := resolveRef("LOKADB_CONTROL_PLANE", v); err == nil {
+			proveWith(dsn)
+		}
+	}
 	// time to the nanosecond, not slog's millisecond: logs of the proxy and of a lokadb command
 	// are put in order by it (the direct path's pause, DP9), and a millisecond holds thousands
 	// of statements on a fast machine
@@ -70,6 +77,9 @@ func main() {
 			if cfg.Upstream, err = resolveRef("upstream", cfg.Upstream); err == nil {
 				cfg.ControlPlane, err = resolveRef("control_plane", cfg.ControlPlane)
 			}
+		}
+		if err == nil {
+			proveWith(cfg.ControlPlane) // the direct profile reaches the relays' ports from a proven address (R01)
 		}
 		if err == nil {
 			if *record != "" {
@@ -365,6 +375,10 @@ func main() {
 			os.Exit(0)
 		}()
 		err = ag.Run()
+	case "pin":
+		err = runPin()
+	case "defuse":
+		err = runDefuse()
 	case "token", "revoke", "agents", "org-endpoint":
 		fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 		cp := fs.String("cp", "", "control plane (registry) database DSN")
@@ -580,6 +594,7 @@ func main() {
 		keyOld := fs.String("key-old", "", "during a key rotation: the proxy's credentials_key_old file (rows not resealed yet)")
 		dropFDW := fs.Bool("drop-fdw-credentials", false, "direct: drop the cloud's user mappings of the organization's server (the cloud no longer reaches its database)")
 		parseArgs(fs)
+		proveWith(*cpDSN) // the relays' ports: this command connects from a proven address (R01)
 		if *org, err = admin.RequireOrg(context.Background(), *db, *org, *tenant); err != nil {
 			break
 		}
@@ -608,7 +623,30 @@ func main() {
 		reseal := fs.Bool("reseal", false, "key rotation: seal with -key every row sealed with -key-old")
 		claim := fs.Bool("claim-legacy", false, "rows stored by versions that did not record the cloud (no cloud named in them) in -db's database are this cloud's: seal them for it")
 		keyOld := fs.String("key-old", "", "-reseal: the old key file (credentials_key_old)")
+		rotate := fs.Bool("rotate", false, "new passwords for the organization's roles (-org; without -org every organization not rotated in the last hour): at the customer, in the control plane and in the user mappings (R01)")
 		parseArgs(fs)
+		proveWith(*cpDSN) // the relays' ports: this command connects from a proven address (R01)
+		if *rotate {
+			o := admin.RotateOptions{CloudDSN: *db, ControlPlane: *cpDSN, KeyFile: *keyFile, KeyFileOld: *keyOld, Org: *org, Log: log}
+			if *org != 0 {
+				var res admin.RotateResult
+				if res, err = admin.RotateCredentials(context.Background(), o); err == nil {
+					fmt.Printf("organization %d: new passwords for %s\n", *org, strings.Join(res.Rotated, ", "))
+				}
+				break
+			}
+			var reps []admin.RotateReport
+			if reps, err = admin.RotateDue(context.Background(), o, time.Hour); err == nil {
+				for _, r := range reps {
+					if r.Err != nil {
+						fmt.Printf("organization %s: kept its password: %v\n", r.Org, r.Err)
+					} else {
+						fmt.Printf("organization %s: new passwords for %s\n", r.Org, strings.Join(r.Rotated, ", "))
+					}
+				}
+			}
+			break
+		}
 		if *reseal || *claim {
 			if *db == "" || *cpDSN == "" || *keyFile == "" || *reseal && *keyOld == "" {
 				fmt.Fprintln(os.Stderr, "usage: lokadb org-credentials -reseal -db DSN -control-plane DSN -key NEW -key-old OLD [-claim-legacy]   (or -claim-legacy -db DSN -control-plane DSN -key FILE [-key-old OLD])")
@@ -730,6 +768,7 @@ func main() {
 		proxyCfg := fs.String("proxy-config", "", "the proxy's config (move-org): its customers_app or control plane tell whether the direct path can be taken, so fdw+direct is set")
 		directRole := fs.String("direct-role", "", "the role the proxy's direct path uses in the organization's database (move-org, fdw+direct: it gets DML on the moved tables)")
 		parseArgs(fs)
+		proveWith(*cp) // the relays' ports: this command connects from a proven address (R01)
 		var spec admin.Spec
 		if spec, err = readSpec(*specPath, *patchPath); err != nil {
 			break
@@ -971,6 +1010,8 @@ usage:
   lokadb revoke -cp DSN -org N [-serial S]
   lokadb agents -cp DSN
   lokadb org-endpoint -cp DSN -org N (-listen ADDR [-tls require] [-change-port] | -remove)   (relays serve the organization without a restart)
+  lokadb pin -cp DSN [-db DSN | -confirm IP | -forget IP]   (the relays take the organizations' connections from the SaaS database only: prove its address from it, or confirm one; without flags: what they know)
+  lokadb defuse -db DSN -this-is-a-copy NAME   (a COPY of the SaaS database, a restored dump: its organization servers keep no password and lead nowhere)
   lokadb certs -dir DIR -relay-host relay [-ca-key-dir DIR] [-orgs N,N] [-force]   (a demo CA and relay certificate; ca.key in DIR unless -ca-key-dir: mount DIR into the relay only)
   lokadb init -relay-host NAME [-dir /etc/lokadb] [-admin DSN] [-cp-host H -cp-sslmode disable] [-org-allow CIDR,...] [-network N]
                (the first install in one command: control plane role and database with a random password, credentials.key, the CA
@@ -1011,7 +1052,7 @@ usage:
 var dsnFlags = map[string]bool{"db": true, "customer": true, "customer-app": true, "cp": true, "publisher": true, "dsn": true, "proxy-db": true,
 	"direct": true, "owner": true, // repoint -direct, -owner (a role name elsewhere: no password in it)
 	"control-plane": true, // org-profile, org-credentials (review 3 of admin, R3-11)
-	"admin": true} // init -admin
+	"admin":         true} // init -admin
 
 // parseArgs parses a command's flags (os.Args[2:]) and resolves its DSN flags.
 func parseArgs(fs *flag.FlagSet) {

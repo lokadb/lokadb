@@ -96,6 +96,11 @@ func IDUniqueSQL(rel string) string {
 // CompositeOf: the key of rows (CompositeKeySQL) as lokadb writes it (a JSON array of the
 // columns), or bad: a column of a type lokadb does not take.
 func CompositeOf(rows [][]string) (key, bad string) {
+	if len(rows) == 0 {
+		// no primary key of several columns: no key (it was "null", the JSON of no columns, and
+		// check took a table without a primary key and without id for one with a key)
+		return "", ""
+	}
 	k, bad, ok := composite(rows)
 	if !ok {
 		return "", bad
@@ -120,8 +125,9 @@ func composite(rows [][]string) (k keyInfo, bad string, ok bool) {
 // it is one column of a kind lokadb takes (Pagila's customer_id, a uuid); else id, when it is
 // unique across the table (an index, or its values: an id unique beside a composite primary
 // key routes WHERE id = $1 as before); else the primary key of several columns (a composite
-// key: (account_id, id) numbered per organization, (order_id, line_no)). Its values must be
-// unique across organizations: the refs table keeps one row per key.
+// key: (account_id, id) numbered per organization, (order_id, line_no)); else, with no primary
+// key and no id, a unique index of NOT NULL columns (uniquekey.go: Prisma's many-to-many
+// tables). Its values must be unique across organizations: the refs table keeps one row per key.
 func (r *runner) tableKey(t string) (keyInfo, error) {
 	pk, err := r.rows(KeySQL, qr(t))
 	if err != nil {
@@ -157,7 +163,7 @@ func (r *runner) tableKey(t string) (keyInfo, error) {
 	case len(id) == 0 && len(comp) > 0:
 		return keyInfo{}, fmt.Errorf("%s: its primary key has column %s: lokadb takes keys of type %s (with a deterministic collation)", t, bad, KeyTypes)
 	case len(id) == 0:
-		return keyInfo{}, fmt.Errorf("%s: needs a primary key (of columns of type %s), or an id column", t, KeyTypes)
+		return uniqueKey(r.rows, t, qr(t)) // no primary key, no id: a unique index of NOT NULL columns (uniquekey.go)
 	case id[0][1] == "":
 		return keyInfo{}, fmt.Errorf("%s: its key %s.id is %s: lokadb takes keys of type %s (with a deterministic collation)", t, t, id[0][3], KeyTypes)
 	}

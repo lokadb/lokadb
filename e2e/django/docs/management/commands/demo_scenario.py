@@ -3,7 +3,7 @@ import time
 
 from django.core.management.base import BaseCommand
 from django.db import DatabaseError, transaction
-from django.db.models import Count
+from django.db.models import Count, Exists, OuterRef, Subquery
 
 from docs.models import Comment, Document, DocumentVersion, Organization, Project
 
@@ -47,8 +47,25 @@ class Command(BaseCommand):
                 pk = Document.objects.filter(organization=org).order_by("id").values_list("id", flat=True).first()
                 return Document.objects.get(pk=pk).title == f"{letter} doc 1"
 
+            # a correlated subquery in the select list takes the organization of the outer rows
+            def subquery(org=org):
+                versions = DocumentVersion.objects.filter(document=OuterRef("pk"))
+                n = versions.values("document").annotate(c=Count("*")).values("c")
+                last = versions.order_by("-id").values("id")[:1]
+                docs = list(Document.objects.filter(organization=org).order_by("id")
+                            .annotate(n=Subquery(n), last=Subquery(last), has=Exists(versions)))
+                return len(docs) == 3 and all(
+                    d.n == 2 and d.has and d.last == d.versions.order_by("-id").values_list("id", flat=True).first() for d in docs)
+
+            def subquery_by_pk(org=org):
+                pk = Document.objects.filter(organization=org).order_by("id").values_list("id", flat=True).first()
+                n = DocumentVersion.objects.filter(document=OuterRef("pk")).values("document").annotate(c=Count("*")).values("c")
+                return Document.objects.annotate(n=Subquery(n)).get(pk=pk).n == 2
+
             self.verify(f"{letter}: list with select_related + prefetch_related", listing)
             self.verify(f"{letter}: get by pk (no tenant in the query)", find)
+            self.verify(f"{letter}: annotate Subquery(OuterRef) and Exists of versions", subquery)
+            self.verify(f"{letter}: annotate Subquery(OuterRef), get by pk (no tenant in the query)", subquery_by_pk)
 
         project_a = Project.objects.get(organization=a)
         state = {}

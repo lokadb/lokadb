@@ -281,6 +281,7 @@ func (r *Runner) applySettings() {
 	if s == nil {
 		return
 	}
+	r.applyCloudSources(s.CloudSources)
 	changed, err := r.Cfg.ApplySettings(s)
 	if err != nil {
 		r.Log.Warn("the panel's settings could not be applied", "err", err)
@@ -597,13 +598,18 @@ func (c *Config) probeDB(ctx context.Context) {
 	defer conn.Close(context.Background())
 	var addr *string
 	var admin bool
-	err = conn.QueryRow(cctx, `SELECT host(inet_client_addr()),
+	var version, versionNum string
+	err = conn.QueryRow(cctx, `SELECT host(inet_client_addr()), current_setting('server_version'), current_setting('server_version_num'),
 		coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false) OR EXISTS (
 		  SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member
-		  WHERE u.rolname = current_user AND r.rolname IN ('rds_superuser', 'cloudsqlsuperuser', 'azure_pg_admin', 'supabase_admin', 'neon_superuser', 'doadmin'))`).Scan(&addr, &admin)
+		  WHERE u.rolname = current_user AND r.rolname IN ('rds_superuser', 'cloudsqlsuperuser', 'azure_pg_admin', 'supabase_admin', 'neon_superuser', 'doadmin'))`).Scan(&addr, &version, &versionNum, &admin)
 	if err != nil {
 		return
 	}
+	// the SaaS database's PostgreSQL: the panel says at once, before check and enable, when it
+	// is older than LokaDB needs (admin.MinCloudVersion)
+	c.setInfo("pg_version", version)
+	c.setInfo("pg_version_num", versionNum)
 	if addr != nil {
 		c.setInfo("outgoing_address", *addr)
 	}

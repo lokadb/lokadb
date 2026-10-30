@@ -45,6 +45,19 @@ class DemoScenario extends Command
 
                 return Document::find($id)?->title === "$l doc 1";
             });
+            // a correlated subquery in the select list takes the organization of the outer rows
+            $this->check("$l: withCount, withSum, withExists, withMax of versions", function () use ($org) {
+                $docs = Document::withCount('versions')->withSum('versions', 'id')->withExists('versions')->withMax('versions', 'id')
+                    ->where('organization_id', $org->id)->orderBy('id')->get();
+
+                return $docs->count() === 3 && $docs->every(fn ($d) => (int) $d->versions_count === 2 && (bool) $d->versions_exists
+                    && (int) $d->versions_sum_id === (int) $d->versions()->sum('id') && (int) $d->versions_max_id === (int) $d->versions()->max('id'));
+            });
+            $this->check("$l: withCount by id (no tenant in the query)", function () use ($org) {
+                $id = Document::where('organization_id', $org->id)->orderBy('id')->value('id');
+
+                return (int) Document::withCount('versions')->find($id)?->versions_count === 2;
+            });
         }
 
         $new = null;

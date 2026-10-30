@@ -424,8 +424,8 @@ func applyKeys(r *runner, spec Spec, tables map[string]string, want map[string]b
 				// (the temporary one stays on the DEFAULT partition otherwise, firing twice)
 				for _, s := range []string{
 					fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", q(prepKeyTrigger(k.Column)), qr(hn(k.Table, "__cloud"))),
-					fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s, %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.key_sync(%s, %s, %s)",
-						q("lokadb_key_"+k.Column), q(k.Column), q(tables[k.Table]), qr(k.Table), lit(kt), lit(k.Column), lit(tables[k.Table])),
+					fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.key_sync(%s, %s, %s)",
+						q("lokadb_key_"+k.Column), trigCols(k.Column, tables[k.Table]), qr(k.Table), lit(kt), lit(k.Column), lit(tables[k.Table])),
 					fmt.Sprintf(`INSERT INTO lokadb.lookups VALUES (%s, %s, %s) ON CONFLICT (table_name, column_name) DO UPDATE SET refs_table = EXCLUDED.refs_table`,
 						lit(k.Table), lit(k.Column), lit("lokadb."+kt)),
 					fmt.Sprintf(`INSERT INTO lokadb.routing VALUES ('key', %s, %s, %s)`, lit(k.Table), lit(k.Column), lit(kt)),
@@ -460,16 +460,16 @@ func applyKeys(r *runner, spec Spec, tables map[string]string, want map[string]b
 			if err != nil {
 				return err
 			}
-			owner, err := r.rows(`SELECT quote_ident(pg_get_userbyid(relowner)) FROM pg_class WHERE oid = $1::regclass`, qr(k.Table))
+			owner, err := r.rows(`SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid = $1::regclass`, qr(k.Table))
 			if err != nil {
 				return err
 			}
 			steps := []string{
 				fmt.Sprintf("CREATE TABLE lokadb.%s (id text PRIMARY KEY, tenant %s)", q(kt), tenantType(dbKind)),
 				fmt.Sprintf("INSERT INTO lokadb.%s SELECT %s::text, %s FROM %s WHERE %s IS NOT NULL", q(kt), q(k.Column), q(tables[k.Table]), qr(k.Table), q(k.Column)),
-				fmt.Sprintf("ALTER TABLE lokadb.%s OWNER TO %s", q(kt), owner[0][0]),
-				fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s, %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.key_sync(%s, %s, %s)",
-					q("lokadb_key_"+k.Column), q(k.Column), q(tables[k.Table]), qr(k.Table), lit(kt), lit(k.Column), lit(tables[k.Table])),
+				fmt.Sprintf("SELECT lokadb.owner_to('TABLE', %s, %s)", lit("lokadb."+q(kt)), lit(owner[0][0])),
+				fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.key_sync(%s, %s, %s)",
+					q("lokadb_key_"+k.Column), trigCols(k.Column, tables[k.Table]), qr(k.Table), lit(kt), lit(k.Column), lit(tables[k.Table])),
 				fmt.Sprintf(`INSERT INTO lokadb.lookups VALUES (%s, %s, %s) ON CONFLICT (table_name, column_name) DO UPDATE SET refs_table = EXCLUDED.refs_table`,
 					lit(k.Table), lit(k.Column), lit("lokadb."+kt)),
 				fmt.Sprintf(`INSERT INTO lokadb.routing VALUES ('key', %s, %s, %s)`, lit(k.Table), lit(k.Column), lit(kt)),

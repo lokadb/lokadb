@@ -22,7 +22,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
 
@@ -360,7 +362,7 @@ func (s *session) prepareCustomers(stmts []string, query func(string) ([][]strin
 	for _, t := range targets {
 		org := t.org
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		conn, err := pgconn.Connect(ctx, t.dsn)
+		conn, err := tunnel.PGConnect(ctx, t.dsn)
 		if err == nil {
 			err = s.replayIdentity(ctx, conn, org, t.schema)
 		}

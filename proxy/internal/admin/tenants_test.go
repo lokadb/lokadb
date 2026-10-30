@@ -19,7 +19,7 @@ func TestTenantSQL(t *testing.T) {
 		t.Errorf("uuid: %q, %q, %q", u.Lit(), u.Key("account_id"), u.LockCall())
 	}
 	mt := moveTable{name: "projects", tenant: "account_id", org: 3, val: u.Lit()}
-	steps := strings.Join(swapSteps(mt, "app"), "\n")
+	steps := strings.Join(swapSteps(mt, "app", true), "\n")
 	for _, want := range []string{
 		`ATTACH PARTITION "projects__o3" FOR VALUES IN ('` + v + `'::uuid)`,
 		`WHERE "account_id" = '` + v + `'::uuid`,
@@ -72,7 +72,7 @@ func TestStringTenant(t *testing.T) {
 		t.Errorf("tenantType %q, tenantDefault %q", tenantType(TenantText), tenantDefault(TenantText))
 	}
 	mt := moveTable{name: "builds", tenant: "team_id", org: 4, val: str.Lit()}
-	steps := strings.Join(swapSteps(mt, "app"), " ")
+	steps := strings.Join(swapSteps(mt, "app", true), " ")
 	for _, want := range []string{`ATTACH PARTITION "builds__o4" FOR VALUES IN ('` + v + `')`, `WHERE "team_id" = '` + v + `'`} {
 		if !strings.Contains(steps, want) {
 			t.Errorf("move-back's swap lacks %q: %s", want, steps)

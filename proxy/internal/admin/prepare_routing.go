@@ -78,7 +78,7 @@ func (c *prep) key(k Key) error {
 	}
 	stmts := []string{
 		fmt.Sprintf("CREATE TABLE IF NOT EXISTS lokadb.%s (id text PRIMARY KEY, tenant %s)", q(kt), tenantType(c.p.tenantKind[t])),
-		fmt.Sprintf("ALTER TABLE lokadb.%s OWNER TO %s", q(kt), q(c.o.Owner)),
+		fmt.Sprintf("SELECT lokadb.owner_to('TABLE', %s, %s)", lit("lokadb."+q(kt)), lit(c.o.Owner)),
 		"GRANT USAGE ON SCHEMA lokadb TO " + q(c.o.Owner),
 	}
 	// the trigger writes the map as the writer
@@ -90,8 +90,8 @@ func (c *prep) key(k Key) error {
 	if ok, err := c.has(`SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = $1::regclass AND tgname = $2)::text`, qr(t), prepKeyTrigger(col)); err != nil {
 		return err
 	} else if !ok {
-		stmts = append(stmts, fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s, %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.key_sync(%s, %s, %s)",
-			q(prepKeyTrigger(col)), q(col), q(tc), qr(t), lit(kt), lit(col), lit(tc)))
+		stmts = append(stmts, fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.key_sync(%s, %s, %s)",
+			q(prepKeyTrigger(col)), trigCols(col, tc), qr(t), lit(kt), lit(col), lit(tc)))
 	}
 	if err := c.ddl(stmts...); err != nil {
 		return err

@@ -214,7 +214,7 @@ func (c *checker) schema() error {
 		// The key refs maps to the organization, as enable chooses it (admin tableKey): a
 		// one-column primary key of a kind lokadb takes (block 17: integers, uuid, text); else
 		// id when it is unique; else the primary key of several columns (a composite key,
-		// tasks/composite-keys.md).
+		// tasks/composite-keys.md); else, with neither, a unique index of NOT NULL columns.
 		pk, err := c.rows(admin.KeySQL, qk(t))
 		if err != nil {
 			return err
@@ -248,7 +248,17 @@ func (c *checker) schema() error {
 		case len(id) == 0 && compBad != "":
 			unsupported(t, "id_type", t, fmt.Sprintf("%s: its primary key has column %s: lokadb takes keys of type %s (under a deterministic collation) so far", t, compBad, admin.KeyTypes), nil)
 		case len(id) == 0:
-			unsupported(t, "id_missing", t, fmt.Sprintf("%s has neither a primary key (of columns of type %s) nor an id column: lokadb finds a row's organization by its key", t, admin.KeyTypes), nil)
+			// no primary key, no id: a unique index of NOT NULL columns, as enable takes it
+			// (admin.UniqueKey; Prisma's many-to-many tables), or enable's refusal word for word
+			k, kind, refused, err := admin.UniqueKey(c.rows, t, qk(t))
+			if err != nil {
+				return err
+			}
+			if refused != "" {
+				unsupported(t, "id_missing", t, refused, nil)
+			} else {
+				key[t], keyKind[t] = k, kind
+			}
 		case id[0][1] == "":
 			unsupported(t, "id_type", t+".id", fmt.Sprintf("%s.id is %s: lokadb takes keys of type %s (under a deterministic collation) so far", t, id[0][3], admin.KeyTypes), nil)
 		default:

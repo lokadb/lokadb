@@ -87,6 +87,9 @@ type MoveOptions struct {
 	// replica: whether the role may turn the FK checks off in the organization's database, asked
 	// once per move by the first round that applies the log (nil: asked by every round)
 	replica *replicaRight
+	// noReplica: the cloud role may not set session_replication_role (the split then adds the FKs of
+	// the organization's partition after its copy, and switches the application's triggers off for the DELETE)
+	noReplica bool
 }
 
 type moveTable struct {
@@ -194,6 +197,9 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 		return err
 	}
 	defer cloud.Close(ctx)
+	if err := requireCloudVersion(ctx, cloud, "move-org"); err != nil {
+		return err
+	}
 	marker, err := connect(ctx, o.CloudDSN)
 	if err != nil {
 		return err
@@ -299,6 +305,25 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	if err := preflightExtensions(ctx, cloud, cust, o, log); err != nil {
 		return err
 	}
+	// The DDL the organization's Postgres cannot run: before anything changes, not in the middle.
+	custVer, err := serverVersionNum(ctx, cust)
+	if err != nil {
+		return fmt.Errorf("customer database: %w", err)
+	}
+	var syntax []string
+	for _, st := range o.Spec.Tables {
+		syntax = append(syntax, st.Name)
+	}
+	if problems, err := CustomerSyntaxProblems(ctx, cloud, syntax, custVer); err != nil {
+		return err
+	} else if len(problems) > 0 {
+		return fmt.Errorf("the organization's database runs PostgreSQL %d and cannot take these tables (nothing was changed): %s", custVer/10000, strings.Join(problems, "; "))
+	}
+	if other, err := OtherOrgTables(ctx, cust, o.Org); err != nil {
+		return fmt.Errorf("customer database: %w", err)
+	} else if len(other) > 0 {
+		return fmt.Errorf("%s (nothing was changed)", OtherOrgMessage(other))
+	}
 	mode, err := chooseMode(ctx, cloud, cust, o, log)
 	if err != nil {
 		return err
@@ -378,7 +403,7 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	if err := splitOrg(ctx, cloud, o, log); err != nil {
 		return err
 	}
-	tables, custDDL, err := describe(ctx, cloud, o.Spec, o.org())
+	tables, custDDL, err := describe(ctx, cloud, o.Spec, o.org(), custVer)
 	if err != nil {
 		return err
 	}
@@ -467,6 +492,14 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	if len(ssl) > 0 {
 		sslOpts = ", " + strings.Join(ssl, ", ")
 	}
+	// async_capable (scans of several foreign partitions at once) is the postgres_fdw of
+	// Postgres 14: a Postgres 13 cloud's refuses the option.
+	async := ""
+	if v, err := rowsOf(ctx, cloud, "SELECT (current_setting('server_version_num')::int >= 140000)::text"); err != nil {
+		return err
+	} else if v[0][0] == "true" {
+		async = "async_capable 'true', "
+	}
 	prep = append(prep,
 		// fetch_size: rows per round trip when reading (postgres_fdw's default is 100, which
 		// makes a full read of an organization cost hundreds of round trips over a WAN).
@@ -475,8 +508,8 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 		// no foreign table of it is attached.
 		"CREATE EXTENSION IF NOT EXISTS postgres_fdw",
 		"DROP SERVER IF EXISTS "+q(server)+" CASCADE",
-		fmt.Sprintf("CREATE SERVER %s FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host %s, port %s, dbname %s, async_capable 'true', connect_timeout '3', fetch_size '%d'%s)",
-			q(server), lit(cc.Host), lit(fmt.Sprint(cc.Port)), lit(cc.Database), o.FetchSize, sslOpts),
+		fmt.Sprintf("CREATE SERVER %s FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host %s, port %s, dbname %s, %sconnect_timeout '3', fetch_size '%d'%s)",
+			q(server), lit(cc.Host), lit(fmt.Sprint(cc.Port)), lit(cc.Database), async, o.FetchSize, sslOpts),
 	)
 	// Only the roles that read the LokaDB tables get a user mapping (the owner, roles granted
 	// privileges on them, and this admin), and none gets USAGE on the server: a role with
@@ -679,6 +712,9 @@ func finishMove(ctx context.Context, cloud, marker, cust *pgx.Conn, o MoveOption
 	}
 	log.Info("verified: customer copy equals the detached source partitions")
 	analyzeForeign(ctx, cloud, tables, log)
+	if o.ControlPlaneDSN != "" {
+		pinAfterMove(ctx, cloud, o, log)
+	}
 	if o.RetainSource {
 		log.Info("source partitions retained", "suffix", "_source")
 		return nil
@@ -775,31 +811,11 @@ func lockedDDL(ctx context.Context, cloud *pgx.Conn, o MoveOptions, stmts []stri
 				return fmt.Errorf("%w\n  in: %s", err, mask(st))
 			}
 			o.Log.Warn("table busy, retrying", "statement", mask(st), "attempt", attempt, "err", err)
+			yieldAutovacuum(ctx, cloud, orgRels(o), o.Log)
 			time.Sleep(time.Second)
 		}
 	}
 	return nil
-}
-
-// splitOut gives the organization its own partition of table (lokadb.partition_org), waiting
-// at most LockTimeout for the DEFAULT partition each attempt: everybody queues behind a
-// waiting exclusive lock, so it must not wait long.
-func splitOut(ctx context.Context, cloud *pgx.Conn, o MoveOptions, table string) error {
-	for attempt := 1; ; attempt++ {
-		err := pgx.BeginFunc(ctx, cloud, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", o.LockTimeout.Milliseconds())); err != nil {
-				return err
-			}
-			_, err := tx.Exec(ctx, "SELECT lokadb.partition_org($1, $2, $3)", table, o.Org, o.org().Value)
-			return err
-		})
-		var pgErr *pgconn.PgError
-		if err == nil || !errors.As(err, &pgErr) || (pgErr.Code != "55P03" && pgErr.Code != "40P01") || attempt >= o.Attempts {
-			return err
-		}
-		o.Log.Warn("DEFAULT partition busy, retrying", "table", table, "attempt", attempt, "err", err)
-		time.Sleep(time.Second)
-	}
 }
 
 // markerLag commits a marker row in the cloud database and returns how long it took to
@@ -923,6 +939,11 @@ func switchOver(ctx context.Context, cloud, marker, cust, snap *pgx.Conn, o Move
 		return p, nil, err
 	}
 	try := switchLockTry(o.LockTimeout, time.Duration(deadlockMs)*time.Millisecond)
+	patient := time.Duration(patientTry(deadlockMs)) * time.Millisecond
+	var vacRels []string
+	for _, t := range tables {
+		vacRels = append(vacRels, qr(t.name), qr(t.local()), qr(hn(t.name, "__cloud")))
+	}
 	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", try.Milliseconds())); err != nil {
 		return p, nil, err
 	}
@@ -954,7 +975,38 @@ func switchOver(ctx context.Context, cloud, marker, cust, snap *pgx.Conn, o Move
 	// be the switch, with no replica left to retry with. Waiting for the lock instead, such a
 	// transaction is let ahead of us (Postgres reorders the queue) and finishes first.
 	waitFrom := time.Now()
-	for tries := 1; ; tries++ {
+	// First the lock autovacuum only tries for (SHARE UPDATE EXCLUSIVE, writers do not mind it):
+	// held, no worker starts on these tables between the tries below; one that runs is asked to
+	// stop here.
+	var vac []string
+	for _, r := range vacRels {
+		vac = append(vac, "ONLY "+r)
+	}
+	for {
+		if _, err = tx.Exec(ctx, "SAVEPOINT lokadb_switch_vac"); err != nil {
+			break
+		}
+		_, err = tx.Exec(ctx, "LOCK TABLE "+strings.Join(vac, ", ")+" IN SHARE UPDATE EXCLUSIVE MODE")
+		var pgErr *pgconn.PgError
+		if err == nil {
+			_, err = tx.Exec(ctx, "RELEASE SAVEPOINT lokadb_switch_vac")
+			break
+		}
+		if !errors.As(err, &pgErr) || pgErr.Code != "55P03" || time.Since(waitFrom)+try > o.LockTimeout {
+			break
+		}
+		if _, err = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT lokadb_switch_vac"); err != nil {
+			break
+		}
+		if _, stuck := yieldAutovacuum(ctx, marker, vacRels, o.Log); stuck && try < patient {
+			try = patient
+			if _, err = tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", try.Milliseconds())); err != nil {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for tries := 1; err == nil; tries++ {
 		if _, err = tx.Exec(ctx, "SAVEPOINT lokadb_switch_lock"); err != nil {
 			break
 		}
@@ -966,6 +1018,14 @@ func switchOver(ctx context.Context, cloud, marker, cust, snap *pgx.Conn, o Move
 		// what this try took goes back: the writer it waited for goes on
 		if _, err = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT lokadb_switch_lock"); err != nil {
 			break
+		}
+		// An autovacuum worker on one of the tables does not give way to a wait shorter than
+		// deadlock_timeout: asked to stop here, or waited for longer when this role may not.
+		if _, stuck := yieldAutovacuum(ctx, marker, vacRels, o.Log); stuck && try < patient {
+			try = patient
+			if _, err = tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", try.Milliseconds())); err != nil {
+				break
+			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -1157,8 +1217,11 @@ func tableColumns(ctx context.Context, cloud querier, t string) ([][]string, err
 
 // describe reads the enabled tables and builds the customer database DDL (staging names).
 // The FKs come after every table: the spec may list a table before the one it references
-// (two tables with their own organization column are in any order).
-func describe(ctx context.Context, cloud *pgx.Conn, spec Spec, ten Tenant) ([]moveTable, []string, error) {
+// (two tables with their own organization column are in any order). custVer: the
+// organization's server_version_num (0: not known, taken as current): what its Postgres does
+// not have is written another way (SET NULL (columns) is PostgreSQL 15), or refused before the
+// move starts (CustomerSyntaxProblems).
+func describe(ctx context.Context, cloud *pgx.Conn, spec Spec, ten Tenant, custVer int) ([]moveTable, []string, error) {
 	org := ten.Org
 	var tables []moveTable
 	var ddl, fkDDL []string
@@ -1272,8 +1335,25 @@ func describe(ctx context.Context, cloud *pgx.Conn, spec Spec, ten Tenant) ([]mo
 					qr(mt.local()), m[1], parent, strings.Join(refs, ", "), m[3]))
 				continue
 			}
+			if row[2] == row[3] {
+				// the parent's key is its organization column (Cal.com's PlatformBilling.id, the
+				// organization's own id): the key already tells the organization, so the FK
+				// is on the key alone; widened it would name the column twice (Postgres refuses)
+				fkDDL = append(fkDDL, fmt.Sprintf("ALTER TABLE %s ADD FOREIGN KEY (%s) REFERENCES %s (%s)%s",
+					qr(mt.local()), m[1], parent, q(row[2]), m[3]))
+				continue
+			}
 			// SET NULL / SET DEFAULT must not touch the tenant column: only the reference is
 			// reset. ($ in a column name is not a group reference.)
+			if custVer > 0 && custVer < 150000 && setNullRe.MatchString(m[3]) {
+				// ON DELETE SET NULL (columns) is PostgreSQL 15; before it the action resets every column of
+				// the FK, and with the tenant column among them the delete would fail (NOT NULL). The
+				// organization's database holds one organization (CHECK on every table), so the FK needs
+				// no tenant column: (reference) -> parent (key), which the parent's primary key serves.
+				fkDDL = append(fkDDL, fmt.Sprintf("ALTER TABLE %s ADD FOREIGN KEY (%s) REFERENCES %s (%s)%s",
+					qr(mt.local()), m[1], parent, q(row[2]), m[3]))
+				continue
+			}
 			action := setNullRe.ReplaceAllString(m[3], "ON DELETE SET $1 ("+strings.ReplaceAll(m[1], "$", "$$")+")")
 			fkDDL = append(fkDDL, fmt.Sprintf("ALTER TABLE %s ADD FOREIGN KEY (%s, %s) REFERENCES %s (%s, %s)%s",
 				qr(mt.local()), q(mt.tenant), m[1], parent, q(row[3]), q(row[2]), action))
@@ -1304,6 +1384,15 @@ func customerSchema(ctx context.Context, cust *pgx.Conn, tables []moveTable, own
 			if err == nil && isReturnedMark(mark, t.org) {
 				returned = append(returned, fmt.Sprintf("%s.%s", q(custSchemaOf(name, schema)), q(nameOf(name))))
 				continue
+			}
+			// another organization's table (a first organization moved into this database or schema
+			// earlier): replaced, it would cut that organization's rows out of the database, and its
+			// foreign partition in the cloud would read this organization's table (R38)
+			if err == nil && t.org > 0 {
+				if other := markedOrg(mark); other > 0 && other != t.org {
+					return fmt.Errorf("table %s in schema %s holds organization %d (moved here by lokadb): organization %d cannot take its name; "+
+						"give it another database, or another schema (-customer-schema)", nameOf(name), custSchemaOf(name, schema), other, t.org)
+				}
 			}
 			if err == nil && !strings.HasPrefix(mark, TableMark) {
 				return fmt.Errorf("table %s already exists in schema %s and was not created by lokadb: it is left alone; rename it or use another database", nameOf(name), custSchemaOf(name, schema))

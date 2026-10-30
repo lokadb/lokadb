@@ -206,6 +206,9 @@ type RelayConfig struct {
 	// negotiate TLS with the organization's own database (end to end: the relay then sees
 	// only ciphertext); "" passes connections as they are.
 	OrgTLS string `json:"org_tls"`
+	// OrgPin: "off" lets org_allow in as before, without the SaaS database's proven addresses
+	// (pin.go); "" (on) takes the organizations' connections from those only once one is proven
+	OrgPin string `json:"org_pin"`
 }
 
 type agentSession struct {
@@ -239,6 +242,9 @@ type Relay struct {
 	endpoints map[string]*orgEndpoint             // their open listeners
 	tlsOrgs   map[string]bool                     // organizations whose registry entry requires TLS
 	tlsKnown  bool                                // the registry's list was read at least once (tlsOrgs holds)
+	pin       pinState                            // the SaaS database's addresses (pin.go)
+	orgConns  map[net.Conn]string                 // open connections to the organizations' ports, by source address
+	touched   map[string]time.Time                // proven addresses marked in use (pin.go)
 	cloudSeen map[string]cloudAnswer              // the registry's last cloud_access answer per organization
 	shaking   chan struct{}                       // agent handshakes in progress (MaxHandshakes)
 	shakers   map[string]int                      // of them, per source host (maxHandshakesPerHost)
@@ -1202,6 +1208,31 @@ func (r *Relay) serveOrg(org string, l net.Listener) {
 			return
 		}
 		defer give(r.streams)
+		// the first message: a probe of lokadb pin is answered here; anything else is checked
+		// against the SaaS database's addresses, then read again by what follows
+		if r.pins() != nil {
+			msg := firstMessage(c)
+			if msg == nil {
+				c.Close()
+				return
+			}
+			code, admit := probeCode(msg)
+			switch {
+			case code != "" && admit: // one of LokaDB's components, this connection only
+				if c = r.admitted(org, c, code); c == nil {
+					return
+				}
+			case code != "":
+				r.answerProbe(org, c, code)
+				return
+			default:
+				c = &replayConn{Conn: c, first: msg}
+				if !r.pinAllows(org, c) {
+					return
+				}
+				defer r.trackOrgConn(c)()
+			}
+		}
 		if len(r.agentsOf(org)) == 0 {
 			refuse(c, fmt.Sprintf("lokadb relay: the agent of organization %s is not connected", org))
 			return

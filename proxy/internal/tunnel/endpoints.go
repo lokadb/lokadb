@@ -7,6 +7,8 @@ import (
 	"maps"
 	"net"
 	"os"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -56,6 +58,7 @@ func (r *Relay) wantedEndpoints() map[string]string {
 		r.tlsOrgs, r.tlsKnown = tlsOrgs, true
 		r.mu.Unlock()
 		r.warnOnce("registry", "")
+		r.loadPins()
 	}
 	want := maps.Clone(r.regOrgs)
 	if want == nil {
@@ -133,9 +136,48 @@ func (r *Relay) syncEndpoints(want map[string]string) error {
 }
 
 func (r *Relay) watchEndpoints() {
+	last, was := time.Time{}, ""
 	for range time.Tick(r.cfg.poll) {
 		_ = r.syncEndpoints(r.wantedEndpoints())
+		if now := r.portList(); now != was || time.Since(last) > 5*time.Minute {
+			last, was = time.Now(), now
+			r.publishPorts()
+		}
 	}
+}
+
+func (r *Relay) portList() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var ps []string
+	for _, ep := range r.endpoints {
+		ps = append(ps, ep.addr)
+	}
+	sort.Strings(ps)
+	return strings.Join(ps, ",")
+}
+
+// publishPorts writes the organizations' ports this relay serves to the registry: LokaDB's
+// components prove their address before they connect to one (self.go).
+func (r *Relay) publishPorts() {
+	ps := r.pins()
+	if ps == nil {
+		return
+	}
+	r.mu.Lock()
+	var ports []string
+	for _, ep := range r.endpoints {
+		if _, p, err := net.SplitHostPort(ep.addr); err == nil {
+			ports = append(ports, p)
+		}
+	}
+	r.mu.Unlock()
+	if len(ports) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.cfg.registryTimeout)
+	defer cancel()
+	_ = ps.SetRelayPorts(ctx, ports)
 }
 
 // listening reports whether the organization's endpoint is open on addr.

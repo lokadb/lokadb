@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	pg "github.com/pganalyze/pg_query_go/v6"
 
 	"github.com/lokadb/lokadb/proxy/internal/proxy"
+	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 )
 
 // replayReady: for every moved organization, as the proxy reaches its database
@@ -41,7 +41,7 @@ func (c *checker) replayReady() {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-		conn, err := pgconn.Connect(ctx, proxy.OptionsDSN(srv, um))
+		conn, err := tunnel.PGConnect(ctx, proxy.OptionsDSN(srv, um))
 		if err != nil {
 			cancel()
 			c.addFinding(Finding{Severity: Warning, Code: "replay_unreachable", Object: "organization " + org, Subject: orgSubject(org),

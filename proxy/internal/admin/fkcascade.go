@@ -105,7 +105,7 @@ END $b$ $f$, fn);
     END IF;
     EXECUTE format('ALTER FUNCTION lokadb.%I() SET search_path = pg_catalog, pg_temp', fn); -- also where an older version made it
     -- as the owner of the child table, as an FK's action runs
-    EXECUTE format('ALTER FUNCTION lokadb.%I() OWNER TO %I', fn, pg_get_userbyid(r.owner));
+    PERFORM lokadb.owner_to('FUNCTION', format('lokadb.%I()', fn), pg_get_userbyid(r.owner));
     IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = r.parent_part AND tgname = trg) THEN
       EXECUTE format('CREATE TRIGGER %I BEFORE DELETE ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.%I(%L, %L, %L, %L)',
         trg, r.parent_part, fn, r.child, r.child_part, to_jsonb(r.cols)::text, to_jsonb(r.pcols)::text);

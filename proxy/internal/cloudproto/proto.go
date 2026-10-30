@@ -106,6 +106,9 @@ type Settings struct {
 	// organization (reject, reject-writes, log, allow); empty: whatever proxy.json says. The runner
 	// writes it into proxy.json and leaves the other keys alone.
 	Fanout string `json:"fanout,omitempty"`
+	// CloudSources: addresses a person confirmed as the SaaS database's (the relays take the
+	// organizations' connections from these and the proven ones only: tunnel/pin.go)
+	CloudSources []string `json:"cloud_sources,omitempty"`
 	// OrgTable and OrgKey: the table of customers and its key column (what the person chose in
 	// step 2); OrgLabel: the column to show as the customer's name (found by name when empty).
 	OrgTable string `json:"org_table,omitempty"`

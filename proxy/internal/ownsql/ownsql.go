@@ -20,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
+
+	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 )
 
 // Mark is the comment that ends every statement LokaDB sends on its own.
@@ -57,6 +59,8 @@ func Connect(ctx context.Context, dsn string) (*pgx.Conn, error) {
 
 // ConfigurePG: Configure for a pgconn connection.
 func ConfigurePG(cfg *pgconn.Config) {
+	// a port of the relays: this process proves its address first (tunnel/self.go, R01)
+	cfg.DialFunc = tunnel.DialProving(cfg.DialFunc)
 	cfg.BuildFrontend = func(r io.Reader, w io.Writer) *pgproto3.Frontend {
 		return pgproto3.NewFrontend(r, &writer{w: w})
 	}

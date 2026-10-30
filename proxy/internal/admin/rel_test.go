@@ -39,3 +39,11 @@ func TestKeys(t *testing.T) {
 		t.Errorf("parentKey: %s", got)
 	}
 }
+
+// A table without a primary key of several columns has no composite key: CompositeOf of no
+// columns was "null", which check took for a key (a table enable refused was ready).
+func TestCompositeOfNone(t *testing.T) {
+	if k, bad := CompositeOf(nil); k != "" || bad != "" {
+		t.Errorf("CompositeOf(nil) = %q, %q; want no key", k, bad)
+	}
+}

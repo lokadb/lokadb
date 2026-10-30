@@ -35,7 +35,7 @@ func init() {
 	set("setting", "cloud", "cloud_wal_level")
 	set("extension", "cloud", "cloud_postgres_fdw", "cloud_postgres_fdw_install")
 	set("database", "customer", "customer_encoding", "customer_collation_differs", "customer_extension_unavailable",
-		"customer_extension_privilege", "customer_extension_version", "customer_index_skipped", "customer_object_missing", "customer_creates",
+		"customer_extension_privilege", "customer_syntax", "customer_other_org", "customer_extension_version", "customer_index_skipped", "customer_object_missing", "customer_creates",
 		"customer_collation_missing", "customer_connected", "customer_version", "customer_version_older", "move_mode", "customer_contents",
 		"customer_function_untrusted", "customer_function_security_definer")
 	set("role", "customer", "customer_app_database", "customer_app_superuser", "customer_app_is_admin",

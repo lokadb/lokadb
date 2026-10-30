@@ -12,6 +12,7 @@ cloud_postgres_fdw_install
 cloud_references
 cloud_replication_slots
 cloud_table_declared
+cloud_version_unsupported
 cloud_wal_level
 copy_from_cost
 customer_app_database
@@ -29,6 +30,8 @@ customer_contents
 customer_creates
 customer_encoding
 customer_extension_privilege
+customer_syntax
+customer_other_org
 customer_extension_unavailable
 customer_extension_version
 customer_function_security_definer
@@ -86,6 +89,7 @@ matview_stores_moved_rows
 mixed_write_transaction
 move_leftovers
 move_mode
+moved_org_servers
 name_conflict
 no_pg_stat_statements
 no_workload

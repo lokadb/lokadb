@@ -543,6 +543,9 @@ func Prepare(ctx context.Context, o EnableOptions) error {
 		return err
 	}
 	defer conn.Close(ctx)
+	if err := requireCloudVersion(ctx, conn, "enable -prepare"); err != nil {
+		return err
+	}
 	var p *plan
 	var fks []fk
 	if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {

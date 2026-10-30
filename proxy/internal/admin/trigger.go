@@ -271,6 +271,16 @@ func chooseMode(ctx context.Context, cloud, cust *pgx.Conn, o MoveOptions, log *
 	if o.Mode == ModeLogical && !o.AllowCustomerReplication {
 		return "", errLogicalConsent
 	}
+	if o.Mode == ModeLogical {
+		// The publication filters the move's marker rows by organization (a row filter, PostgreSQL 15).
+		var ver int
+		if err := cloud.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&ver); err != nil {
+			return "", err
+		}
+		if ver < 150000 {
+			return "", fmt.Errorf("-mode logical: needs PostgreSQL 15 or later in the cloud (the publication takes the move's marker rows by a row filter); the cloud runs %d. Use -mode trigger or auto: nothing was changed", ver/10000)
+		}
+	}
 	ready, err := LogicalReady(ctx, cloud)
 	if err != nil {
 		return "", err

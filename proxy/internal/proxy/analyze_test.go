@@ -735,7 +735,21 @@ func TestInsertSelectCorrelated(t *testing.T) {
 		{`insert into documents (organization_id, title) select project_id, title from documents where id = $1`, true},
 		// correlated: the versions of the organization's documents
 		{`select d.* from documents d where d.organization_id = 1 and exists (select 1 from document_versions v where v.document_id = d.id)`, false},
-		{`select d.id, (select count(*) from document_versions v where v.document_id = d.id) from documents d where d.id = $1`, true}, // a subquery outside the conditions
+		// in the select list, HAVING, ORDER BY and an UPDATE's SET (Laravel's withCount, withSum,
+		// withExists, withMax; Django's Subquery(OuterRef)): the same as in the conditions
+		{`select d.id, (select count(*) from document_versions v where v.document_id = d.id) from documents d where d.id = $1`, false},
+		{`select "documents".*, (select count(*) from "document_versions" where "documents"."id" = "document_versions"."document_id") as "versions_count" from "documents" where "documents"."organization_id" = $1`, false},
+		{`select documents.*, (select sum(document_versions.id) from document_versions where documents.id = document_versions.document_id) as s, exists(select * from document_versions where documents.id = document_versions.document_id) as e, (select max(document_versions.content) from document_versions where documents.id = document_versions.document_id) as m from documents where organization_id = 1`, false},
+		{`select d.id, coalesce((select v.content from document_versions v where v.document_id = d.id order by v.id desc limit 1), '') from documents d where d.id = $1`, false},
+		{`select d.* from documents d where d.organization_id = 1 order by (select count(*) from document_versions v where v.document_id = d.id) desc`, false},
+		{`select d.organization_id from documents d where d.organization_id = 1 group by d.organization_id having (select count(*) from document_versions v where v.document_id = min(d.id)) > 0`, true}, // not a column of the outer rows
+		{`update documents set title = (select max(v.content) from document_versions v where v.document_id = documents.id) where id = $1`, false},
+		// not inherited: the outer statement names no organization, the subquery is not
+		// correlated, compares a column without the lookup, or its alias hides the outer one
+		{`select d.id, (select count(*) from document_versions v where v.document_id = d.id) from documents d where d.slug = $1`, true},
+		{`select d.id, (select count(*) from document_versions v) from documents d where d.id = $1`, true},
+		{`select d.id, (select count(*) from document_versions v where v.content = d.title) from documents d where d.id = $1`, true},
+		{`select d.id, (select count(*) from document_versions d where d.document_id = d.id) from documents d where d.id = $1`, true},
 		{`select d.* from documents d where d.slug = $1 and exists (select 1 from document_versions v where v.document_id = d.id)`, true},
 		{`select d.* from documents d where d.organization_id = 1 and exists (select 1 from document_versions v where v.content = d.title)`, true},
 	} {
@@ -873,5 +887,28 @@ func TestPolicyStmt(t *testing.T) {
 		if a.Rewritten != c.want || a.Tag != c.tag {
 			t.Errorf("%s:\n got %q (tag %q)\nwant %q (tag %q)", c.q, a.Rewritten, a.Tag, c.want, c.tag)
 		}
+	}
+}
+
+// Risk hunt R04: a PL/pgSQL trigger function created through the proxy reads the LokaDB
+// parent's name, not the partition's; other functions are left alone.
+func TestTriggerFunction(t *testing.T) {
+	m := testMeta()
+	a := Analyze(`CREATE OR REPLACE FUNCTION audit() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN INSERT INTO audit_log (tbl) VALUES (TG_TABLE_NAME); RETURN NEW; END $$`, m)
+	if !strings.Contains(a.Rewritten, "lokadb.tg_name(TG_RELID, TG_TABLE_NAME)") || strings.Count(a.Rewritten, "TG_TABLE_NAME") != 1 {
+		t.Errorf("trigger function: %q", a.Rewritten)
+	}
+	for _, q := range []string{
+		`CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$`,
+		`CREATE FUNCTION g() RETURNS text LANGUAGE plpgsql AS $$ BEGIN RETURN 'TG_TABLE_NAME'; END $$`,
+		`CREATE FUNCTION h() RETURNS trigger LANGUAGE plpython3u AS $$ return TD["table_name"] $$`,
+	} {
+		if a := Analyze(q, m); a.Rewritten != "" {
+			t.Errorf("%s: rewritten %q", q, a.Rewritten)
+		}
+	}
+	if a := Analyze(`CREATE FUNCTION audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM TG_TABLE_NAME; RETURN NEW; END $$`, nil); a.Rewritten != "" {
+		t.Error("rewritten without LokaDB")
 	}
 }

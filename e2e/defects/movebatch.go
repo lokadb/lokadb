@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,7 +20,7 @@ import (
 func init() {
 	checks = append(checks,
 		check{id: "MV2", name: "a large organization is split out of DEFAULT in batches, with progress", run: checkSplitBatches},
-		check{id: "MV2", name: "a lock held on DEFAULT does not stretch the split's pause: VALIDATE waits a bounded time", run: checkSplitValidateLock},
+		check{id: "MV2", name: "a lock held on DEFAULT does not stretch the split's pause: a lock held on DEFAULT from the pause on makes the split wait a bounded time", run: checkSplitValidateLock},
 		check{id: "MV2", name: "a pause of the split longer than -max-split-pause stops it, the organization's rows stay in DEFAULT", run: checkSplitPauseLimit},
 	)
 }
@@ -156,40 +157,44 @@ func checkSplitValidateLock(e *env) (bool, string, error) {
 		return false, "", err
 	}
 	defer hold.Close(e.ctx)
-	// Once the split's CHECK is on DEFAULT (the rows are being moved), the lock is taken and
-	// held until move-org is done, or 100 s.
+	// Once the organization is paused (the split's last steps begin), the lock is taken and held
+	// until move-org is done, or 100 s. The split takes SHARE UPDATE EXCLUSIVE on DEFAULT itself
+	// at the start of its last transaction (so that no autovacuum worker starts on it), which is
+	// the wait this check bounds; the holder must be there before it, not after the CHECK.
 	const holdMax = 100 * time.Second
 	locked := make(chan struct{})
 	released := make(chan struct{})
-	go func() {
+	var once sync.Once
+	take := func() {
 		defer close(released)
-		for i := 0; i < 1200; i++ {
-			n, err := one(e.ctx, e.cloud(), fmt.Sprintf("SELECT count(*) FROM pg_constraint WHERE conrelid = 'documents__cloud'::regclass AND conname = 'lokadb_not_org%d'", bigOrg))
-			if err == nil && n == "1" {
-				if _, err := hold.Exec(e.ctx, "BEGIN; LOCK TABLE documents__cloud IN SHARE UPDATE EXCLUSIVE MODE"); err == nil {
-					close(locked)
-					select {
-					case <-released:
-					case <-time.After(holdMax):
-					}
-					_, _ = hold.Exec(e.ctx, "ROLLBACK")
-				}
-				return
+		if _, err := hold.Exec(e.ctx, "BEGIN; LOCK TABLE documents__cloud IN SHARE UPDATE EXCLUSIVE MODE"); err == nil {
+			close(locked)
+			select {
+			case <-released:
+			case <-time.After(holdMax):
 			}
-			time.Sleep(50 * time.Millisecond)
+			_, _ = hold.Exec(e.ctx, "ROLLBACK")
 		}
-	}()
-	out, took, merr := e.moveLines(bigOrg, nil, "-lock-timeout", "300ms")
+	}
+	started := false
+	out, took, merr := e.moveLines(bigOrg, func(l string) {
+		if strings.Contains(l, "organization paused") {
+			once.Do(func() { started = true; go take() })
+		}
+	}, "-lock-timeout", "300ms")
 	wasLocked := false
 	select {
 	case <-locked:
 		wasLocked = true
 	default:
 	}
+	if !started {
+		return false, "the organization was never paused: " + lastLine(out), nil
+	}
 	_, _ = hold.Exec(e.ctx, "ROLLBACK") // let the holder go if it still waits
 	<-released
 	if !wasLocked {
-		return false, "the split's CHECK never appeared on DEFAULT: " + lastLine(out), nil
+		return false, "the lock on DEFAULT was never taken: " + lastLine(out), nil
 	}
 	if merr == nil {
 		return false, fmt.Sprintf("move-org waited for the lock and succeeded after %s (the organization paused all along)", took.Round(time.Second)), nil

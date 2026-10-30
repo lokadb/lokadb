@@ -12,6 +12,7 @@ import (
 
 	"github.com/lokadb/lokadb/proxy/internal/admin"
 	"github.com/lokadb/lokadb/proxy/internal/ownsql"
+	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 )
 
 // cloudReady: what move-org needs from the cloud database.
@@ -38,6 +39,10 @@ func (c *checker) cloudReady() error {
 	}
 	c.cloudFDW(v[3] == "0")
 	c.cloudVersion, _ = strconv.Atoi(v[4])
+	// enable, move-org and move-back refuse a SaaS database before 15 (admin.CloudVersionProblem)
+	if p := admin.CloudVersionProblem(c.cloudVersion); p != "" {
+		c.add(Blocker, "cloud_version_unsupported", "", p, nil)
+	}
 	enc, err := c.rows(`SELECT pg_encoding_to_char(encoding)::text, datcollate::text FROM pg_database WHERE datname = current_database()`)
 	if err != nil {
 		return err
@@ -102,6 +107,9 @@ func (c *checker) appRolesRLS() error {
 		if err := c.cloudDirectAccess(roles); err != nil {
 			return err
 		}
+	}
+	if err := c.movedServers(); err != nil {
+		return err
 	}
 	for _, x := range r {
 		c.add(Blocker, "app_role_bypasses_rls", x[0], fmt.Sprintf("the application's role %s (from %s)%s is a %s: row-level security does not apply to it (REPLICATION reads every organization's changes by logical decoding), so through the proxy its queries without the organization would read and change every organization's rows instead of being refused or kept to one, and the proxy does not let it in. Give the application a role without SUPERUSER, BYPASSRLS and REPLICATION that is not a member of one: make a separate administrator for LokaDB (LOKADB_DB), then ALTER ROLE %[1]s NOSUPERUSER NOBYPASSRLS NOREPLICATION (it stays the owner of the tables, so migrations keep working)",
@@ -357,7 +365,7 @@ func (c *checker) customerApp(ctx context.Context, conn *pgx.Conn, admRole, tabl
 		c.add(Info, "customer_app_missing", "", "no -customer-app: move-org without it leaves the cloud the credentials of the organization's admin role (postgres_fdw, DDL replay). Give both move-org and the check -customer-app with an unprivileged role", nil)
 		return
 	}
-	app, err := pgx.Connect(ctx, c.o.CustomerAppDSN)
+	app, err := tunnel.PGXConnect(ctx, c.o.CustomerAppDSN)
 	if err != nil {
 		c.add(Blocker, "customer_app_unreachable", "", "the role of -customer-app cannot connect to the organization's database (the cloud reads and writes the moved tables with it): "+firstLine(err.Error()), nil)
 		return
@@ -393,7 +401,7 @@ func (c *checker) customerApp(ctx context.Context, conn *pgx.Conn, admRole, tabl
 func (c *checker) customerReady() {
 	ctx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, c.o.CustomerDSN)
+	conn, err := tunnel.PGXConnect(ctx, c.o.CustomerDSN)
 	if err != nil {
 		c.add(Blocker, "customer_unreachable", "", "the organization's database does not answer: "+firstLine(err.Error()), nil)
 		return
@@ -413,10 +421,25 @@ func (c *checker) customerReady() {
 		// move-org rebuilds the tables there from the cloud's definitions (pg_get_constraintdef,
 		// pg_get_indexdef): syntax a later version has (UNIQUE NULLS NOT DISTINCT, 15) fails on
 		// an earlier one in the middle of the move (review 2, R13)
-		c.add(Warning, "customer_version_older", db, fmt.Sprintf("the organization's database runs PostgreSQL %d, older than the cloud's %d: move-org rebuilds the LokaDB tables there from the cloud's definitions, and what %d has and %d has not (UNIQUE NULLS NOT DISTINCT before 15, some index and constraint options) fails in the middle of the move. Give the organization PostgreSQL %d or later, or check the tables' DDL on %d first",
+		c.add(Warning, "customer_version_older", db, fmt.Sprintf("the organization's database runs PostgreSQL %d, older than the cloud's %d: move-org rebuilds the LokaDB tables there from the cloud's definitions, and what %d has and %d has not (some index and constraint options) can fail in the middle of the move; what is known not to work is customer_syntax. Give the organization PostgreSQL %d or later, or check the tables' DDL on %d first",
 			num/10000, c.cloudVersion/10000, c.cloudVersion/10000, num/10000, c.cloudVersion/10000, num/10000), nil)
 	} else if num/10000 != c.cloudVersion/10000 {
 		c.add(Info, "customer_version", db, fmt.Sprintf("the organization's database runs PostgreSQL %d, the cloud %d: logical replication works across major versions, but this setup is tested with equal versions only", num/10000, c.cloudVersion/10000), nil)
+	}
+	// What the organization's older Postgres cannot create from the cloud's definitions
+	// (UNIQUE NULLS NOT DISTINCT, 15; from 18 virtual columns, NOT ENFORCED): move-org refuses it
+	// before it changes anything, with these words.
+	var tnames []string
+	for _, t := range c.rep.Tables {
+		tnames = append(tnames, t.Name)
+	}
+	if problems, err := admin.CustomerSyntaxProblems(ctx, c.tx, tnames, num); err == nil {
+		for _, p := range problems {
+			c.add(Blocker, "customer_syntax", db, fmt.Sprintf("the organization's database runs PostgreSQL %d and cannot take these tables: %s", num/10000, p), nil)
+		}
+	}
+	if other, err := admin.OtherOrgTables(ctx, conn, int64(c.o.Org)); err == nil && len(other) > 0 {
+		c.add(Blocker, "customer_other_org", db, admin.OtherOrgMessage(other), nil)
 	}
 	// Where move-org puts the tables, decided as move-org decides it (probes, rolled back):
 	// public if it can take them, else schema lokadb.

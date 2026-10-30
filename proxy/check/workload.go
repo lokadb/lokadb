@@ -106,7 +106,7 @@ func (c *checker) workload() error {
 		}
 		rows, err := rowsOf(c.ctx, sp, fmt.Sprintf(`SELECT s.query, s.calls::text, coalesce(r.rolname::text, ''), current_user::text
 			FROM %s.pg_stat_statements s LEFT JOIN pg_roles r ON r.oid = s.userid
-			WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND s.toplevel`, q(ext[0][0])))
+			WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND (to_jsonb(s) ->> 'toplevel') IS DISTINCT FROM 'false'`, q(ext[0][0]))) // toplevel: 14 and later
 		if err != nil {
 			_ = sp.Rollback(c.ctx)
 			c.add(Info, "pg_stat_statements_unreadable", "", "pg_stat_statements is installed but cannot be read: "+firstLine(err.Error()), nil)

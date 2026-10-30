@@ -109,6 +109,29 @@ To make sure no one forgets, require TLS on the relay — for all organizations 
 
 Between the application and the proxy, turn on `tls` in `proxy.json`: the proxy receives the application's password in clear text to pass it to Postgres. See [Configuration](configuration.md#proxy-proxyjson).
 
+## Copies of the SaaS database
+
+A database with moved organizations holds each one's `postgres_fdw` server (`lokadb_org<N>`, the relay's address) and, in its user mappings, the password of the customer's role. A dump of it carries both: restored on a staging server, a laptop or an analytics machine, the copy would reach the customer's real database, and its `DELETE` would remove the customer's rows.
+
+So the relays take an organization's connections from the SaaS database's own addresses only, once one is proven:
+
+- **The proof.** `lokadb pin` (move-org with `-cp` and the runner do it by themselves, the runner every 30 s) makes, in the SaaS database, in a transaction it rolls back, a `postgres_fdw` server to the relay with a one-time code from the control plane, and connects once. The relay records the address the connection came from: the database's own way out, behind a NAT, in a container or a pod. Nothing of it stays in the database, and a dump has no code.
+- **LokaDB's components** that reach the organizations' ports (the proxy's direct profile, `move-org`, `check`, the runner's jobs) are admitted connection by connection, never by their address (a container's address goes to the next container): when they know the control plane (`-cp`, a proxy's `control_plane`, or `LOKADB_CONTROL_PLANE` in their environment) each connection opens with a one-time code, then goes on as any other, its TLS included. The relays write the ports they serve to the control plane, so no code goes to another database.
+- **Another address** is held for 2.5 s (a SaaS database that came back at a new address is proven meanwhile by the runner, and goes on), then refused: `lokadb relay: connection from … refused: it is not the SaaS database organization N was moved from`. An open connection from an address that is not proven is closed when the proof arrives. Refusals are recorded (`lokadb pin` lists them; the panel and the account's alerts say them).
+- **Nothing proven yet** (the CLI without `-cp`): the relays let `org_allow` in as before and record the addresses they see; `lokadb pin -cp … ` lists them, `-confirm IP` makes one the SaaS database's.
+- `"org_pin": "off"` in `relay.json` turns it off (a measurement stand).
+
+**A copy restored next to the SaaS database** (another database of the same server) has its address, and the relays let it through: the runner looks for organization servers in the cluster's other databases every 10 minutes and says it (the panel, the account's alert `cloud_copy`).
+
+**The password in a dump.** The organization's roles (the owner's `lokadb_app_org<N>`, the direct path's `lokadb_dml_org<N>`) get new passwords every hour from the runner (`lokadb org-credentials -rotate` by hand): each role changes its own at the customer (sent as a SCRAM verifier, so the password is in no log there), then the control plane gets it, then the SaaS database's user mappings with `NOTIFY lokadb_meta` (the proxies read the new one before their next statement). An open `postgres_fdw` transaction goes on; the next one connects with the new mapping. A rotation cut in the middle is finished by the next one. An organization whose agent is not connected keeps its password until it is back (the panel says so). So the password in a dump or a backup opens nothing an hour later.
+
+**A dump for staging.** Defuse the copy after the restore: its user mappings go (the passwords with them) and each organization's server leads nowhere; the organizations' partitions stay and give an error when read.
+
+```bash
+lokadb defuse -db "host=staging dbname=app user=postgres" -this-is-a-copy app
+```
+
+Run it on the copy only: on the SaaS database itself it cuts every moved customer off (it asks for the database's name to be typed again). Without a relay (an organization's database reached directly) the address cannot be pinned: defuse every copy.
 ## Limits
 
 | Setting | Default | Limits |

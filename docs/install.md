@@ -445,7 +445,7 @@ docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{en
 
 **The commands** are those of the steps, with `NET="--network myapp_default"` and `DB_HOST=pgsql`, `DB_SSLMODE=disable`. `lokadb check`, `enable` and the other administrative commands run in a one-off container on the network (the `lokadb()` function of step 1 does that).
 
-**`org_allow`** must name the containers that reach the organizations' ports: the proxy, the database (`postgres_fdw`) and the one-off containers of `check` and `move-org`. A container's address changes on every start, so write a network range or names, not addresses. The default of `init` (the private ranges) already covers a Docker network; the narrow form is the network's own range, which also covers the one-off containers:
+**`org_allow`** must name the containers that reach the organizations' ports: the proxy, the database (`postgres_fdw`) and the one-off containers of `check` and `move-org`. Once an organization is moved with `-cp`, the relay takes its port from the SaaS database's proven address and from LokaDB's components that prove theirs: give the one-off containers `-e LOKADB_CONTROL_PLANE=file:/etc/lokadb/control-plane.dsn` (the proxy does it with its `control_plane`); see [copies of the SaaS database](tunnel.md#copies-of-the-saas-database). A container's address changes on every start, so write a network range or names, not addresses. The default of `init` (the private ranges) already covers a Docker network; the narrow form is the network's own range, which also covers the one-off containers:
 
 ```bash
 docker network inspect myapp_default -f '{{(index .IPAM.Config 0).Subnet}}'      # prints the network's range, address/prefix

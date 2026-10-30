@@ -31,6 +31,33 @@ services:
     environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
     command: ["postgres", "-c", "wal_level=logical", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}", "-c", "recovery_init_sync_method=syncfs"]
     healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
+  # Postgres 13, 14, 15 and 17 with wal_level = logical: clouds of the other supported versions
+  # (pgversions.go: enable, move-org, move-back and disable on each; managed Postgres 13 and 14
+  # are common). Postgres 16 is cloud16, 18 is cloud.
+  cloud13:
+    image: postgres:13
+    tmpfs: ["${PG_DATA_TMPFS:-/var/lib/postgresql/data}"]
+    environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}"]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
+  cloud14:
+    image: postgres:14
+    tmpfs: ["${PG_DATA_TMPFS:-/var/lib/postgresql/data}"]
+    environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}"]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
+  cloud15:
+    image: postgres:15
+    tmpfs: ["${PG_DATA_TMPFS:-/var/lib/postgresql/data}"]
+    environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}"]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
+  cloud17:
+    image: postgres:17
+    tmpfs: ["${PG_DATA_TMPFS:-/var/lib/postgresql/data}"]
+    environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}"]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
   customer:
     # pgvector but not PostGIS: a migration that installs PostGIS in the cloud cannot follow (M16)
     build: ./pgext
@@ -38,6 +65,13 @@ services:
     tmpfs: ["${PG_DATA_TMPFS:-/var/lib/postgresql}"] # the data in memory, see the note above services
     environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
     command: ["postgres", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}", "-c", "recovery_init_sync_method=syncfs"]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
+  # Postgres 14 as the organization's database (MV35, MV36: DDL an older server cannot run)
+  customer14:
+    image: postgres:14
+    tmpfs: ["${PG_DATA_TMPFS:-/var/lib/postgresql/data}"]
+    environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
+    command: ["postgres", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}"]
     healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
   # PostGIS installed, as the organization's database (customergis: MV29 moves a geometry column
   # there); the plain customer has pgvector and no PostGIS
@@ -56,4 +90,4 @@ services:
     profiles: [pgbouncer]
   check:
     build: {context: ../.., dockerfile: e2e/defects/Dockerfile}
-    depends_on: {cloud: {condition: service_healthy}, cloudplain: {condition: service_healthy}, cloud16: {condition: service_healthy}, customer: {condition: service_healthy}, customergis: {condition: service_healthy}}
+    depends_on: {cloud: {condition: service_healthy}, cloudplain: {condition: service_healthy}, cloud16: {condition: service_healthy}, cloud13: {condition: service_healthy}, cloud14: {condition: service_healthy}, cloud15: {condition: service_healthy}, cloud17: {condition: service_healthy}, customer: {condition: service_healthy}, customergis: {condition: service_healthy}, customer14: {condition: service_healthy}}

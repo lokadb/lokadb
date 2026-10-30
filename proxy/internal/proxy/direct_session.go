@@ -20,6 +20,7 @@ import (
 
 	"github.com/lokadb/lokadb/proxy/internal/creds"
 	"github.com/lokadb/lokadb/proxy/internal/rel"
+	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 )
 
 // The direct path of the profile fdw+direct, stage 8a (tasks/direct-path.md): a statement of
@@ -209,7 +210,7 @@ func pgDial(ctx context.Context, dsn string, params map[string]string) (*directL
 	for k, v := range params {
 		cfg.RuntimeParams[k] = v
 	}
-	cfg.DialFunc = directNetDial // a silent network ends the connection (direct_net.go, PR-6)
+	cfg.DialFunc = tunnel.DialProving(directNetDial) // a silent network ends the connection (direct_net.go, PR-6); a relay's port: proven first (R01)
 	conn, err := pgconn.ConnectConfig(ctx, cfg)
 	if err != nil {
 		return nil, err

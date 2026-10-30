@@ -261,6 +261,9 @@ func (w *copyWatch) poll(ctx context.Context, cust *pgx.Conn, sub string) {
 		WHERE s.subname = $1`, sub)
 	if err != nil {
 		w.log.Warn("initial copy: no progress from the organization's database", "err", err)
+		if strings.Contains(err.Error(), "42P01") { // pg_stat_progress_copy is PostgreSQL 14: nothing to ask on 13
+			w.last = time.Now().Add(100 * 365 * 24 * time.Hour)
+		}
 		return
 	}
 	for _, r := range rows {

@@ -16,6 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/lokadb/lokadb/proxy/internal/trig"
 )
 
 // DisableOptions configures Disable.
@@ -52,10 +54,6 @@ func disableLock(ctx context.Context, conn *pgx.Conn, tables []string, o Disable
 		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return nil, err
-		}
-		if _, err := tx.Exec(ctx, "SET LOCAL session_replication_role = replica"); err != nil {
-			_ = tx.Rollback(ctx)
-			return nil, fmt.Errorf("disable needs session_replication_role (superuser or SET privilege): the rows it copies must not fire triggers or FK checks again: %w", err)
 		}
 		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", wait.Milliseconds())); err != nil {
 			_ = tx.Rollback(ctx)
@@ -304,6 +302,25 @@ func Disable(ctx context.Context, o DisableOptions) error {
 			}
 			mvSteps = append(mvSteps, s...)
 		}
+		// enable's sequences of identity columns, by name (identitySeq), owned by none again here
+		cols, err := rn.rows(`SELECT attname::text FROM pg_attribute WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped`, qr(t))
+		if err != nil {
+			return err
+		}
+		var idSeqs []string
+		for _, c := range cols {
+			idSeqs = append(idSeqs, qr(identitySeq(t, c[0])))
+		}
+		// The trigger functions enable rewrote (R04, trig.Rewrite) get their own text back,
+		// unless a trigger of a LokaDB table still enabled calls them too: schema lokadb goes.
+		tfuncs, err := rn.rows(`SELECT DISTINCT pg_get_functiondef(p.oid), p.prosrc FROM pg_trigger g
+			JOIN pg_proc p ON p.oid = g.tgfoid JOIN pg_language l ON l.oid = p.prolang
+			WHERE g.tgrelid = $1::regclass AND NOT g.tgisinternal AND l.lanname = 'plpgsql'
+			  AND NOT EXISTS (SELECT 1 FROM pg_trigger g2 JOIN lokadb.tables lt ON to_regclass(lokadb.qrel(lt.table_name)) = g2.tgrelid
+			                  WHERE g2.tgfoid = p.oid AND g2.tgrelid <> $1::regclass)`, qr(t))
+		if err != nil {
+			return err
+		}
 		trgs, err := rn.rows(`SELECT tgname::text, pg_get_triggerdef(oid), tgenabled::text FROM pg_trigger
 			WHERE tgrelid = $1::regclass AND NOT tgisinternal AND tgname NOT IN ('lokadb_refs', 'lokadb_parent') ORDER BY tgname`, qr(t))
 		if err != nil {
@@ -341,10 +358,7 @@ func Disable(ctx context.Context, o DisableOptions) error {
 		}
 		// Publications that hold the parent by name (enable moved them there from DEFAULT, block 3
 		// A10), with their row filter and column list: they go back to the plain table.
-		pubs, err := rn.rows(`SELECT quote_ident(p.pubname), coalesce(' (' || (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum)
-				FROM pg_attribute a WHERE a.attrelid = pr.prrelid AND a.attnum = ANY (pr.prattrs::int2[])) || ')', '')
-				|| coalesce(' WHERE (' || pg_get_expr(pr.prqual, pr.prrelid) || ')', '')
-			FROM pg_publication_rel pr JOIN pg_publication p ON p.oid = pr.prpubid WHERE pr.prrelid = $1::regclass`, qr(t))
+		pubs, err := rn.publications(qr(t))
 		if err != nil {
 			return err
 		}
@@ -361,12 +375,22 @@ func Disable(ctx context.Context, o DisableOptions) error {
 		for _, c := range chks {
 			steps = append(steps, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", qr(def), q(c[0])))
 		}
-		// The application's triggers enabled ALWAYS or REPLICA fire under session_replication_role
-		// replica too: an INSERT one (an audit, a counter) saw the rows poured into DEFAULT as new
-		// ones (review 3, R3-3). Off for the INSERTs, on again with their mode right after; the
-		// table is locked ACCESS EXCLUSIVE, nobody else writes it meanwhile.
+		// The rows poured into DEFAULT are not new: no trigger of DEFAULT may see them as inserts,
+		// neither the application's (an audit, a counter; review 3, R3-3) nor LokaDB's (lokadb_refs
+		// would write their refs again). Every trigger of DEFAULT that is not Postgres' own is off
+		// for the INSERTs and on again with its mode right after, as its owner may do; the table is
+		// locked ACCESS EXCLUSIVE, nobody else writes it meanwhile. This took
+		// session_replication_role = replica before, which a managed Postgres often denies the
+		// tables' owner (RDS, Cloud SQL, Azure, Yandex): disable failed where enable, move-org and
+		// move-back had passed. Postgres' own triggers stay: the FKs of DEFAULT onto other tables
+		// check the rows (the FKs onto refs tables are dropped above), and a row that breaks one
+		// stops disable with nothing changed.
+		// A trigger cloned from the parent onto DEFAULT is the parent's (lokadb_refs among them):
+		// before Postgres 15 its clone was marked tgisinternal, and lokadb_refs wrote the poured
+		// rows' refs again (duplicate key in <table>__refs on a 13 or 14 cloud). Postgres' own
+		// triggers (an FK's, tgconstraint) stay.
 		always, err := rn.rows(`SELECT tgname::text, tgenabled::text FROM pg_trigger
-			WHERE tgrelid = $1::regclass AND NOT tgisinternal AND tgenabled IN ('A', 'R') ORDER BY tgname`, qr(def))
+			WHERE tgrelid = $1::regclass AND (NOT tgisinternal OR tgparentid <> 0 AND tgconstraint = 0) AND tgenabled <> 'D' ORDER BY tgname`, qr(def))
 		if err != nil {
 			return err
 		}
@@ -385,12 +409,15 @@ func Disable(ctx context.Context, o DisableOptions) error {
 				fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s", qr(def), insCols[0][0], insCols[0][0], qr(p[0])),
 				fmt.Sprintf("DROP TABLE %s", qr(p[0])))
 		}
+		if len(always) > 0 {
+			// A deferred FK (Django makes them all DEFERRABLE INITIALLY DEFERRED) of DEFAULT has
+			// queued its checks for the poured rows, and Postgres does not ALTER a table with
+			// pending trigger events: they run now, not at COMMIT.
+			steps = append(steps, "SET CONSTRAINTS ALL IMMEDIATE")
+		}
 		for _, g := range always {
-			mode := "ALWAYS"
-			if g[1] == "R" {
-				mode = "REPLICA"
-			}
-			steps = append(steps, fmt.Sprintf("ALTER TABLE %s ENABLE %s TRIGGER %s", qr(def), mode, q(g[0])))
+			mode := map[string]string{"O": "", "A": "ALWAYS ", "R": "REPLICA "}[g[1]]
+			steps = append(steps, fmt.Sprintf("ALTER TABLE %s ENABLE %sTRIGGER %s", qr(def), mode, q(g[0])))
 		}
 		steps = append(steps,
 			fmt.Sprintf("ALTER TABLE %s DETACH PARTITION %s", qr(t), qr(def)),
@@ -403,6 +430,11 @@ func Disable(ctx context.Context, o DisableOptions) error {
 		}
 		steps = append(steps, appRLS...)
 		steps = append(steps, mvSteps...) // before the old parent goes: they read it until then
+		for _, f := range tfuncs {
+			if trig.Rewritten(f[1]) {
+				steps = append(steps, strings.Replace(f[0], f[1], trig.Restore(f[1]), 1))
+			}
+		}
 		for _, g := range trgs {
 			steps = append(steps, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", q(g[0]), qr(t)), g[1]) // a clone may be left on it
 			switch g[2] {
@@ -418,6 +450,10 @@ func Disable(ctx context.Context, o DisableOptions) error {
 			fmt.Sprintf("DROP TRIGGER IF EXISTS lokadb_refs ON %s", qr(t)),
 			fmt.Sprintf("DROP TRIGGER IF EXISTS lokadb_parent ON %s", qr(t)),
 			fmt.Sprintf("DROP INDEX IF EXISTS %s", qr(inSchemaOf(t, keyIndex(t)))),
+			// the sequences enable gave the parent's columns (R03) go back to the plain table's
+			// before the old parent goes, or they would go with it; the identities' are owned by
+			// none, restoreOwnerAndIdentity makes the identities again and drops them
+			ownSequencesSQL(t, idSeqs),
 			fmt.Sprintf("DROP TABLE %s", qr(hn(t, "__lokadb_old"))))
 		if added[t] {
 			steps = append(steps, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", qr(t), q(tc)))

@@ -42,8 +42,10 @@ type env struct {
 	db   string
 	spec string // tables spec; "" = documents + document_versions
 	port int    // the proxy's port, when the check starts one
+	admin string // the cloud DSN of the move's commands, when it is not the superuser's (movenosuper.go)
 	// cloudHost: the cloud Postgres of the check ("cloud", wal_level = logical; "cloudplain",
-	// wal_level = replica; "cloud16", Postgres 16 with wal_level = logical)
+	// wal_level = replica; "cloud16", Postgres 16 with wal_level = logical; "cloud13", "cloud14",
+	// "cloud15", "cloud17" the same on those versions: pgversions.go)
 	cloudHost string
 	// customerHost: the organization's Postgres of the check ("customer"; "customervec" and
 	// "customergis" has PostGIS installed as a package: movepgext.go)
@@ -197,7 +199,7 @@ func oneLine(s string) string {
 }
 
 func waitUp(ctx context.Context) error {
-	for _, host := range []string{"cloud", "cloudplain", "cloud16", "customer", "customergis"} {
+	for _, host := range []string{"cloud", "cloudplain", "cloud16", "cloud13", "cloud14", "cloud15", "cloud17", "customer", "customer14", "customergis"} {
 		for i := 0; ; i++ {
 			c, err := pgx.Connect(ctx, dsn(host, "postgres", "postgres"))
 			if err == nil {
@@ -210,7 +212,7 @@ func waitUp(ctx context.Context) error {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
-	for _, host := range []string{"cloud", "cloudplain", "cloud16", "customer", "customergis"} {
+	for _, host := range []string{"cloud", "cloudplain", "cloud16", "cloud13", "cloud14", "cloud15", "cloud17", "customer", "customer14", "customergis"} {
 		if err := execSQL(ctx, dsn(host, "postgres", "postgres"),
 			`DO $$ BEGIN CREATE ROLE app LOGIN PASSWORD 'app'; EXCEPTION WHEN duplicate_object THEN END $$`,
 			`DO $$ BEGIN CREATE ROLE reader; EXCEPTION WHEN duplicate_object THEN END $$`,
@@ -343,7 +345,15 @@ func (e *env) moveArgs(org int, extra ...string) []string {
 	if moveMode != "" {
 		args = append(args, "-mode", moveMode)
 	}
-	return withReplConsent(append(args, extra...))
+	args = append(args, extra...)
+	if e.admin != "" {
+		for i := 1; i+1 < len(args); i++ {
+			if (args[i] == "-db" || args[i] == "-publisher") && args[i+1] == e.cloud() {
+				args[i+1] = e.admin
+			}
+		}
+	}
+	return withReplConsent(args)
 }
 
 // withReplConsent: a move-org in -mode logical (the last -mode given) says it accepts the

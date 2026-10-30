@@ -508,7 +508,7 @@ func (o *Ops) ExtSync(ctx context.Context, a cloudproto.OrgArgs) (cloudproto.Ext
 	if err != nil {
 		return res, err
 	}
-	conn, err := pgx.Connect(ctx, app)
+	conn, err := tunnel.PGXConnect(ctx, app)
 	if err != nil {
 		return res, &cloudproto.JobError{Code: "unreachable", Retryable: true, Message: Redact(err.Error())}
 	}
@@ -609,7 +609,7 @@ func (o *Ops) Probe(ctx context.Context, org int64) cloudproto.Probe {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, app)
+	conn, err := tunnel.PGXConnect(ctx, app)
 	if err != nil {
 		p.Error = Redact(err.Error())
 		return p

@@ -182,3 +182,23 @@ func hbaTooWide(addr, mask string, allowed []*net.IPNet) string {
 	}
 	return "not within -proxy-hosts"
 }
+
+// movedServers (R01): a database with moved organizations holds each one's FDW server
+// (lokadb_org<N>) and the password of the customer's role in its user mappings. A dump of it
+// carries both: a copy restored on a staging server or a laptop reaches the customer's database.
+// The relays take those connections from this database only (lokadb pin), but a copy restored
+// next to it (another database of the same server) has its address: copies are defused.
+func (c *checker) movedServers() error {
+	rows, err := c.rows(`SELECT s.srvname::text FROM pg_foreign_server s WHERE s.srvname ~ '^lokadb_org[0-9]+$' ORDER BY s.srvname`)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	var names []string
+	for _, r := range rows {
+		names = append(names, r[0])
+	}
+	c.add(Info, "moved_org_servers", "", fmt.Sprintf("this database holds %d moved organization(s)' servers to their own databases, with the password of the customer's role in the user mappings: a dump of it carries them. "+
+		"Before you restore a dump anywhere else (staging, a laptop, analytics), dump without them or defuse the copy: lokadb defuse -db <the copy> -this-is-a-copy <its name>. "+
+		"The relays take those connections from this database's address only (lokadb pin)", len(names)), names)
+	return nil
+}

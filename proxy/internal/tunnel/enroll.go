@@ -138,7 +138,37 @@ CREATE OR REPLACE FUNCTION lokadb_cp.cert_revoked(s text) RETURNS boolean LANGUA
       FROM lokadb_cp.agent_certs c JOIN up ON c.serial = up.parent WHERE up.depth < 10000)
   SELECT EXISTS (SELECT FROM up WHERE revoked_at IS NOT NULL)
       OR EXISTS (SELECT FROM up JOIN lokadb_cp.org_revocations r ON r.org = up.org WHERE up.depth = 1 AND up.issued_at <= r.at)
-$$;`
+$$;
+-- cloud_sources: the addresses the SaaS database connects to the organizations' ports from (pin.go):
+-- probe (proven by lokadb pin from that database), manual (confirmed by a person), seen (the first
+-- ones the relay saw while nothing was proven: trusted, not confirmed)
+CREATE TABLE IF NOT EXISTS lokadb_cp.cloud_sources (
+  addr     text PRIMARY KEY,
+  how      text NOT NULL,
+  first_at timestamptz NOT NULL DEFAULT now(),
+  last_at  timestamptz NOT NULL DEFAULT now()
+);
+-- cloud_probes: one-time codes of lokadb pin's probes (a copy of the SaaS database has none)
+CREATE TABLE IF NOT EXISTS lokadb_cp.cloud_probes (
+  nonce      text PRIMARY KEY,
+  expires_at timestamptz NOT NULL
+);
+-- cloud_refused: connections to an organization's port from an address that is not the SaaS
+-- database's; pending: held while lokadb pin may prove it (a new pod address)
+CREATE TABLE IF NOT EXISTS lokadb_cp.cloud_refused (
+  addr     text PRIMARY KEY,
+  org      text NOT NULL,
+  first_at timestamptz NOT NULL DEFAULT now(),
+  last_at  timestamptz NOT NULL DEFAULT now(),
+  count    bigint NOT NULL DEFAULT 1,
+  pending  boolean NOT NULL DEFAULT false
+);
+-- relay_ports: the ports the relays serve organizations on (LokaDB's components prove their address
+-- before they connect to one: self.go)
+CREATE TABLE IF NOT EXISTS lokadb_cp.relay_ports (
+  port text PRIMARY KEY,
+  at   timestamptz NOT NULL DEFAULT now()
+);`
 
 type PGStore struct{ db *pgxpool.Pool }
 

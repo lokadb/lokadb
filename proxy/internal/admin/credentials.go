@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/lokadb/lokadb/proxy/internal/tunnel"
+
 	"github.com/lokadb/lokadb/proxy/internal/creds"
 	"github.com/lokadb/lokadb/proxy/internal/ownsql"
 )
@@ -38,7 +40,7 @@ func StoreCredentials(ctx context.Context, o CredentialsOptions) error {
 	if o.Kind != creds.Direct && o.Kind != creds.Owner {
 		return fmt.Errorf("-kind %q: direct or owner", o.Kind)
 	}
-	org, err := pgx.Connect(ctx, o.DSN)
+	org, err := tunnel.PGXConnect(ctx, o.DSN)
 	if err != nil {
 		return fmt.Errorf("the credentials do not connect to the organization's database: %w", err)
 	}

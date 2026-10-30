@@ -264,6 +264,30 @@ note_o=$(cust_sql cust_richapp "SELECT length(txt) FROM notes WHERE id = 1")
   || { fail "richapp: updates without a primary key: $errs errors, length cloud '$note_c' organization '$note_o'"; grep ERROR rich_updates.log | sort | uniq -c | head -3; }
 new=$(cloud_sql richapp "INSERT INTO documents (organization_id, title, body, status, price) VALUES (1, 'New', 'a b c', 'published', 3) RETURNING body_len || ' ' || words" 2>&1 | head -1)
 [ "$new" = "5 3" ] && echo "PASS  richapp: a new row of the moved organization gets its generated columns (stored 5, virtual 3)" || fail "richapp: insert after the move: '$new'"
+
+# R01: a dump of the cloud database carries the organization's FDW server and the customer's
+# password. Restored on another server in the same network (staging), its DELETE reached the
+# customer. move-org -cp proved the cloud database's address to the relay: the copy is refused.
+log "R01: a dump of the cloud database restored on another server does not reach the organization's database"
+$C exec -T cloud pg_dump -U postgres richapp >richapp_dump.sql 2>/dev/null
+docker rm -f "$P-staging" >/dev/null 2>&1
+docker run -d --name "$P-staging" --network "${P}_cloudnet" -e POSTGRES_PASSWORD=pw postgres:18 >/dev/null
+for _ in $(seq 1 60); do docker exec "$P-staging" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1 && break; sleep 1; done
+docker exec "$P-staging" psql -U postgres -qc "CREATE ROLE app LOGIN" -c "CREATE DATABASE staging" >/dev/null 2>&1
+docker exec -i "$P-staging" psql -U postgres -q -d staging <richapp_dump.sql >staging_restore.log 2>&1
+before=$(cust_sql cust_richapp "SELECT count(*) FROM documents")
+copy_out=$(docker exec "$P-staging" psql -U postgres -d staging -tAc "DELETE FROM documents WHERE organization_id = 1" 2>&1)
+after=$(cust_sql cust_richapp "SELECT count(*) FROM documents")
+if grep -q "not the SaaS database organization 1 was moved from" <<<"$copy_out" && [ -n "$before" ] && [ "$before" = "$after" ]; then
+  echo "PASS  R01: the restored copy's DELETE is refused at the relay; the organization keeps its $after rows"
+else
+  fail "R01: the copy's DELETE: '$(head -c 300 <<<"$copy_out")', the organization's rows $before -> $after"
+fi
+docker exec "$P-staging" psql -U postgres -d staging -tAc "SELECT 1" >/dev/null 2>&1 &&
+  lokadb defuse -db "host=$P-staging user=postgres password=pw dbname=staging sslmode=disable" -this-is-a-copy staging >defuse.log 2>&1
+grep -q "defused: 1 organization server" defuse.log && [ "$(docker exec "$P-staging" psql -U postgres -d staging -tAc "SELECT count(*) FROM pg_user_mappings WHERE srvname LIKE 'lokadb_org%'")" = 0 ] \
+  && echo "PASS  R01: lokadb defuse leaves the copy no customer's password and no way to the organization" || fail "R01: defuse: $(tail -2 defuse.log)"
+docker rm -f "$P-staging" >/dev/null 2>&1
 bad=$(cloud_sql richapp "INSERT INTO documents (organization_id, title, body) VALUES (1, '', 'x')" 2>&1)
 grep -q documents_title_check <<<"$bad" && grep -q "remote SQL command" <<<"$bad" \
   && echo "PASS  richapp: the organization's database enforces the CHECK constraint" || fail "richapp: CHECK not enforced: '$bad'"

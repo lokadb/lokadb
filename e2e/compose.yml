@@ -80,6 +80,8 @@ services:
     # LOKADB_RECORD (set by run.sh): the workload recording lokadb check reads; empty = off
     command: ["proxy", "-config", "/etc/lokadb.json", "-record", "${LOKADB_RECORD:-}"]
     volumes: [./proxy.json:/etc/lokadb.json:ro, ./workload:/workload]
+    environment: # the direct profile reaches the relay's ports from a proven address (R01)
+      LOKADB_CONTROL_PLANE: "host=cloud dbname=controlplane user=postgres password=pw sslmode=disable"
     depends_on: {cloud: {condition: service_healthy}}
     # a fixed address: the cloud's pg_hba lets the application's role in from it only (run.sh)
     networks: {cloudnet: {ipv4_address: "10.${E2E_NET:-231}.1.250"}}
@@ -88,6 +90,8 @@ services:
     image: ${E2E_IMAGES:-${COMPOSE_PROJECT_NAME:-lokadb-e2e}}-lokadb
     profiles: [tools]
     volumes: [./specs:/specs:ro, ./workload:/workload:ro, ./proxy.json:/etc/lokadb.json:ro]
+    environment: # the relays take the organizations' ports from proven addresses only (R01)
+      LOKADB_CONTROL_PLANE: "host=cloud dbname=controlplane user=postgres password=pw sslmode=disable"
     networks: [cloudnet]
   loadgen:
     build: ./loadgen

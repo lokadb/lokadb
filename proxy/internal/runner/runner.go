@@ -42,10 +42,12 @@ type State struct {
 
 // Runner: lokadb runner.
 type Runner struct {
-	Cfg     *Config
-	Log     *slog.Logger
-	Version string
-	HTTP    *http.Client
+	copiesAt  time.Time       // the last look for copies of the SaaS database in its cluster (pin.go)
+	confirmed map[string]bool // addresses confirmed in the panel, applied (pin.go)
+	Cfg       *Config
+	Log       *slog.Logger
+	Version   string
+	HTTP      *http.Client
 	// PollWait: how long the service may hold a poll (it answers within 25 s).
 	PollWait time.Duration
 	// Recheck: how often a runner with problems checks its config again (default 30 s).
@@ -188,6 +190,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		return fmt.Errorf("control plane: %w", err)
 	}
 	defer tun.Close()
+	tunnel.ProveSelfWith(tun) // the runner's jobs (and the proxy of this process) reach the relays' ports from a proven address
 	r.ops = &Ops{Cfg: r.Cfg, Tun: tun, Key: key, Log: r.Log}
 
 	unlock, err := r.lock(ctx)
@@ -201,6 +204,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.recover(ctx)
 
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); r.pinLoop(ctx) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); r.rotateLoop(ctx) }()
 	if r.Cfg.statusOn() {
 		wg.Add(1)
 		go func() { defer wg.Done(); r.statusLoop(ctx) }()

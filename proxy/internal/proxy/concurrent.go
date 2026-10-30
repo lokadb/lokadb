@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 	pg "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/proto"
 
@@ -124,7 +126,7 @@ func (s *session) runConcurrentIndex(pre []outMsg, st *pg.IndexStmt, text string
 	// 1. the organizations' databases: the statement as the client sent it, in their schema
 	for _, tg := range targets {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		conn, err := pgconn.Connect(ctx, tg.dsn)
+		conn, err := tunnel.PGConnect(ctx, tg.dsn)
 		if err == nil {
 			// the database the address leads to must be this organization's, as for the
 			// replay (prepareCustomers): an index is built in no other (review 3 P12)
@@ -177,7 +179,7 @@ func (s *session) runConcurrentIndex(pre []outMsg, st *pg.IndexStmt, text string
 		undo = append(undo, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			c, err := pgconn.Connect(ctx, dsn)
+			c, err := tunnel.PGConnect(ctx, dsn)
 			if err == nil {
 				_, err = c.Exec(ctx, drop).ReadAll()
 				c.Close(ctx)
