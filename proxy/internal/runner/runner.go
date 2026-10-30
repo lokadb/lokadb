@@ -366,7 +366,7 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 	revokedWait := first
 	for ctx.Err() == nil {
 		r.mu.Lock()
-		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}, Problems: redactProblems(r.problems), Info: redactInfo(r.Cfg.Info())}
+		req := cloudproto.PollRequest{Version: r.Version, InventoryHash: r.invHash, Running: []string{}, Problems: redactProblems(r.problems), Info: redactInfo(r.Cfg.Info()), Capabilities: cloudproto.Kinds}
 		ready := r.ops != nil
 		for id := range r.running {
 			req.Running = append(req.Running, id)

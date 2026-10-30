@@ -73,6 +73,9 @@ type PollRequest struct {
 	// Info: facts for the setup wizard, nothing secret ("database": "pgsql:5432/app as forge",
 	// "relay": "up", "proxy": "up", ...): what the runner found and started.
 	Info map[string]string `json:"info,omitempty"`
+	// Capabilities: the kinds this runner does now ("kind@v"), as at registration: an updated
+	// runner keeps its identity and does more. None (an older runner): what it registered with stands.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // Problem: one thing to fix on the runner's side, in words for the panel.
