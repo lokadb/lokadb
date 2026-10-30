@@ -44,28 +44,28 @@ func (o *Ops) OrgList(ctx context.Context, a cloudproto.OrgListArgs) (cloudproto
 	res.OnlyKeys = onlyKeys
 	tbl, key := identOf(set.OrgTable).Sanitize(), pgx.Identifier{set.OrgKey}.Sanitize()
 
-	label := ""
+	// the label: the person's column, or the readable ones found by name, best first; a customer
+	// whose name is empty (NULL) is shown by the next one (the e-mail), or with none
+	var labels []string
 	if !onlyKeys {
-		label = set.OrgLabel
-		if label == "" {
-			label = o.labelColumn(ctx, conn, set.OrgTable)
+		if set.OrgLabel != "" {
+			labels = []string{set.OrgLabel}
+		} else {
+			labels = o.labelColumns(ctx, conn, set.OrgTable)
 		}
 	}
-	res.LabelColumn = label
+	if len(labels) > 0 {
+		res.LabelColumn = labels[0]
+	}
 	where, args := "", []any{}
 	if q := strings.TrimSpace(a.Q); q != "" {
 		where = fmt.Sprintf("WHERE %s::text ILIKE $1", key)
-		if label != "" {
-			where += fmt.Sprintf(" OR %s::text ILIKE $1", pgx.Identifier{label}.Sanitize())
+		for _, l := range labels {
+			where += fmt.Sprintf(" OR %s::text ILIKE $1", pgx.Identifier{l}.Sanitize())
 		}
 		args = append(args, "%"+strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)+"%")
 	}
-	sel := key + "::text"
-	if label != "" {
-		sel += ", " + pgx.Identifier{label}.Sanitize() + "::text"
-	} else {
-		sel += ", ''"
-	}
+	sel := key + "::text, " + labelExpr(labels)
 	roots := o.rootTables()
 	var keys []string
 	if a.Mode == "smallest" && len(roots) > 0 {
@@ -121,7 +121,19 @@ func (o *Ops) rootTables() [][2]string {
 	return out
 }
 
-func (o *Ops) labelColumn(ctx context.Context, conn *pgx.Conn, table string) string {
+// labelExpr: the first non-empty of the label columns, as text (” with none).
+func labelExpr(labels []string) string {
+	if len(labels) == 0 {
+		return "''"
+	}
+	parts := make([]string, 0, len(labels)+1)
+	for _, l := range labels {
+		parts = append(parts, fmt.Sprintf("NULLIF(%s::text, '')", pgx.Identifier{l}.Sanitize()))
+	}
+	return "COALESCE(" + strings.Join(append(parts, "''"), ", ") + ")"
+}
+
+func (o *Ops) labelColumns(ctx context.Context, conn *pgx.Conn, table string) []string {
 	schema, name := "public", table
 	if i := strings.IndexByte(table, '.'); i > 0 {
 		schema, name = table[:i], table[i+1:]
@@ -129,7 +141,7 @@ func (o *Ops) labelColumn(ctx context.Context, conn *pgx.Conn, table string) str
 	rows, err := conn.Query(ctx, `SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2
 		AND data_type IN ('text', 'character varying', 'citext', 'character', 'USER-DEFINED')`, schema, name)
 	if err != nil {
-		return ""
+		return nil
 	}
 	defer rows.Close()
 	have := map[string]bool{}
@@ -139,16 +151,25 @@ func (o *Ops) labelColumn(ctx context.Context, conn *pgx.Conn, table string) str
 			have[c] = true
 		}
 	}
-	return pickLabel(have)
+	return pickLabels(have)
 }
 
-// pickLabel: the column that tells a person which customer a row is: the name, else the e-mail,
-// else another readable one (a title, a slug, a username).
-func pickLabel(have map[string]bool) string {
+// pickLabels: the columns that tell a person which customer a row is, best first: the name, else
+// the e-mail, else another readable one (a title, a slug, a username).
+func pickLabels(have map[string]bool) []string {
+	var out []string
 	for _, c := range labelColumns {
 		if have[c] {
-			return c
+			out = append(out, c)
 		}
+	}
+	return out
+}
+
+// pickLabel: the best of them ("" with none).
+func pickLabel(have map[string]bool) string {
+	if l := pickLabels(have); len(l) > 0 {
+		return l[0]
 	}
 	return ""
 }
