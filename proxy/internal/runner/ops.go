@@ -51,10 +51,60 @@ func (o *Ops) customerDSN(port int, database, role, password string) string {
 		q(database), q(role), q(password), o.Cfg.Relay.SSLMode)
 }
 
-// Lookup: an organization by number or uuid.
+// Lookup: an organization by number or value. A customer the person picked by its value (a uuid, a ULID, a
+// text key) that has no number yet gets one here, as lokadb org-add would give it: nobody runs org-add for a
+// move from the panel. A value that is no customer's is an error, not a new number.
 func (o *Ops) Lookup(ctx context.Context, a cloudproto.LookupArgs) (cloudproto.LookupResult, error) {
 	org, err := admin.RequireOrg(ctx, o.Cfg.DB, a.Org, a.Tenant)
-	return cloudproto.LookupResult{Org: org}, err
+	if err == nil || a.Tenant == "" || !errors.Is(err, admin.ErrNoNumber) {
+		return cloudproto.LookupResult{Org: org}, err
+	}
+	if err := o.customerExists(ctx, a.Tenant); err != nil {
+		return cloudproto.LookupResult{}, err
+	}
+	org, err = admin.OrgAdd(ctx, admin.OrgAddOptions{DSN: o.Cfg.DB, Tenant: a.Tenant, Log: o.Log})
+	if err != nil { // another lookup of the same customer gave it its number at the same moment
+		if n, err2 := admin.RequireOrg(ctx, o.Cfg.DB, 0, a.Tenant); err2 == nil {
+			return cloudproto.LookupResult{Org: n}, nil
+		}
+		return cloudproto.LookupResult{}, err
+	}
+	o.Log.Info("a customer got its number for its first move", "org", org)
+	return cloudproto.LookupResult{Org: org}, nil
+}
+
+// customerExists: the value is a customer's, in the customers table chosen in the setup, else in a table
+// that moves with a customer. Otherwise a plain error (no number is given to it).
+func (o *Ops) customerExists(ctx context.Context, value string) error {
+	conn, err := ownsql.Connect(ctx, o.Cfg.DB)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	var where []string
+	set := o.settings()
+	if set.OrgTable != "" && set.OrgKey != "" {
+		where = append(where, fmt.Sprintf("SELECT 1 FROM %s WHERE %s::text = $1", identOf(set.OrgTable).Sanitize(), pgx.Identifier{set.OrgKey}.Sanitize()))
+	} else {
+		for _, r := range o.rootTables() {
+			where = append(where, fmt.Sprintf("SELECT 1 FROM %s WHERE %s::text = $1", identOf(r[0]).Sanitize(), pgx.Identifier{r[1]}.Sanitize()))
+		}
+	}
+	if len(where) == 0 {
+		return &cloudproto.JobError{Code: "no_org_table", Message: "the table of customers is not chosen yet: choose it in the setup (step 2)"}
+	}
+	var ok bool
+	if err := conn.QueryRow(ctx, "SELECT EXISTS ("+strings.Join(where, " UNION ALL ")+")", value).Scan(&ok); err != nil {
+		return err
+	}
+	if !ok {
+		in := set.OrgTable
+		if in == "" {
+			in = "the tables that move with a customer"
+		}
+		return &cloudproto.JobError{Code: "no_customer", Message: fmt.Sprintf("There is no customer with id %s in %s.", value, in), Hint: "pick the customer from the list of your customers, or check the id"}
+	}
+	return nil
 }
 
 // Check: lokadb check; with an organization, against its database as the cloud's role there

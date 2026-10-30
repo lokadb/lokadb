@@ -639,7 +639,7 @@ SQL
   grep -qE '^\(0 rows\)' <<<"$out" && echo "PASS  a statement on the allow list runs (lookup by slug)" || fail "goapp: the allowed lookup did not run"
   n=$($C exec -T cloud psql "host=proxy port=6432 dbname=guardapp user=app password=app sslmode=disable" -tAc "SELECT count(*) FROM documents WHERE title LIKE '%'" 2>&1)
   sleep 1
-  if [ "$n" = 2 ] && $C logs --no-color proxy 2>&1 | grep "runs in every organization's database" | grep -q "db=guardapp"; then
+  if [ "$n" = 2 ] && $C logs --no-color proxy 2>&1 | grep "a statement names no customer" | grep -q "db=guardapp"; then
     echo "PASS  guardapp (mode log): the same kind of statement runs and the proxy logs a warning"
   else
     fail "guardapp log mode: '$n'"

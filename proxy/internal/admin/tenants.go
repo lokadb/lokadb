@@ -127,6 +127,16 @@ func (r *runner) tenantKindOf(t, tc string) (kind, base string, err error) {
 	return TenantKind(rows[0][0]), rows[0][0], nil
 }
 
+// ErrNoNumber: the organization's value is not in lokadb.tenants (org-add gives it its number).
+var ErrNoNumber = errors.New("the organization has no number yet")
+
+type noNumber string
+
+func (e noNumber) Error() string {
+	return fmt.Sprintf("organization %s has no number yet: first lokadb org-add -tenant %s", string(e), string(e))
+}
+func (e noNumber) Is(target error) bool { return target == ErrNoNumber }
+
 // OrgAddOptions of OrgAdd.
 type OrgAddOptions struct {
 	DSN    string
@@ -292,7 +302,7 @@ func ResolveTenant(ctx context.Context, q querier, org int64, tenant string) (Te
 	}
 	if len(rows) == 0 {
 		if tenant != "" {
-			return Tenant{}, fmt.Errorf("organization %s has no number yet: first lokadb org-add -tenant %s", tenant, tenant)
+			return Tenant{}, noNumber(tenant)
 		}
 		return Tenant{}, fmt.Errorf("no organization has number %d: first lokadb org-add -tenant <its value>", org)
 	}
