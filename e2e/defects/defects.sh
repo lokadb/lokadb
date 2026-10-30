@@ -21,7 +21,7 @@ export MSYS_NO_PATHCONV=1 # Git Bash: leave /usr/local/bin/... arguments alone
 C="docker compose --profile pgbouncer" # the profile only lets down remove pgbouncer (B9.11) too
 $C down -v >/dev/null 2>&1
 [ -n "${DEFECTS_NO_BUILD:-}" ] || build_locked $C build check cloud customer customergis || exit 1 # defects_par.sh builds once and tags the image for every part
-$C up -d --wait cloud cloudplain customer customergis || { $C down -v >/dev/null 2>&1; exit 1; } # never leave a half-started stand behind
+$C up -d --wait cloud cloudplain cloud16 customer customergis || { $C down -v >/dev/null 2>&1; exit 1; } # never leave a half-started stand behind
 # B9.11 only, named in DEFECTS_ONLY: pgbouncer in front of the check's proxy; without it the check is not registered
 case ",${DEFECTS_ONLY:-}," in *,B9.11,*)
   $C up -d pgbouncer || { $C down -v >/dev/null 2>&1; exit 1; }

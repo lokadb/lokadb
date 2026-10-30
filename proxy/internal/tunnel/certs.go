@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// GenerateCerts writes a demo CA (certificate and key: the relay signs agents' enrollment
+// GenerateCerts writes a CA (certificate and key: the relay signs agents' enrollment
 // requests with it), a relay server certificate, and optionally static client certificates
 // for orgs (CN org-<N>; the relay rejects them unless they were issued by enrollment).
 // The CA key goes next to the certificates; GenerateCertsTo puts it elsewhere.
@@ -30,7 +30,7 @@ func GenerateCerts(dir, relayHost string, orgs []string) error {
 // containers mount must hold ca.crt and the relay's certificate only, the CA key belongs to
 // the relay alone (the runner, the proxy and the agents need ca.crt).
 func GenerateCertsTo(certDir, caKeyDir, relayHost string, orgs []string) error {
-	ca, caKey, err := newCA(certDir, caKeyDir)
+	ca, caKey, err := newCA(certDir, caKeyDir, relayHost)
 	if err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func EnsureCerts(certDir, caKeyDir, relayHost string) (CertsState, error) {
 	case errCrt == nil:
 		return st, fmt.Errorf("%s exists but %s does not: the CA key is lost or elsewhere (-ca-key-dir); a new CA would leave every agent without a valid certificate, so none is made", caCrt, caKeyPath)
 	default:
-		if ca, caKey, err = newCA(certDir, caKeyDir); err != nil {
+		if ca, caKey, err = newCA(certDir, caKeyDir, relayHost); err != nil {
 			return st, err
 		}
 		st.CA = "created"
@@ -167,8 +167,13 @@ func loadCA(crtPath, keyPath string) (*x509.Certificate, *ecdsa.PrivateKey, erro
 	return ca, key, nil
 }
 
-// newCA writes ca.crt to certDir and ca.key to caKeyDir.
-func newCA(certDir, caKeyDir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+// newCA writes ca.crt to certDir and ca.key to caKeyDir. Its name says whose relay it is (the
+// first of relayHost); CAs made before keep their old name.
+func newCA(certDir, caKeyDir, relayHost string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	name := "LokaDB relay CA"
+	if hs := splitHosts(relayHost); len(hs) > 0 {
+		name += " " + hs[0]
+	}
 	if err := os.MkdirAll(certDir, 0o755); err != nil {
 		return nil, nil, err
 	}
@@ -181,7 +186,7 @@ func newCA(certDir, caKeyDir string) (*x509.Certificate, *ecdsa.PrivateKey, erro
 	}
 	caTmpl := &x509.Certificate{
 		SerialNumber:          serial(),
-		Subject:               pkix.Name{CommonName: "lokadb demo CA"},
+		Subject:               pkix.Name{CommonName: name},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().AddDate(1, 0, 0),
 		IsCA:                  true,

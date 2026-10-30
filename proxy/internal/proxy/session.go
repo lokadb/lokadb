@@ -2561,7 +2561,7 @@ func (s *session) refuse(sql string, an *Analysis, unknown bool) bool {
 	}
 	switch v {
 	case FanoutRefused:
-		l := s.srv.unrouted.note(sql, an, true)
+		l := s.srv.unrouted.note(s.db, sql, an, true)
 		if l.first || l.refused {
 			s.log.Warn("refused: the statement names no customer; decide it in the panel (setup, step 5)", "table", fanoutTable(an), "policy", s.fanout.Mode,
 				"gap", an.GapText(), "sql", brief(sql), "refused_since_last_line", l.since)
@@ -2571,7 +2571,7 @@ func (s *session) refuse(sql string, an *Analysis, unknown bool) bool {
 	case FanoutDenied: // decided in the panel: refused, and not asked about again
 		return true
 	case FanoutRun:
-		l := s.srv.unrouted.note(sql, an, false)
+		l := s.srv.unrouted.note(s.db, sql, an, false)
 		if l.first && s.fanout.Mode == FanoutLog {
 			s.log.Warn("a statement names no customer (logged; refused once a customer has moved unless you decide it): decide it in the panel (setup, step 5)",
 				"table", fanoutTable(an), "sql", brief(sql))

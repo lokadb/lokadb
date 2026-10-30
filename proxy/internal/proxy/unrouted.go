@@ -13,6 +13,7 @@ import (
 // by $n, so no customer's data is in it. The setup wizard shows these before the first customer
 // moves, so each can be given its organization, allowed by name, or turned into a cloud table.
 type Unrouted struct {
+	DB          string    `json:"db,omitempty"` // the database it was sent to: one proxy can serve several
 	Fingerprint string    `json:"fingerprint"`
 	SQL         string    `json:"sql"`
 	Full        string    `json:"full,omitempty"` // the same, not cut: what an allow-list entry is made of
@@ -56,7 +57,9 @@ type unroutedLog struct {
 	start        time.Time
 }
 
-func (u *unroutedSet) note(sql string, an *Analysis, refused bool) (out unroutedLog) {
+// note counts a statement of database db (the shapes of each database are their own: a proxy can
+// serve several, each with its policy and decisions).
+func (u *unroutedSet) note(db, sql string, an *Analysis, refused bool) (out unroutedLog) {
 	fp := an.fp
 	if fp == "" {
 		fp, _ = pg.Fingerprint(sql)
@@ -69,14 +72,15 @@ func (u *unroutedSet) note(sql string, an *Analysis, refused bool) (out unrouted
 	if u.m == nil {
 		u.m = map[string]*Unrouted{}
 	}
-	x := u.m[fp]
+	key := db + "\x00" + fp
+	x := u.m[key]
 	if x == nil {
 		if len(u.m) >= unroutedMax {
 			u.overflow++
 			return out
 		}
-		x = &Unrouted{Fingerprint: fp, SQL: brief(sql), Full: full(sql), Table: fanoutTable(an), Gaps: append([]Gap(nil), an.Gaps...), Write: an.Write, First: time.Now()}
-		u.m[fp] = x
+		x = &Unrouted{DB: db, Fingerprint: fp, SQL: brief(sql), Full: full(sql), Table: fanoutTable(an), Gaps: append([]Gap(nil), an.Gaps...), Write: an.Write, First: time.Now()}
+		u.m[key] = x
 		out.first = true
 	}
 	now := time.Now()
@@ -118,7 +122,7 @@ func (s *Server) Unrouted() ([]Unrouted, int64) {
 		out = append(out, *x)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].Count > out[j].Count || out[i].Count == out[j].Count && out[i].Fingerprint < out[j].Fingerprint
+		return out[i].Count > out[j].Count || out[i].Count == out[j].Count && (out[i].Fingerprint < out[j].Fingerprint || out[i].Fingerprint == out[j].Fingerprint && out[i].DB < out[j].DB)
 	})
 	return out, s.unrouted.overflow
 }

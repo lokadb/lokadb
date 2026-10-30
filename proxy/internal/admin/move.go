@@ -127,6 +127,32 @@ func (t moveTable) local() string { return hn(t.name, fmt.Sprintf("__o%d", t.org
 
 func (t moveTable) foreign() string { return hn(t.name, fmt.Sprintf("__org%d", t.org)) }
 
+// likeParent: a partitioned table made only to give the foreign table the parent's columns and
+// CHECK constraints, dropped right after.
+func (t moveTable) likeParent() string { return hn(t.name, fmt.Sprintf("__org%d_like", t.org)) }
+
+// foreignTableDDL: the foreign table that stands for the organization's table, to be attached to
+// the parent at the switch. ATTACH wants the parent's CHECK constraints on it, compared by their
+// stored expression (conbin), not by meaning: the text of pg_get_constraintdef parsed again can
+// give another expression (a Laravel enum, a varchar column = ANY (ARRAY['a'::character
+// varying]::text[]), came back with other casts and ATTACH refused it: "has different definition
+// for check constraint"). CREATE FOREIGN TABLE takes no LIKE, so it is made a partition of a
+// table made LIKE the parent (which copies the expressions, not their text) and detached from it:
+// the constraints stay, with the parent's expressions. Postgres does not check them on a foreign
+// table: the organization's database does (see describe).
+func foreignTableDDL(t moveTable, key, server, custSchema string) []string {
+	return []string{
+		"DROP FOREIGN TABLE IF EXISTS " + qr(t.foreign()),
+		"DROP TABLE IF EXISTS " + qr(t.likeParent()),
+		fmt.Sprintf("CREATE TABLE %s (LIKE %s INCLUDING CONSTRAINTS INCLUDING GENERATED) PARTITION BY LIST (%s)",
+			qr(t.likeParent()), qr(t.name), key), // the parent's partition key (tenantKey)
+		fmt.Sprintf("CREATE FOREIGN TABLE %s PARTITION OF %s FOR VALUES IN (%s) SERVER %s OPTIONS (schema_name %s, table_name %s)",
+			qr(t.foreign()), qr(t.likeParent()), t.val, q(server), lit(custSchema), lit(nameOf(t.name))),
+		fmt.Sprintf("ALTER TABLE %s DETACH PARTITION %s", qr(t.likeParent()), qr(t.foreign())),
+		"DROP TABLE " + qr(t.likeParent()),
+	}
+}
+
 func (t moveTable) retired() string { return hn(t.name, fmt.Sprintf("__o%d_source", t.org)) }
 
 var errRetry = errors.New("switch not possible right now")
@@ -463,19 +489,7 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 		prep = append(prep, fmt.Sprintf("CREATE USER MAPPING FOR %s SERVER %s OPTIONS (user %s, password %s)", r, q(server), lit(app.User), lit(app.Password)))
 	}
 	for _, t := range tables {
-		var defs []string
-		for _, c := range t.cols {
-			defs = append(defs, colDef(c))
-		}
-		// ATTACH also needs the parent's CHECK constraints declared (Postgres does not check
-		// them on a foreign table: the organization's database does, see describe).
-		for _, c := range t.checks {
-			defs = append(defs, "CONSTRAINT "+q(c[0])+" "+strings.TrimSuffix(c[1], " NOT VALID"))
-		}
-		prep = append(prep,
-			"DROP FOREIGN TABLE IF EXISTS "+qr(t.foreign()),
-			fmt.Sprintf("CREATE FOREIGN TABLE %s (%s) SERVER %s OPTIONS (schema_name %s, table_name %s)",
-				qr(t.foreign()), strings.Join(defs, ", "), q(server), lit(custSchemaOf(t.name, o.CustomerSchema)), lit(nameOf(t.name))))
+		prep = append(prep, foreignTableDDL(t, o.org().Key(t.tenant), server, custSchemaOf(t.name, o.CustomerSchema))...)
 	}
 	// A marker row committed after the write lock proves, once it reaches the customer,
 	// that every earlier commit has been applied there (changes apply in commit order).

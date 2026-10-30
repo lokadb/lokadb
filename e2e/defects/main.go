@@ -43,7 +43,7 @@ type env struct {
 	spec string // tables spec; "" = documents + document_versions
 	port int    // the proxy's port, when the check starts one
 	// cloudHost: the cloud Postgres of the check ("cloud", wal_level = logical; "cloudplain",
-	// wal_level = replica)
+	// wal_level = replica; "cloud16", Postgres 16 with wal_level = logical)
 	cloudHost string
 	// customerHost: the organization's Postgres of the check ("customer"; "customervec" and
 	// "customergis" has PostGIS installed as a package: movepgext.go)
@@ -197,7 +197,7 @@ func oneLine(s string) string {
 }
 
 func waitUp(ctx context.Context) error {
-	for _, host := range []string{"cloud", "cloudplain", "customer", "customergis"} {
+	for _, host := range []string{"cloud", "cloudplain", "cloud16", "customer", "customergis"} {
 		for i := 0; ; i++ {
 			c, err := pgx.Connect(ctx, dsn(host, "postgres", "postgres"))
 			if err == nil {
@@ -210,7 +210,7 @@ func waitUp(ctx context.Context) error {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
-	for _, host := range []string{"cloud", "cloudplain", "customer", "customergis"} {
+	for _, host := range []string{"cloud", "cloudplain", "cloud16", "customer", "customergis"} {
 		if err := execSQL(ctx, dsn(host, "postgres", "postgres"),
 			`DO $$ BEGIN CREATE ROLE app LOGIN PASSWORD 'app'; EXCEPTION WHEN duplicate_object THEN END $$`,
 			`DO $$ BEGIN CREATE ROLE reader; EXCEPTION WHEN duplicate_object THEN END $$`,

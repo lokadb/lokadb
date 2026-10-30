@@ -195,6 +195,10 @@ func TestEmbeddedSettings(t *testing.T) {
 	if string(read(t, dir+"/spec.json")) == "" {
 		t.Fatal("no spec.json")
 	}
+	// the service checks from the internet the relay the agents dial
+	if in := c.Info(); in["relay_agent"] != "relay.example.com:7443" || in["relay_enroll"] != "relay.example.com:7444" {
+		t.Fatalf("info: %v", in)
+	}
 	if changed, _ := c.ApplySettings(s); changed {
 		t.Fatal("the same settings applied twice are a change")
 	}

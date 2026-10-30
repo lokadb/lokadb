@@ -23,6 +23,14 @@ services:
     environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
     command: ["postgres", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}", "-c", "recovery_init_sync_method=syncfs"]
     healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
+  # Postgres 16 with wal_level = logical: the cloud of a move whose organization runs 18 (MV33,
+  # movecheckexpr.go), as in the first move of a real one
+  cloud16:
+    image: postgres:16
+    tmpfs: ["${PG_DATA_TMPFS:-/var/lib/postgresql/data}"] # the data in memory, see the note above services
+    environment: {POSTGRES_PASSWORD: pw, PGCTLTIMEOUT: "600"}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "fsync=${PG_FSYNC:-off}", "-c", "synchronous_commit=${PG_FSYNC:-off}", "-c", "full_page_writes=${PG_FSYNC:-off}", "-c", "recovery_init_sync_method=syncfs"]
+    healthcheck: {test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], interval: 1s, retries: 60, start_period: 600s}
   customer:
     # pgvector but not PostGIS: a migration that installs PostGIS in the cloud cannot follow (M16)
     build: ./pgext
@@ -48,4 +56,4 @@ services:
     profiles: [pgbouncer]
   check:
     build: {context: ../.., dockerfile: e2e/defects/Dockerfile}
-    depends_on: {cloud: {condition: service_healthy}, cloudplain: {condition: service_healthy}, customer: {condition: service_healthy}, customergis: {condition: service_healthy}}
+    depends_on: {cloud: {condition: service_healthy}, cloudplain: {condition: service_healthy}, cloud16: {condition: service_healthy}, customer: {condition: service_healthy}, customergis: {condition: service_healthy}}

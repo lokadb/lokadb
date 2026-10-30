@@ -109,11 +109,11 @@ func TestFanoutRaiseSQL(t *testing.T) {
 func TestUnroutedCollected(t *testing.T) {
 	var u unroutedSet
 	an := &Analysis{Lokadb: true, Unhinted: true, UnhintedTable: "builds", Gaps: []Gap{{Kind: "unrestricted", Table: "builds", Column: "slug", Form: "="}}}
-	u.note("SELECT * FROM builds WHERE slug = 'a'", an, true)
+	u.note("app", "SELECT * FROM builds WHERE slug = 'a'", an, true)
 	an2 := &Analysis{Lokadb: true, Unhinted: true, UnhintedTable: "builds", Gaps: an.Gaps}
-	u.note("SELECT * FROM builds WHERE slug = 'b'", an2, false)
+	u.note("app", "SELECT * FROM builds WHERE slug = 'b'", an2, false)
 	other := &Analysis{Lokadb: true, Unhinted: true, UnhintedTable: "imports", Write: true}
-	u.note("DELETE FROM imports WHERE done", other, true)
+	u.note("app", "DELETE FROM imports WHERE done", other, true)
 	s := &Server{}
 	s.unrouted.m = u.m
 	list, over := s.Unrouted()
@@ -130,30 +130,30 @@ func TestUnroutedCollected(t *testing.T) {
 func TestUnroutedLogOnce(t *testing.T) {
 	var u unroutedSet
 	an := func() *Analysis { return &Analysis{Lokadb: true, Unhinted: true, UnhintedTable: "builds"} }
-	if l := u.note("SELECT * FROM builds WHERE slug = 'a'", an(), false); !l.first {
+	if l := u.note("app", "SELECT * FROM builds WHERE slug = 'a'", an(), false); !l.first {
 		t.Fatal("the first time is not logged")
 	}
 	for i := 0; i < 50; i++ {
-		if l := u.note("SELECT * FROM builds WHERE slug = 'x'", an(), false); l.first || l.refused || l.summary {
+		if l := u.note("app", "SELECT * FROM builds WHERE slug = 'x'", an(), false); l.first || l.refused || l.summary {
 			t.Fatalf("run %d is logged again: %+v", i, l)
 		}
 	}
-	if l := u.note("DELETE FROM builds WHERE done", an(), true); !l.first {
+	if l := u.note("app", "DELETE FROM builds WHERE done", an(), true); !l.first {
 		t.Fatal("the first refusal is not logged")
 	}
 	for i := 0; i < 5; i++ {
-		if l := u.note("DELETE FROM builds WHERE done", an(), true); l.refused {
+		if l := u.note("app", "DELETE FROM builds WHERE done", an(), true); l.refused {
 			t.Fatal("a refusal within the minute is logged")
 		}
 	}
 	for _, x := range u.m {
 		x.loggedAt = x.loggedAt.Add(-2 * time.Minute)
 	}
-	if l := u.note("DELETE FROM builds WHERE done", an(), true); !l.refused || l.since != 5 {
+	if l := u.note("app", "DELETE FROM builds WHERE done", an(), true); !l.refused || l.since != 5 {
 		t.Fatalf("after the minute: %+v", l)
 	}
 	u.summary = u.summary.Add(-11 * time.Minute)
-	if l := u.note("SELECT * FROM builds WHERE slug = 'y'", an(), false); !l.summary || l.shapes != 2 || l.runs != 52 {
+	if l := u.note("app", "SELECT * FROM builds WHERE slug = 'y'", an(), false); !l.summary || l.shapes != 2 || l.runs != 52 {
 		t.Fatalf("summary: %+v", l)
 	}
 }
@@ -217,5 +217,26 @@ func TestFanoutTableRead(t *testing.T) {
 		if got := f.Decide(write, analyze(write, m)); got != wantWrite {
 			t.Errorf("%s: a write: %v, want %v", mode, got, wantWrite)
 		}
+	}
+}
+
+// The same shape in two databases of one proxy is two entries, each logged the first time: the
+// policy and the decisions are per database (e2e guardapp ran a shape goapp had shown already).
+func TestUnroutedPerDatabase(t *testing.T) {
+	s := &Server{}
+	u := &s.unrouted
+	an := func() *Analysis { return &Analysis{} }
+	if l := u.note("goapp", "SELECT count(*) FROM documents WHERE title LIKE '%'", an(), true); !l.first {
+		t.Fatal("goapp: not first")
+	}
+	if l := u.note("guardapp", "SELECT count(*) FROM documents WHERE title LIKE '%'", an(), false); !l.first {
+		t.Fatal("guardapp: the shape of another database hid its first line")
+	}
+	if l := u.note("guardapp", "SELECT count(*) FROM documents WHERE title LIKE 'x'", an(), false); l.first {
+		t.Fatal("guardapp: the same shape again was first")
+	}
+	list, _ := s.Unrouted()
+	if len(list) != 2 || list[0].DB == list[1].DB {
+		t.Fatalf("%+v", list)
 	}
 }

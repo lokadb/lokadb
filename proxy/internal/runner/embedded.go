@@ -316,6 +316,17 @@ func (c *Config) Info() map[string]string {
 	}
 	sort.Strings(names)
 	out["spec"] = strings.Join(names, ",") // the tables the runner works with: the panel waits for the saved choice
+	// the relay as the agents dial it, and its CA (a public certificate): the service checks from the
+	// internet that customers reach it, and that it is this relay that answers
+	if c.Relay.Agent != "" {
+		out["relay_agent"], out["relay_enroll"] = c.Relay.Agent, c.Relay.Enroll
+		if c.Relay.ServerName != "" {
+			out["relay_server_name"] = c.Relay.ServerName
+		}
+		if b, err := os.ReadFile(c.Relay.CA); err == nil && c.Relay.CA != "" {
+			out["relay_ca"] = string(b)
+		}
+	}
 	for k, v := range c.info {
 		out[k] = v
 	}
@@ -346,7 +357,13 @@ func (c *Config) watchApp(ctx context.Context, srv *proxy.Server) {
 	for {
 		c.watchRole(ctx)
 		list, over := srv.Unrouted()
-		c.collectUnrouted(list, over)
+		mine := list[:0:0] // the application's database only: the proxy may serve others
+		for _, u := range list {
+			if u.DB == "" || u.DB == c.found.DBName {
+				mine = append(mine, u)
+			}
+		}
+		c.collectUnrouted(mine, over)
 		var via int64
 		var last time.Time
 		for _, u := range srv.Seen() {
