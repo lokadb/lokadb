@@ -2,11 +2,14 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/lokadb/lokadb/proxy/internal/admin"
 	"github.com/lokadb/lokadb/proxy/internal/cloudproto"
 )
 
@@ -76,5 +79,44 @@ func TestOrgListNullName(t *testing.T) {
 	}
 	if res, err = o.OrgList(ctx, cloudproto.OrgListArgs{Q: "b@x"}); err != nil || len(res.Orgs) != 1 || res.Orgs[0].Key != "b" {
 		t.Errorf("search by e-mail: %v, %v", res.Orgs, err)
+	}
+}
+
+// "Smallest first" sorts by the rows the list shows: the sum over every root table, not the first one.
+func TestOrgListSmallestBySum(t *testing.T) {
+	dsn := os.Getenv("INIT_TEST_DSN")
+	if dsn == "" {
+		t.Skip("INIT_TEST_DSN is not set")
+	}
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	// a has 1 build and 50 moments (51), b has 3 builds (3), c has 2 builds and 2 moments (4)
+	if _, err := conn.Exec(ctx, `DROP TABLE IF EXISTS sm_users, sm_builds, sm_moments;
+		CREATE TABLE sm_users (id text PRIMARY KEY, name text);
+		CREATE TABLE sm_builds (id serial, user_id text);
+		CREATE TABLE sm_moments (id serial, user_id text);
+		INSERT INTO sm_users VALUES ('a', 'Alpha'), ('b', 'Beta'), ('c', 'Gamma');
+		INSERT INTO sm_builds (user_id) VALUES ('a'), ('b'), ('b'), ('b'), ('c'), ('c');
+		INSERT INTO sm_moments (user_id) SELECT 'a' FROM generate_series(1, 50);
+		INSERT INTO sm_moments (user_id) VALUES ('c'), ('c')`); err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Exec(ctx, `DROP TABLE sm_users, sm_builds, sm_moments`)
+	c := &Config{DB: dsn, settings: &cloudproto.Settings{OrgTable: "sm_users", OrgKey: "id"}}
+	c.spec.Tables = []admin.SpecTable{{Name: "sm_builds", TenantColumn: "user_id"}, {Name: "sm_moments", TenantColumn: "user_id"}}
+	res, err := (&Ops{Cfg: c}).OrgList(ctx, cloudproto.OrgListArgs{Mode: "smallest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, it := range res.Orgs {
+		got = append(got, fmt.Sprintf("%s:%d", it.Key, it.Rows))
+	}
+	if strings.Join(got, " ") != "b:3 c:4 a:51" {
+		t.Fatalf("smallest: %v", got)
 	}
 }

@@ -1524,7 +1524,7 @@ func (s *session) handleBatch(final pgproto3.FrontendMessage) {
 			}
 			// Inside a pipeline without Sync (P3) the refs cannot be read: the statement would
 			// run in every organization's database, which is the fanout policy's to allow.
-			if incomplete && txNow != 'E' && s.fanout.decide(e.st.sql, an, true) == FanoutRefused {
+			if v := s.fanout.decide(e.st.sql, an, true); incomplete && txNow != 'E' && (v == FanoutRefused || v == FanoutDenied) {
 				s.log.Warn("refused: its organization needs a lookup inside a pipeline", "table", fanoutTable(an), "sql", brief(e.st.sql))
 				inject[e.idx] = append(inject[e.idx], raise(raiseSQL(lookupMsg))...)
 				refused = true
@@ -2567,6 +2567,8 @@ func (s *session) refuse(sql string, an *Analysis, unknown bool) bool {
 				"gap", an.GapText(), "sql", brief(sql), "refused_since_last_line", l.since)
 		}
 		s.logUnroutedSummary(l)
+		return true
+	case FanoutDenied: // decided in the panel: refused, and not asked about again
 		return true
 	case FanoutRun:
 		l := s.srv.unrouted.note(sql, an, false)

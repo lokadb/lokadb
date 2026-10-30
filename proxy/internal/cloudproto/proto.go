@@ -501,13 +501,36 @@ type StatementsResult struct {
 	Policy   string      `json:"policy"` // the fanout policy in force
 	Items    []Statement `json:"items"`
 	Overflow int64       `json:"overflow,omitempty"` // shapes that did not fit
+	// Tables: the same statements by table, what is decided once for a table and its future statements.
+	Tables []StatementTable `json:"tables"`
+	// Reads, Writes: the open shapes that only read, and those that change rows.
+	Reads  int `json:"reads"`
+	Writes int `json:"writes"`
+}
+
+// StatementTable: the open statements of one table, why they name no customer (one line), and the
+// choices for the table: "key" (Column names the customer), "cloud" (not per customer), "read" (its reads
+// run in every customer's database; its writes stay to the policy), "allow" (reads and writes run there),
+// "refuse".
+type StatementTable struct {
+	Table   string   `json:"table"`
+	Reason  string   `json:"reason"`
+	Column  string   `json:"column,omitempty"` // the unique column a "key" choice would use
+	Reads   int      `json:"reads"`
+	Writes  int      `json:"writes"`
+	Count   int64    `json:"count"` // times run or refused
+	Options []string `json:"options"`
+	SQL     []string `json:"sql"` // the shapes, most frequent first (up to 100)
 }
 
 // Decision: Choice is "key" (the column names the customer: a unique column such as a slug),
 // "cloud" (the table is not per customer; it lives with LokaDB) or "allow" (run this statement in
 // every customer's database, by name).
+// A decision names a statement (Fingerprint) or a whole table (Table, which also covers its statements
+// still to come; Choice may then be "refuse" as well).
 type Decision struct {
-	Fingerprint string `json:"fingerprint"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Table       string `json:"table,omitempty"`
 	Choice      string `json:"choice"`
 }
 

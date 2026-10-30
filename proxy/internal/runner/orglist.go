@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ func (o *Ops) OrgList(ctx context.Context, a cloudproto.OrgListArgs) (cloudproto
 	roots := o.rootTables()
 	var keys []string
 	if a.Mode == "smallest" && len(roots) > 0 {
-		if keys, err = o.smallest(ctx, conn, roots[0], 5); err != nil || len(keys) == 0 {
+		if keys, err = o.smallest(ctx, conn, roots, 5); err != nil || len(keys) == 0 {
 			keys = nil
 		}
 	}
@@ -100,6 +101,9 @@ func (o *Ops) OrgList(ctx context.Context, a cloudproto.OrgListArgs) (cloudproto
 		return res, err
 	}
 	o.countRows(ctx, conn, roots, res.Orgs)
+	if keys != nil { // the smallest first, by the rows shown
+		sort.SliceStable(res.Orgs, func(i, j int) bool { return res.Orgs[i].Rows < res.Orgs[j].Rows })
+	}
 	return res, nil
 }
 
@@ -174,8 +178,9 @@ func pickLabel(have map[string]bool) string {
 	return ""
 }
 
-// smallest: the keys with the fewest rows in the root table (at least one), within 3 seconds.
-func (o *Ops) smallest(ctx context.Context, conn *pgx.Conn, root [2]string, n int) ([]string, error) {
+// smallest: the keys with the fewest rows in all the root tables together (at least one), within 3
+// seconds: the same sum the list shows as Rows, so the first shown is the smallest.
+func (o *Ops) smallest(ctx context.Context, conn *pgx.Conn, roots [][2]string, n int) ([]string, error) {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -184,8 +189,12 @@ func (o *Ops) smallest(ctx context.Context, conn *pgx.Conn, root [2]string, n in
 	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '3s'"); err != nil {
 		return nil, err
 	}
-	tc := pgx.Identifier{root[1]}.Sanitize()
-	rows, err := tx.Query(ctx, fmt.Sprintf("SELECT %s::text FROM %s WHERE %s IS NOT NULL GROUP BY %s ORDER BY count(*), %s LIMIT %d", tc, identOf(root[0]).Sanitize(), tc, tc, tc, n))
+	parts := make([]string, 0, len(roots))
+	for _, root := range roots {
+		tc := pgx.Identifier{root[1]}.Sanitize()
+		parts = append(parts, fmt.Sprintf("SELECT %s::text AS k, count(*) AS n FROM %s WHERE %s IS NOT NULL GROUP BY 1", tc, identOf(root[0]).Sanitize(), tc))
+	}
+	rows, err := tx.Query(ctx, fmt.Sprintf("SELECT k FROM (%s) s GROUP BY k ORDER BY sum(n), k LIMIT %d", strings.Join(parts, " UNION ALL "), n))
 	if err != nil {
 		return nil, err
 	}

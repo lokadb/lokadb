@@ -157,3 +157,65 @@ func TestUnroutedLogOnce(t *testing.T) {
 		t.Fatalf("summary: %+v", l)
 	}
 }
+
+// A decision about a table covers every statement on it, of any shape, in any mode: "allow" runs them in
+// every organization's database, "refuse" refuses them without counting them as open again.
+func TestFanoutTableDecision(t *testing.T) {
+	m := testMeta()
+	f, err := Config{Fanout: map[string]FanoutPolicy{"db": {Mode: FanoutReject, Tables: map[string]string{"documents": TableAllow, "document_versions": TableRefuse}}}}.FanoutFor("db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for sql, want := range map[string]FanoutVerdict{
+		`select * from documents where slug = $1`:            FanoutAllowed,
+		`select * from documents order by id desc limit 20`:  FanoutAllowed, // a shape never seen before
+		`select * from document_versions where content = $1`: FanoutDenied,
+		`select * from documents where organization_id = $1`: FanoutNone,
+	} {
+		if got := f.Decide(sql, analyze(sql, m)); got != want {
+			t.Errorf("%s: %v, want %v", sql, got, want)
+		}
+	}
+	if _, err := (Config{Fanout: map[string]FanoutPolicy{"x": {Tables: map[string]string{"documents": "maybe"}}}}).FanoutFor("x"); err == nil {
+		t.Error("an unknown table decision accepted")
+	}
+}
+
+// A condition the proxy does not read on a column that is not the customer's does not hide the customer
+// condition next to it: only the customer condition decides.
+func TestNoFalseGaps(t *testing.T) {
+	m := testMeta()
+	for _, sql := range []string{
+		`select * from documents where organization_id = $1 and title is null`,
+		`select * from documents where organization_id = $1 and slug <> $2`,
+		`select * from documents where organization_id = $1 and (title = $2 or slug = $3)`,
+		`select * from documents where organization_id = $1 and slug in (select slug from documents where organization_id = $1)`,
+	} {
+		if an := analyze(sql, m); an.Unhinted {
+			t.Errorf("%s: unhinted, gaps %s", sql, an.GapText())
+		}
+	}
+	// and a real gap stays one: the customer column itself in a form the proxy does not read
+	if an := analyze(`select * from documents where organization_id = $1 or title = $2`, m); !an.Unhinted {
+		t.Error("an OR around the customer condition is taken as routed")
+	}
+}
+
+// "read" lets a table's reads run everywhere and nothing else: a write without an organization is the
+// mode's to decide, as if nothing had been decided (a future UPDATE must not run in every database).
+func TestFanoutTableRead(t *testing.T) {
+	m := testMeta()
+	read, write := `select * from documents where slug = $1`, `update documents set title = $1 where slug = $2`
+	for mode, wantWrite := range map[string]FanoutVerdict{FanoutReject: FanoutRefused, FanoutRejectWrites: FanoutRefused, FanoutLog: FanoutRun} {
+		f, err := Config{Fanout: map[string]FanoutPolicy{"db": {Mode: mode, Tables: map[string]string{"documents": TableRead}}}}.FanoutFor("db")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := f.Decide(read, analyze(read, m)); got != FanoutAllowed {
+			t.Errorf("%s: a read: %v", mode, got)
+		}
+		if got := f.Decide(write, analyze(write, m)); got != wantWrite {
+			t.Errorf("%s: a write: %v, want %v", mode, got, wantWrite)
+		}
+	}
+}

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -54,7 +55,7 @@ func TestAllowByName(t *testing.T) {
 	t.Cleanup(func() { embeddedDone.Store(false) })
 	write(t, dir+"/proxy.json", `{"listen": ":6432", "fanout": {"*": {"mode": "reject"}, "shop": {"mode": "log", "allow": ["SELECT 1"]}}}`)
 	c := &Config{found: &Found{DBName: "shop"}}
-	if err := c.addFanoutAllow([]string{"SELECT * FROM builds WHERE slug = $1", "SELECT 1"}); err != nil {
+	if err := c.addFanoutAllow([]string{"SELECT * FROM builds WHERE slug = $1", "SELECT 1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var m struct {
@@ -72,7 +73,7 @@ func TestAllowByName(t *testing.T) {
 		t.Fatalf("proxy.json: %+v", m)
 	}
 	write(t, dir+"/proxy.json", `{"fanout": "reject"}`)
-	if err := c.addFanoutAllow([]string{"SELECT 2"}); err == nil {
+	if err := c.addFanoutAllow([]string{"SELECT 2"}, nil); err == nil {
 		t.Error("a fanout that is not an object was rewritten")
 	}
 }
@@ -134,5 +135,75 @@ func TestStatementChoices(t *testing.T) {
 	}
 	if _, err := os.Stat(dir + "/spec.json"); err != nil {
 		t.Error("spec.json not written")
+	}
+}
+
+// The review by table: one line of why per table, reads and writes counted, and a decision about a table
+// covers all its statements (allow and refuse go to proxy.json's "tables", the rest leave the open list).
+func TestStatementsByTable(t *testing.T) {
+	dsn := os.Getenv("INIT_TEST_DSN")
+	if dsn == "" {
+		t.Skip("INIT_TEST_DSN is not set")
+	}
+	dir := useDir(t)
+	ctx := context.Background()
+	db, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(ctx)
+	for _, q := range []string{"DROP TABLE IF EXISTS bt_builds, bt_moments", "CREATE TABLE bt_builds (id serial PRIMARY KEY, user_id int, slug text UNIQUE)", "CREATE TABLE bt_moments (id serial PRIMARY KEY, user_id int, body text)"} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _, _ = db.Exec(ctx, "DROP TABLE IF EXISTS bt_builds, bt_moments") })
+	write(t, dir+"/proxy.json", `{"listen": ":6432", "fanout": {"shop": {"mode": "reject-writes"}}}`)
+	c := &Config{State: t.TempDir(), DB: dsn, found: &Found{DBName: "shop"},
+		spec: admin.Spec{Tables: []admin.SpecTable{{Name: "bt_builds", TenantColumn: "user_id"}, {Name: "bt_moments", TenantColumn: "user_id"}}}}
+	o := &Ops{Cfg: c}
+	none := func(tbl string) []proxy.Gap { return []proxy.Gap{{Kind: proxy.GapNoCondition, Table: tbl}} }
+	var list []proxy.Unrouted
+	for i := 0; i < 5; i++ {
+		sql := fmt.Sprintf("SELECT * FROM bt_builds ORDER BY id LIMIT %d", i+1)
+		list = append(list, proxy.Unrouted{Fingerprint: fmt.Sprint("b", i), SQL: sql, Full: sql, Count: int64(10 - i), Gaps: none("bt_builds")})
+	}
+	list = append(list, proxy.Unrouted{Fingerprint: "s", SQL: "SELECT * FROM bt_builds WHERE slug = $1", Full: "x", Count: 3,
+		Gaps: []proxy.Gap{{Kind: proxy.GapUnknownColumn, Table: "bt_builds", Column: "slug", Form: "="}}})
+	list = append(list, proxy.Unrouted{Fingerprint: "m", SQL: "DELETE FROM bt_moments WHERE body = $1", Full: "x", Count: 2, Write: true, Gaps: none("bt_moments")})
+	list = append(list, proxy.Unrouted{Fingerprint: "w", SQL: "UPDATE bt_builds SET slug = $1", Full: "x", Count: 1, Write: true, Gaps: none("bt_builds")})
+	c.collectUnrouted(list, 0)
+	if c.Info()["unrouted_open_reads"] != "6" || c.Info()["unrouted_open_writes"] != "2" {
+		t.Fatalf("info: %v", c.Info())
+	}
+	res, err := o.Statements(ctx, cloudproto.StatementsArgs{})
+	if err != nil || len(res.Tables) != 2 || res.Reads != 6 || res.Writes != 2 {
+		t.Fatalf("%v %+v", err, res)
+	}
+	b := res.Tables[0]
+	if b.Table != "bt_builds" || b.Reads != 6 || b.Writes != 1 || len(b.SQL) != 7 || b.Column != "slug" || strings.Join(b.Options, ",") != "key,read,allow,refuse" ||
+		b.Reason != "no condition on user_id, the customer column; looked up by slug" {
+		t.Fatalf("builds: %+v", b)
+	}
+	dec, err := o.Decide(ctx, cloudproto.DecideArgs{Decisions: []cloudproto.Decision{{Table: "bt_builds", Choice: "read"}, {Table: "bt_moments", Choice: "refuse"}}})
+	if err != nil || len(dec.Applied) != 2 {
+		t.Fatalf("decide: %v %+v", err, dec)
+	}
+	// "read" decides the reads of bt_builds; its write stays open (the policy refuses it)
+	if c.Info()["unrouted_open"] != "1" || c.Info()["unrouted_open_writes"] != "1" {
+		t.Errorf("open after deciding both tables: %v", c.Info())
+	}
+	var m struct {
+		Listen string
+		Fanout map[string]struct {
+			Mode   string
+			Tables map[string]string
+		}
+	}
+	if err := json.Unmarshal(read(t, dir+"/proxy.json"), &m); err != nil {
+		t.Fatal(err)
+	}
+	if shop := m.Fanout["shop"]; m.Listen != ":6432" || shop.Mode != "reject-writes" || shop.Tables["bt_builds"] != "read" || shop.Tables["bt_moments"] != "refuse" {
+		t.Fatalf("proxy.json: %+v", m)
 	}
 }

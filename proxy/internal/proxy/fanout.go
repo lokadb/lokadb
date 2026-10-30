@@ -27,6 +27,11 @@ type FanoutPolicy struct {
 	// Allow: statements reviewed and allowed to run in every organization's database in any mode.
 	// Matched by pg_query fingerprint: constants, parameters and list lengths do not matter.
 	Allow []string `json:"allow,omitempty"`
+	// Tables: a decision for every statement on a table that names no organization, whatever its shape and
+	// in any mode: "read" runs its reads in every organization's database and leaves its writes to the mode,
+	// "allow" runs reads and writes there, "refuse" refuses it. Statements still
+	// to come are covered too, which a list of statements cannot do.
+	Tables map[string]string `json:"tables,omitempty"`
 }
 
 // Fanout is the compiled policy of one database.
@@ -34,6 +39,7 @@ type Fanout struct {
 	Mode    string
 	Allowed int // statements on the allow list
 	allow   map[string]bool
+	tables  map[string]string
 }
 
 // FanoutFor compiles the policy of database db: its own entry, else "*", else reject.
@@ -42,7 +48,7 @@ func (c Config) FanoutFor(db string) (*Fanout, error) {
 	if !ok {
 		p = c.Fanout["*"]
 	}
-	f := &Fanout{Mode: p.Mode, allow: map[string]bool{}}
+	f := &Fanout{Mode: p.Mode, allow: map[string]bool{}, tables: map[string]string{}}
 	if f.Mode == "" {
 		f.Mode = FanoutReject
 	}
@@ -59,6 +65,12 @@ func (c Config) FanoutFor(db string) (*Fanout, error) {
 		f.allow[fp] = true
 	}
 	f.Allowed = len(p.Allow)
+	for t, d := range p.Tables {
+		if d != TableRead && d != TableAllow && d != TableRefuse {
+			return nil, fmt.Errorf("fanout policy of %s: table %s: %q, want read, allow or refuse", db, t, d)
+		}
+		f.tables[t] = d
+	}
 	return f, nil
 }
 
@@ -69,6 +81,14 @@ const (
 	FanoutAllowed                      // on the allow list: runs in every organization's database
 	FanoutRun                          // runs in every organization's database (mode allow or log, a read under reject-writes)
 	FanoutRefused                      // the client gets an error
+	FanoutDenied                       // refused by a decision about its table: the client gets an error, and it is not counted as open
+)
+
+// The decisions about a table (FanoutPolicy.Tables).
+const (
+	TableRead   = "read" // its reads run everywhere; a write is the mode's to decide, as without a decision
+	TableAllow  = "allow"
+	TableRefuse = "refuse"
 )
 
 // Decide applies the policy to a statement and its analysis.
@@ -90,6 +110,16 @@ func (f *Fanout) decide(sql string, an *Analysis, unhinted bool) FanoutVerdict {
 		if f.allow[an.fp] {
 			return FanoutAllowed
 		}
+	}
+	switch f.tables[fanoutTable(an)] {
+	case TableRead:
+		if !an.Write {
+			return FanoutAllowed
+		}
+	case TableAllow:
+		return FanoutAllowed
+	case TableRefuse:
+		return FanoutDenied
 	}
 	if f.Mode == FanoutAllow || f.Mode == FanoutLog || f.Mode == FanoutRejectWrites && !an.Write {
 		return FanoutRun

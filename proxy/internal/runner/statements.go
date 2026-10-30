@@ -93,7 +93,23 @@ func (c *Config) collectUnrouted(list []proxy.Unrouted, overflow int64) {
 	if changed {
 		c.saveUnrouted()
 	}
-	c.setInfo("unrouted_open", strconv.Itoa(len(u.items)))
+	c.openInfo()
+}
+
+// openInfo reports the open shapes, and how many of them read and how many write: the service blocks the
+// first move only on what the policy in force would refuse. The caller holds c.unr.mu.
+func (c *Config) openInfo() {
+	reads, writes := 0, 0
+	for _, x := range c.unr.items {
+		if x.Write {
+			writes++
+		} else {
+			reads++
+		}
+	}
+	c.setInfo("unrouted_open", strconv.Itoa(len(c.unr.items)))
+	c.setInfo("unrouted_open_reads", strconv.Itoa(reads))
+	c.setInfo("unrouted_open_writes", strconv.Itoa(writes))
 }
 
 // reasonOf says in words why a statement names no customer.
@@ -158,8 +174,123 @@ func (o *Ops) Statements(ctx context.Context, _ cloudproto.StatementsArgs) (clou
 			st.Options = append(st.Options, "allow")
 		}
 		res.Items = append(res.Items, st)
+		if x.Write {
+			res.Writes++
+		} else {
+			res.Reads++
+		}
 	}
+	res.Tables = o.byTable(ctx, conn, items)
 	return res, nil
+}
+
+// byTable groups the open statements by the table they leave without a customer, most used first, with
+// one line of why and the choices for the table.
+func (o *Ops) byTable(ctx context.Context, conn *pgx.Conn, items []proxy.Unrouted) []cloudproto.StatementTable {
+	idx := map[string]int{}
+	gaps := map[string][]proxy.Gap{}
+	out := []cloudproto.StatementTable{}
+	for _, x := range items {
+		t := tableOf(x)
+		i, ok := idx[t]
+		if !ok {
+			i = len(out)
+			idx[t] = i
+			out = append(out, cloudproto.StatementTable{Table: t, Options: []string{}, SQL: []string{}})
+		}
+		g := &out[i]
+		if x.Write {
+			g.Writes++
+		} else {
+			g.Reads++
+		}
+		g.Count += x.Count
+		if len(g.SQL) < 100 {
+			g.SQL = append(g.SQL, x.SQL)
+		}
+		gaps[t] = append(gaps[t], x.Gaps...)
+	}
+	for i := range out {
+		g := &out[i]
+		g.Reason = o.tableReason(g.Table, gaps[g.Table])
+		if conn != nil {
+			if k := o.keyColumn(ctx, conn, gaps[g.Table]); k != nil {
+				g.Column = k.Column
+				g.Options = append(g.Options, "key")
+			}
+			if o.cloudTable(ctx, conn, gaps[g.Table]) != nil {
+				g.Options = append(g.Options, "cloud")
+			}
+		}
+		if g.Table != "" {
+			g.Options = append(g.Options, "read", "allow", "refuse")
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	return out
+}
+
+// tableOf: the table a statement leaves without a customer (its first gap's; the proxy's own word else).
+func tableOf(x proxy.Unrouted) string {
+	for _, g := range x.Gaps {
+		if g.Table != "" {
+			return g.Table
+		}
+	}
+	return x.Table
+}
+
+// tableReason: why the statements of a table name no customer, in one line.
+func (o *Ops) tableReason(table string, gaps []proxy.Gap) string {
+	tc := ""
+	for _, t := range o.Cfg.spec.Tables {
+		if t.Name == table && t.TenantColumn != "" {
+			tc = t.TenantColumn
+		}
+	}
+	if tc == "" {
+		for _, t := range o.Cfg.spec.Tables {
+			if t.TenantColumn != "" {
+				tc = t.TenantColumn
+				break
+			}
+		}
+	}
+	forms, by := map[string]bool{}, map[string]bool{}
+	var formList, byList []string
+	for _, g := range gaps {
+		switch g.Kind {
+		case proxy.GapUnsupportedForm, proxy.GapUnreadableValue:
+			if f := strings.TrimSpace(g.Form); f != "" && !forms[f] {
+				forms[f] = true
+				formList = append(formList, f)
+			}
+		case proxy.GapUnknownColumn:
+			if g.Column != "" && g.Column != tc && !by[g.Column] {
+				by[g.Column] = true
+				byList = append(byList, g.Column)
+			}
+		}
+	}
+	cust := "the customer"
+	if tc != "" {
+		cust = tc + ", the customer column"
+	}
+	line := "no condition on " + cust
+	if len(formList) > 0 && len(byList) == 0 {
+		return fmt.Sprintf("%s in a form LokaDB does not read (%s)", cust, strings.Join(first(formList, 3), ", "))
+	}
+	if len(byList) > 0 {
+		line += "; looked up by " + strings.Join(first(byList, 3), ", ")
+	}
+	return line
+}
+
+func first(l []string, n int) []string {
+	if len(l) > n {
+		return append(l[:n:n], "…")
+	}
+	return l
 }
 
 func splitTable(t string) (schema, name string) {
@@ -248,7 +379,48 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 	routed := false
 	c.unr.mu.Lock()
 	c.loadUnrouted()
+	var tables = map[string]string{}       // allow or refuse, for proxy.json
+	var decidedTables, readTables []string // decided whole; decided for their reads only (their writes stay open)
 	for _, d := range a.Decisions {
+		if d.Table != "" {
+			var gaps []proxy.Gap
+			for _, x := range c.unr.items {
+				if tableOf(*x) == d.Table {
+					gaps = append(gaps, x.Gaps...)
+				}
+			}
+			key := "table:" + d.Table
+			switch d.Choice {
+			case "read", "allow", "refuse":
+				tables[d.Table] = d.Choice
+			case "key":
+				k := o.keyColumn(ctx, conn, gaps)
+				if k == nil {
+					res.Failed[key] = "no column of this table's statements is unique by itself, so it cannot name the customer"
+					continue
+				}
+				spec.Merge(&admin.Routing{Keys: []admin.Key{*k}})
+				routed = true
+			case "cloud":
+				t := o.cloudTable(ctx, conn, gaps)
+				if t == nil {
+					res.Failed[key] = "the table has no customer column to declare it a cloud table with"
+					continue
+				}
+				spec.Merge(&admin.Routing{CloudTables: []admin.CloudTable{*t}})
+				routed = true
+			default:
+				res.Failed[key] = "unknown choice " + d.Choice
+				continue
+			}
+			res.Applied = append(res.Applied, key)
+			if d.Choice == "read" {
+				readTables = append(readTables, d.Table)
+			} else {
+				decidedTables = append(decidedTables, d.Table)
+			}
+			continue
+		}
 		x := c.unr.items[d.Fingerprint]
 		if x == nil {
 			res.Failed[d.Fingerprint] = "this statement is not in the list any more"
@@ -297,8 +469,8 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 			}
 		}
 	}
-	if len(allow) > 0 {
-		if err := c.addFanoutAllow(allow); err != nil {
+	if len(allow) > 0 || len(tables) > 0 {
+		if err := c.addFanoutAllow(allow, tables); err != nil {
 			return res, err
 		}
 	}
@@ -306,8 +478,22 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 	for _, fp := range res.Applied {
 		delete(c.unr.items, fp)
 	}
+	for _, t := range decidedTables {
+		for fp, x := range c.unr.items {
+			if tableOf(*x) == t {
+				delete(c.unr.items, fp)
+			}
+		}
+	}
+	for _, t := range readTables {
+		for fp, x := range c.unr.items {
+			if tableOf(*x) == t && !x.Write {
+				delete(c.unr.items, fp)
+			}
+		}
+	}
 	c.saveUnrouted()
-	c.setInfo("unrouted_open", strconv.Itoa(len(c.unr.items)))
+	c.openInfo()
 	c.unr.mu.Unlock()
 	return res, nil
 }
@@ -323,9 +509,10 @@ func (c *Config) preparedTables(ctx context.Context) bool {
 	return conn.QueryRow(ctx, `SELECT to_regclass('lokadb.tables') IS NOT NULL`).Scan(&ok) == nil && ok
 }
 
-// addFanoutAllow writes statements into the allow list of the application's database in proxy.json
-// (everything else in the file stays) and asks for a restart when the proxy runs.
-func (c *Config) addFanoutAllow(sql []string) error {
+// addFanoutAllow writes statements into the allow list, and decisions about tables into "tables", of the
+// application's database in proxy.json (everything else in the file stays) and asks for a restart when the
+// proxy runs.
+func (c *Config) addFanoutAllow(sql []string, tables map[string]string) error {
 	if c.found == nil || c.found.DBName == "" {
 		return fmt.Errorf("the application's database is not known")
 	}
@@ -364,7 +551,19 @@ func (c *Config) addFanoutAllow(sql []string) error {
 			seen[s] = true
 		}
 	}
-	entry["allow"], _ = json.Marshal(have)
+	if len(have) > 0 {
+		entry["allow"], _ = json.Marshal(have)
+	}
+	if len(tables) > 0 {
+		cur := map[string]string{}
+		if entry["tables"] != nil {
+			_ = json.Unmarshal(entry["tables"], &cur)
+		}
+		for t, d := range tables {
+			cur[t] = d
+		}
+		entry["tables"], _ = json.Marshal(cur)
+	}
 	fan[c.found.DBName], _ = json.Marshal(entry)
 	m["fanout"], _ = json.Marshal(fan)
 	out, err := json.MarshalIndent(m, "", "  ")
