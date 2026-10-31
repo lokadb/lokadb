@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -405,6 +406,7 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 	c.loadUnrouted()
 	var tables = map[string]string{}       // allow or refuse, for proxy.json
 	var decidedTables, readTables []string // decided whole; decided for their reads only (their writes stay open)
+	var proxyKeys []string                 // the decisions that live in the proxy's config (they fail with it)
 	for _, d := range a.Decisions {
 		if d.Table != "" {
 			var gaps []proxy.Gap
@@ -433,6 +435,7 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 					continue
 				}
 				tables[d.Table] = d.Choice
+				proxyKeys = append(proxyKeys, key)
 			case "allow", "refuse":
 				if d.Choice == "allow" {
 					ctid := false
@@ -445,6 +448,7 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 					}
 				}
 				tables[d.Table] = d.Choice
+				proxyKeys = append(proxyKeys, key)
 			case "key":
 				k := o.keyColumn(ctx, conn, gaps)
 				if k == nil {
@@ -489,6 +493,7 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 				continue
 			}
 			allow = append(allow, x.Full)
+			proxyKeys = append(proxyKeys, d.Fingerprint)
 		case "key":
 			k := o.keyColumn(ctx, conn, x.Gaps)
 			if k == nil {
@@ -527,7 +532,36 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 	}
 	if len(allow) > 0 || len(tables) > 0 {
 		if err := c.addFanoutAllow(allow, tables); err != nil {
-			return res, err
+			var me *manualError
+			if !errors.As(err, &me) {
+				return res, err
+			}
+			// the proxy's config is not ours to write: those choices are not made, and the person is told what to put where
+			failed := map[string]bool{}
+			for _, k := range proxyKeys {
+				failed[k] = true
+				res.Failed[k] = me.Error() + ": put the block below under \"fanout\" in the proxy's config yourself, and restart the proxy"
+			}
+			res.Manual = me.snippet
+			kept := res.Applied[:0]
+			for _, k := range res.Applied {
+				if !failed[k] {
+					kept = append(kept, k)
+				}
+			}
+			res.Applied = kept
+			keepT := func(l []string) []string {
+				out := l[:0]
+				for _, t := range l {
+					if !failed["table:"+t] {
+						out = append(out, t)
+					}
+				}
+				return out
+			}
+			decidedTables, readTables = keepT(decidedTables), keepT(readTables)
+		} else if len(proxyKeys) > 0 && !embeddedStarted() {
+			res.RestartProxy = true
 		}
 	}
 	c.unr.mu.Lock()
@@ -569,10 +603,11 @@ func (c *Config) preparedTables(ctx context.Context) bool {
 // application's database in proxy.json (everything else in the file stays) and asks for a restart when the
 // proxy runs.
 func (c *Config) addFanoutAllow(sql []string, tables map[string]string) error {
-	if c.found == nil || c.found.DBName == "" {
+	db := c.appDB()
+	if db == "" {
 		return fmt.Errorf("the application's database is not known")
 	}
-	path := filepath.Join(Dir, "proxy.json")
+	path := c.proxyConfigPath()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -588,7 +623,7 @@ func (c *Config) addFanoutAllow(sql []string, tables map[string]string) error {
 		}
 	}
 	entry := map[string]json.RawMessage{}
-	if e := fan[c.found.DBName]; e != nil {
+	if e := fan[db]; e != nil {
 		_ = json.Unmarshal(e, &entry)
 	} else if star := fan["*"]; star != nil {
 		_ = json.Unmarshal(star, &entry) // an entry of its own replaces "*" for this database: it starts from it
@@ -620,23 +655,44 @@ func (c *Config) addFanoutAllow(sql []string, tables map[string]string) error {
 		}
 		entry["tables"], _ = json.Marshal(cur)
 	}
-	fan[c.found.DBName], _ = json.Marshal(entry)
+	fan[db], _ = json.Marshal(entry)
 	m["fanout"], _ = json.Marshal(fan)
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(out, '\n'), 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
+	if err := writeConfig(path, append(out, '\n')); err != nil {
+		snippet, _ := json.MarshalIndent(map[string]any{"fanout": map[string]json.RawMessage{db: fan[db]}}, "", "  ")
+		return &manualError{path: path, snippet: string(snippet), err: err}
 	}
 	if embeddedStarted() {
 		c.restart = true
 	}
 	return nil
+}
+
+// manualError: the proxy's config cannot be written from here; snippet is what to put into it by hand.
+type manualError struct {
+	path, snippet string
+	err           error
+}
+
+func (e *manualError) Error() string { return fmt.Sprintf("cannot write %s: %v", e.path, e.err) }
+
+// writeConfig writes the proxy's config; a variable so that a test can make the write fail.
+var writeConfig = writeFileAtomicOrInPlace
+
+// writeFileAtomicOrInPlace replaces the file through a temporary one; where that cannot be (the file itself is
+// bind-mounted into the container, or its directory is not writable) it is written in place.
+func writeFileAtomicOrInPlace(path string, b []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err == nil {
+		if err := os.Rename(tmp, path); err == nil {
+			return nil
+		}
+		_ = os.Remove(tmp)
+	}
+	return os.WriteFile(path, b, 0o644)
 }
 
 // effectiveFanoutMode is the policy in force for the application's database: the panel's choice, else the
@@ -645,12 +701,12 @@ func (c *Config) effectiveFanoutMode() string {
 	if c.fanoutMode != "" {
 		return c.fanoutMode
 	}
-	if b, err := os.ReadFile(filepath.Join(Dir, "proxy.json")); err == nil && c.found != nil {
+	if b, err := os.ReadFile(c.proxyConfigPath()); err == nil && c.appDB() != "" {
 		var m struct {
 			Fanout map[string]struct{ Mode string } `json:"fanout"`
 		}
 		if json.Unmarshal(b, &m) == nil {
-			if e, ok := m.Fanout[c.found.DBName]; ok && e.Mode != "" {
+			if e, ok := m.Fanout[c.appDB()]; ok && e.Mode != "" {
 				return e.Mode
 			}
 			if e, ok := m.Fanout["*"]; ok && e.Mode != "" {

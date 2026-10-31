@@ -552,4 +552,10 @@ type DecideResult struct {
 	// Spec: the spec with the routing declarations now in force; the panel saves it so that the
 	// service holds what the runner holds.
 	Spec json.RawMessage `json:"spec,omitempty"`
+	// RestartProxy: the choices were saved in the proxy's config, which a proxy outside this runner reads only
+	// when it starts: the person restarts it (a proxy the runner runs itself is restarted by the runner).
+	RestartProxy bool `json:"restart_proxy,omitempty"`
+	// Manual: the runner could not write the proxy's config (another machine, no right): the "fanout" block to
+	// put into it by hand, for the choices listed in Failed.
+	Manual string `json:"manual,omitempty"`
 }

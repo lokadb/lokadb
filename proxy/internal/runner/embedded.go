@@ -328,6 +328,13 @@ func (c *Config) Info() map[string]string {
 			out["relay_ca"] = string(b)
 		}
 	}
+	if c.Embedded {
+		out["unrouted_visible"] = "yes"
+	} else if len(c.ProxyStatus) == 0 {
+		// the proxy is outside this runner and its address is not given: the queries that name no customer
+		// are not seen, so the service must not take "none open" for "none"
+		out["unrouted_visible"] = "no: runner.json has no proxy_status, the address of the proxy's metrics_listen /status"
+	}
 	for k, v := range c.info {
 		out[k] = v
 	}
@@ -778,10 +785,11 @@ func ensureSelfSigned(crt, key, name string) error {
 // other key stay as they are (they may be the person's own edits). Nothing is chosen: nothing is
 // touched. A proxy that is already running is restarted, as for the public setting. It reports a change.
 func (c *Config) applyFanout() bool {
-	if c.fanoutMode == "" || c.found == nil || c.found.DBName == "" {
+	db := c.appDB()
+	if c.fanoutMode == "" || db == "" {
 		return false
 	}
-	path := filepath.Join(Dir, "proxy.json")
+	path := c.proxyConfigPath()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false // not made yet: Prepare calls this again after it is
@@ -795,28 +803,38 @@ func (c *Config) applyFanout() bool {
 		return false // not an object: the person's file is not ours to rewrite
 	}
 	entry := map[string]json.RawMessage{}
-	if e := fan[c.found.DBName]; e != nil {
+	if e := fan[db]; e != nil {
 		_ = json.Unmarshal(e, &entry)
 	}
 	if string(entry["mode"]) == strconv.Quote(c.fanoutMode) {
 		return false
 	}
 	entry["mode"], _ = json.Marshal(c.fanoutMode)
-	fan[c.found.DBName], _ = json.Marshal(entry)
+	fan[db], _ = json.Marshal(entry)
 	m["fanout"], _ = json.Marshal(fan)
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return false
 	}
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, append(out, '\n'), 0o644) != nil || os.Rename(tmp, path) != nil {
+	if err := writeConfig(path, append(out, '\n')); err != nil {
+		// a proxy config this runner cannot write (another machine, no right): said, so that the person puts the mode in by hand
+		c.setInfo("proxy_config", "cannot write "+path+" ("+Redact(err.Error())+"): set \"mode\": \""+c.fanoutMode+"\" under fanout."+db+" in the proxy's config yourself, and restart the proxy")
+		if c.Log != nil {
+			c.Log.Warn("the fanout policy cannot be written to the proxy's config", "path", path, "err", err)
+		}
 		return false
 	}
-	if c.Log != nil {
-		c.Log.Warn("the fanout policy changed: LokaDB restarts to apply it", "database", c.found.DBName, "mode", c.fanoutMode)
-	}
+	c.setInfo("proxy_config", "")
 	if embeddedStarted() {
+		if c.Log != nil {
+			c.Log.Warn("the fanout policy changed: LokaDB restarts to apply it", "database", db, "mode", c.fanoutMode)
+		}
 		c.restart = true
+	} else if c.externalProxy() {
+		c.setInfo("proxy_config", "the fanout policy "+c.fanoutMode+" is written to "+path+"; restart the proxy to apply it")
+		if c.Log != nil {
+			c.Log.Warn("the fanout policy changed: restart the proxy to apply it", "path", path, "mode", c.fanoutMode)
+		}
 	}
 	return true
 }

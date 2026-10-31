@@ -214,6 +214,13 @@ func (s *Server) serveMetrics() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.metrics.status(s.countSessions()))
 	})
+	// the statement shapes that name no customer, for a runner outside this process (its step 5 lists and decides
+	// them): literals replaced by $n, like the log's. Not part of /status, which the runner forwards to the service.
+	mux.HandleFunc("GET /unrouted", func(w http.ResponseWriter, _ *http.Request) {
+		items, over := s.Unrouted()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "overflow": over})
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	l, err := net.Listen("tcp", s.cfg.MetricsListen)
 	if err != nil {

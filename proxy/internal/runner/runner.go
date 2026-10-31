@@ -192,6 +192,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	defer tun.Close()
 	tunnel.ProveSelfWith(tun) // the runner's jobs (and the proxy of this process) reach the relays' ports from a proven address
 	r.ops = &Ops{Cfg: r.Cfg, Tun: tun, Key: key, Log: r.Log}
+	if !r.Cfg.Embedded && len(r.Cfg.ProxyStatus) > 0 {
+		go r.Cfg.watchExternal(ctx) // the proxy is outside this process: its statements without a customer come over HTTP
+	}
 
 	unlock, err := r.lock(ctx)
 	if err != nil {
@@ -536,6 +539,13 @@ func (r *Runner) runJob(ctx, jctx context.Context, rj *job) {
 	}
 	_ = r.saveState()
 	r.mu.Unlock()
+	// the choices about tables are in the proxy's config, which the proxy inside this process reads when it starts:
+	// restart it now that the panel has the answer, not at the next look at the config (up to 30 s later, during
+	// which the application's queries are still refused by the old rule and the table comes back to the list)
+	if rj.j.Kind == cloudproto.KindDecide && res.Error == nil && r.Cfg.RestartRequested() && r.Stop != nil {
+		log.Warn("ending the process to start it again with the choices made for the proxy")
+		r.Stop()
+	}
 }
 
 // do runs the job and makes its result.
