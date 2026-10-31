@@ -383,9 +383,10 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 			}
 		}
 	}()
-	// A database enabled by an older version has older lokadb functions (partition_org), and
-	// the organizations it moved lack the triggers of the FKs onto cloud tables.
-	if err := execAll(ctx, cloud, []string{baseSQL, "SELECT lokadb.fk_cloud_sync()", "SELECT lokadb.fk_cascade_sync()"}); err != nil {
+	// A database enabled by an older version has older lokadb functions (partition_org, refs_sync,
+	// key_sync: the split's DELETE runs them for every row), and the organizations it moved lack the
+	// triggers of the FKs onto cloud tables. CREATE OR REPLACE: the current ones, whatever was there.
+	if err := execAll(ctx, cloud, []string{baseSQL, routingSQL, "SELECT lokadb.fk_cloud_sync()", "SELECT lokadb.fk_cascade_sync()"}); err != nil {
 		return err
 	}
 	moved, err := rowsOf(ctx, cloud, `SELECT count(*)::text FROM lokadb.orgs WHERE org = $1`, o.Org)

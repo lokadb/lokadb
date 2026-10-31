@@ -638,8 +638,20 @@ func TestRegistryGrace(t *testing.T) {
 			return ds
 		})
 		a := tr.agent(t, agentDir(t), tr.store.CreateToken("1"), lineEcho(t, "a:"), false)
-		go func() { _ = a.Run() }()
-		waitFor(t, "agent connected", func() bool { return tr.session("1") != "" })
+		runErr := make(chan error, 1)
+		go func() { runErr <- a.Run() }()
+		var ended error
+		waitFor(t, "agent connected", func() bool {
+			select {
+			case ended = <-runErr: // it stopped: say why instead of waiting out the margin
+				return true
+			default:
+			}
+			return tr.session("1") != ""
+		})
+		if ended != nil {
+			t.Fatalf("registry_grace %q: the agent stopped before it connected: %v", grace, ended)
+		}
 		// a second agent enrolled but never connected: unknown to the relay
 		other := t.TempDir()
 		if err := tr.agent(t, other, tr.store.CreateToken("1"), "127.0.0.1:1", true).Run(); err != nil {
@@ -647,9 +659,15 @@ func TestRegistryGrace(t *testing.T) {
 		}
 		ds.down.Store(true)
 		a.Disconnect()
-		time.Sleep(3 * time.Second) // the agent retries after 1 s
+		want := grace != ""
+		if want {
+			// it retries after 1 s: wait for the event, however slow the machine is
+			waitFor(t, "the known agent reconnected", func() bool { return tr.session("1") != "" })
+		} else {
+			time.Sleep(3 * time.Second) // nothing to wait for: the absence of a reconnection
+		}
 		back := tr.session("1") != ""
-		if want := grace != ""; back != want {
+		if back != want {
 			t.Fatalf("registry_grace %q: the known agent reconnected %v, want %v", grace, back, want)
 		}
 		st, _ := loadState(other)

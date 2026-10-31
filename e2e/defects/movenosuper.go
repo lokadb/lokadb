@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 func init() {
 	checks = append(checks,
 		check{id: "MV38", name: "no superuser, autovacuum on DEFAULT after the split (a worker this role cannot see): the switch waits past deadlock_timeout, Postgres cancels the worker and move-org succeeds", run: checkAutovacuumNoSuper},
+		check{id: "MV42", name: "a big organization (600 000 rows and their versions) without a superuser: the pause of the split is measured (runs only when named: DEFECTS_ONLY=MV42)", run: checkBigSplitPause},
 		check{id: "MV39", name: "no superuser (no session_replication_role): the organization is split out of DEFAULT online, the writes of the other organizations are not held back for the split", run: checkSplitOnlineNoSuper},
 	)
 }
@@ -138,7 +140,71 @@ func checkSplitOnlineNoSuper(e *env) (bool, string, error) {
 	n, _ := one(e.ctx, e.customer(), "SELECT count(*) FROM documents")
 	fks, _ := one(e.ctx, e.cloud(), `SELECT count(*) FROM pg_constraint WHERE conrelid = 'documents'::regclass AND contype = 'f' AND NOT convalidated`)
 	under := strings.Contains(out, "under a lock")
+	var lastTx []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "organization split out of DEFAULT") || strings.Contains(l, "organization resumed") {
+			lastTx = append(lastTx, strings.Join(strings.Fields(l[min(len(l), 26):]), " "))
+		}
+	}
 	ok := worst <= 8*time.Second && n == "480100" && !under && fks == "0"
-	return ok, fmt.Sprintf("split %s, whole move %s; the longest insert of organization 2 during it: %s (want at most 8s) in %d inserts; organization 1 at its database: %s rows (want 480100); split under a lock: %v (want false); FKs not validated: %s (want 0)",
-		splitWas.Round(time.Millisecond), took.Round(time.Second), worst.Round(time.Millisecond), writes, n, under, fks), nil
+	return ok, fmt.Sprintf("split %s, whole move %s; the longest insert of organization 2 during it: %s (want at most 8s) in %d inserts; organization 1 at its database: %s rows (want 480100); split under a lock: %v (want false); FKs not validated: %s (want 0) | %s",
+		splitWas.Round(time.Millisecond), took.Round(time.Second), worst.Round(time.Millisecond), writes, n, under, fks, strings.Join(lastTx, " / ")), nil
+}
+
+// MV42. 3 000 000 documents, 600 000 of organization 1, 600 000 versions of its documents, moved by
+// lokadb_saas as in MV39: how long the organization's pause lasts (R39: 8 min 56 s for 1 million
+// rows and 400 000 versions). Not part of the suite: it runs when DEFECTS_ONLY names it.
+func checkBigSplitPause(e *env) (bool, string, error) {
+	if !strings.Contains(","+os.Getenv("DEFECTS_ONLY")+",", ",MV42,") {
+		return true, "skipped: run it with DEFECTS_ONLY=MV42", nil
+	}
+	if err := execSQL(e.ctx, e.cloud(),
+		"INSERT INTO documents (organization_id, user_id, title) SELECT CASE WHEN g % 5 = 0 THEN 1 ELSE 2 + g % 49 END, 1, repeat('x', 200) || g FROM generate_series(1, 3000000) g",
+		"INSERT INTO document_versions (document_id, content) SELECT id, repeat('v', 100) FROM documents WHERE organization_id = 1 LIMIT 600000",
+		"ANALYZE"); err != nil {
+		return false, "", err
+	}
+	if err := asAdmin(e); err != nil {
+		return false, "enable as lokadb_saas failed: " + lastErr(err.Error()), nil
+	}
+	// the other organizations write all the while, four sessions without a pause between statements
+	// (the pause was 7 minutes in the risk hunt's run with writers, 26 s without)
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	var wmu sync.Mutex
+	var writes int
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if err := execSQL(e.ctx, e.cloud(), fmt.Sprintf("INSERT INTO documents (organization_id, user_id, title) VALUES (%d, 1, 'under the split')", 2+i%2)); err == nil {
+					wmu.Lock()
+					writes++
+					wmu.Unlock()
+				}
+			}
+		}(i)
+	}
+	out, took, moveErr := e.moveLines(1, nil, "-mode", "trigger")
+	close(stop)
+	wg.Wait()
+	paused := durationIn(out, `msg="organization resumed".* paused=([0-9.]+[a-zµ]+)`)
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "organization split out of DEFAULT") || strings.Contains(l, "organization resumed") || strings.Contains(l, "pause would last") || strings.Contains(l, "for the split about (estimated)") || strings.Contains(l, "DELETE of the split, estimated") {
+			lines = append(lines, strings.Join(strings.Fields(l[min(len(l), 26):]), " "))
+		}
+	}
+	if moveErr != nil {
+		return false, fmt.Sprintf("move-org failed: %s | %s", lastErr(out), strings.Join(lines, " / ")), nil
+	}
+	n, _ := one(e.ctx, e.customer(), "SELECT count(*) FROM documents")
+	return paused > 0 && paused <= 120*time.Second, fmt.Sprintf("the move took %s, the organization was paused %s (want at most 2 minutes), %d inserts of the others meanwhile; %s rows at the organization | %s",
+		took.Round(time.Second), paused.Round(time.Second), writes, n, strings.Join(lines, " / ")), nil
 }

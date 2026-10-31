@@ -754,7 +754,7 @@ func main() {
 		fetchSize := fs.Int("fetch-size", 1000, "rows postgres_fdw reads per round trip from the organization's database (move-org)")
 		// move-org, large organizations (block 5)
 		batchRows := fs.Int("batch-rows", admin.DefaultBatchRows, "rows per transaction when the organization is split out of DEFAULT (move-org)")
-		maxSplitPause := fs.Duration("max-split-pause", admin.DefaultMaxSplitPause, "max pause of the organization while it is split out of DEFAULT; past it the split stops and its rows stay there (move-org)")
+		maxSplitPause := fs.Duration("max-split-pause", admin.DefaultMaxSplitPause, "about the longest pause of the organization while it is split out of DEFAULT; past it the split stops and its rows stay there (move-org). Not a hard ceiling: the rollback and the removal of the CHECK after the limit take up to a few seconds more")
 		copyTimeout := fs.Duration("copy-timeout", admin.DefaultCopyTimeout, "max time of the initial copy into the organization's database (move-org)")
 		catchUpTimeout := fs.Duration("catchup-timeout", admin.DefaultCatchUpTimeout, "max time for the organization's database to catch up with the cloud after the copy (move-org)")
 		catchUpStall := fs.Duration("catchup-stall", admin.DefaultCatchUpStall, "the catch-up gives up once the log left to apply has not got shorter for this long: changes come faster than they reach the organization's database (move-org; 0: only -catchup-timeout)")

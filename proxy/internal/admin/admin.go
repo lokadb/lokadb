@@ -333,15 +333,21 @@ CREATE OR REPLACE FUNCTION lokadb.key_cols(k text) RETURNS text[] LANGUAGE sql I
   SELECT CASE WHEN left(k, 1) = '[' THEN ARRAY(SELECT jsonb_array_elements_text(k::jsonb)) ELSE ARRAY[k] END $$;
 CREATE OR REPLACE FUNCTION lokadb.refs_sync() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
-  k text := CASE WHEN TG_NARGS > 2 THEN TG_ARGV[2] ELSE 'id' END;
-  ks text[] := lokadb.key_cols(k);
+  k text;
+  ks text[];
   ids text;   -- the refs table's key columns: id, or id_1 ... id_n
   vals text;  -- the key of the row ($1)
   cond text;  -- the refs row of the key of the row ($1)
   newk text;  -- the key of NEW, OLD as text (a JSON array); NULL: a column of it is NULL
   oldk text;
 BEGIN
-  IF lokadb.moving() THEN RETURN NULL; END IF;
+  -- lokadb.moving() inline: the function, with its own SET, cost 15 s of the 27 for 600 000 rows of the split's DELETE
+  IF coalesce(current_setting('lokadb.moving', true), '') = 'on'
+     AND pg_has_role(current_user, (SELECT nspowner FROM pg_namespace WHERE nspname = 'lokadb'), 'MEMBER') THEN RETURN NULL; END IF;
+  -- after the check, not in DECLARE: the split's DELETE runs this function for every row it leaves
+  -- alone (lokadb.key_cols alone was 10 µs of the 15 a row cost)
+  k := CASE WHEN TG_NARGS > 2 THEN TG_ARGV[2] ELSE 'id' END;
+  ks := lokadb.key_cols(k);
   IF cardinality(ks) = 1 THEN
     ids := 'id'; vals := format('($1).%I', k); cond := format('id = ($1).%I', k);
   ELSE

@@ -165,7 +165,9 @@ DECLARE
   was text;
   now text;
 BEGIN
-  IF lokadb.moving() THEN RETURN NULL; END IF;
+  -- lokadb.moving() inline: the function, with its own SET, cost 15 s of the 27 for 600 000 rows of the split's DELETE
+  IF coalesce(current_setting('lokadb.moving', true), '') = 'on'
+     AND pg_has_role(current_user, (SELECT nspowner FROM pg_namespace WHERE nspname = 'lokadb'), 'MEMBER') THEN RETURN NULL; END IF;
   IF TG_OP <> 'INSERT' THEN
     was := to_jsonb(OLD) ->> TG_ARGV[1];
   END IF;

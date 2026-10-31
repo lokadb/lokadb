@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -101,7 +103,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 	o.noReplica = !repl
 	chk := fmt.Sprintf("lokadb_not_org%d", o.Org)
 	var prep []string
-	guard := map[string]string{} // table -> its CHECK on DEFAULT, added right before its split
+	guard := map[string]string{}                                    // table -> its CHECK on DEFAULT, added right before its split
 	later, validate := map[string][]string{}, map[string][]string{} // noReplica: the FKs of the partition, after the copy
 	for _, st := range todo {
 		t := st.Name
@@ -140,6 +142,10 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		}
 		prep = append(prep,
 			fmt.Sprintf("CREATE TABLE %s (LIKE %s INCLUDING ALL)", qr(part), qr(def)),
+			// no worker on the copy while it is filled and until the attach (a worker that holds it at
+			// the pause makes the last transaction wait for it, minutes on a big one: R39); the last
+			// transaction gives the setting back
+			fmt.Sprintf("ALTER TABLE %s SET (autovacuum_enabled = false)", qr(part)),
 			// block 3, A11: LIKE copies an invalid index of DEFAULT as a valid one
 			fmt.Sprintf("SELECT lokadb.drop_invalid_copies(%s, %s)", lit(def), lit(part)),
 			// IS NOT NULL too: without it ATTACH cannot prove the partition constraint and scans
@@ -182,6 +188,17 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 			guard[t] = fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s <> %s) NOT VALID", qr(def), q(chk), key, val)
 		}
 	}
+	tables, err := splitMoveTables(ctx, cloud, todo, o)
+	if err != nil {
+		return err
+	}
+	// What the organization's writes will wait for, before anything is made or copied: told, and the move
+	// not begun when it would not fit (the copy alone takes minutes for a big organization).
+	// A forecast, not a condition: it has been wrong by a factor of two and by a factor of eight either
+	// way (a cold cache, the checkpoints of the moment), and a pause past -max-split-pause costs
+	// nothing now (the copies are dropped, the tables already split stay, the next move-org goes on).
+	// It is told so that the owner can choose the time.
+	forecast := estimateSplitPause(ctx, cloud, o, tables, log)
 	if err := lockedDDL(ctx, cloud, o, prep); err != nil {
 		return err
 	}
@@ -191,10 +208,6 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 	// after them, and the log is applied to the copy. The organization pauses only for the end:
 	// the rest of the log and the last transaction of every table. Before, it paused for the
 	// whole copy: 66 s for 3 million rows (block 14, 27.10).
-	tables, err := splitMoveTables(ctx, cloud, todo, o)
-	if err != nil {
-		return err
-	}
 	so := o
 	so.replica = &replicaRight{} // the log is applied in the cloud, not in the organization's database
 	hbCtx, stopBeat := context.WithCancel(ctx)
@@ -208,10 +221,10 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 	// copy of the organization's rows (the rows left DEFAULT in that transaction): whatever
 	// fails after it, it is not touched, and the error says which tables are split.
 	attached := map[string]bool{}
-	truncateAll := func() {
+	dropAll := func() {
 		for _, t := range tables {
 			if !attached[t.name] {
-				truncateCopy(cloud, o, t.local(), log)
+				dropCopy(cloud, o, t.local(), log)
 			}
 		}
 	}
@@ -236,7 +249,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 			err = splitCopy(ctx, cloud, o, t.name, def, t.local(), o.org().Key(t.tenant), cols, copyDeadline, log)
 		}
 		if err != nil {
-			truncateAll()
+			dropAll()
 			return fmt.Errorf("split %s out of DEFAULT: copying the rows: %w; they stay in DEFAULT", t.name, err)
 		}
 	}
@@ -244,24 +257,31 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		// NOT VALID takes the referenced table for a moment; the validation reads the copy and
 		// holds nobody back (the organization still writes, the others too)
 		if err := lockedDDL(ctx, cloud, o, later[t.name]); err != nil {
-			truncateAll()
+			dropAll()
 			return fmt.Errorf("split %s out of DEFAULT: the FKs of its partition: %w; the rows stay in DEFAULT", t.name, err)
 		}
 		if err := execAll(ctx, cloud, validate[t.name]); err != nil {
-			truncateAll()
+			dropAll()
 			return fmt.Errorf("split %s out of DEFAULT: the FKs of its partition: %w; the rows stay in DEFAULT", t.name, err)
+		}
+	}
+	// the copy has no statistics (no autovacuum on it): the comparison and the locks of the last
+	// transaction plan their joins from them
+	for _, t := range tables {
+		if _, err := cloud.Exec(ctx, "ANALYZE "+qr(t.local())); err != nil {
+			log.Warn("ANALYZE of the copy of the split failed (the last transaction plans without statistics)", "table", t.name, "err", err)
 		}
 	}
 	// what changed meanwhile, the organization still writing (rounds until the log is short)
 	cur := &logCursor{}
 	for {
 		if err := captureOK(ctx, cloud, o.Org); err != nil {
-			truncateAll()
+			dropAll()
 			return err
 		}
 		n, err := applyLog(ctx, nil, cloud, cloud, so, tables, applyRoundEntries, cur)
 		if err != nil {
-			truncateAll()
+			dropAll()
 			return fmt.Errorf("split out of DEFAULT: applying the changes made during the copy: %w", err)
 		}
 		if !cur.more {
@@ -269,14 +289,19 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 			break
 		}
 		if time.Now().After(copyDeadline) {
-			truncateAll()
+			dropAll()
 			return fmt.Errorf("split out of DEFAULT: the changes made during the copy not applied in %s (-copy-timeout)", o.copyTimeout())
 		}
 	}
 
+	// How long the pause will be, measured now on this server under its present load: a sample of the
+	// organization's rows deleted in a transaction rolled back, as the last transaction deletes them.
+	// Not begun when it would not fit, instead of stopping after -max-split-pause with the
+	// organization paused all along. A table with triggers of the application is not sampled (they
+	// would run): the copy's time, three times, stands for it.
 	unpause, err := pauseOrg(ctx, cloud, o, log)
 	if err != nil {
-		truncateAll()
+		dropAll()
 		return err
 	}
 	pausedAt := time.Now()
@@ -285,7 +310,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		// The rows stayed in DEFAULT, under a CHECK that refuses their updates: removed
 		// before the organization resumes (MoveOrg's cleanup tries again on a new connection).
 		dropGuards(cloud, o, log)
-		truncateAll()
+		dropAll()
 		return splitState(err)
 	}
 	// Table by table: the CHECK on its DEFAULT (right before its own last transaction, so that
@@ -321,6 +346,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		}
 		attached[t.name] = true
 	}
+	log.Info("the organization's pause for the split", "took", time.Since(pausedAt).Round(time.Second), "forecast", forecast.Round(time.Second))
 	return nil
 }
 
@@ -378,7 +404,7 @@ END $$`, captureFunc(o.Org, out), o.Org, lit(t.name), keyText(t, "OLD")))
 			{"x", "UPDATE", fmt.Sprintf("OLD.%s = %s AND NEW.%s IS DISTINCT FROM %s", col, val, col, val), captureFunc(o.Org, out)},
 			// not for the split's own DELETE from DEFAULT (splitTable sets lokadb.moving): without the
 			// right to set session_replication_role the capture would log every row that leaves
-			{"d", "DELETE", fmt.Sprintf("OLD.%s = %s AND NOT lokadb.moving()", col, val), captureFunc(o.Org, def)},
+			{"d", "DELETE", fmt.Sprintf("OLD.%s = %s AND current_setting('lokadb.moving', true) IS DISTINCT FROM 'on'", col, val), captureFunc(o.Org, def)},
 		} {
 			stmts = append(stmts,
 				fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", q(splitTrigger(o.Org, tr.kind)), qr(def)),
@@ -566,6 +592,10 @@ func splitMark(org int64) string {
 	return fmt.Sprintf("lokadb: split of organization %d out of DEFAULT", org)
 }
 
+// errSlowSplit: the last transaction found a copy with no row in DEFAULT: run again by the statement
+// that accounts for each row.
+var errSlowSplit = errors.New("a copy of a row deleted since the snapshot")
+
 var errSplitPause = errors.New("the organization's pause reached -max-split-pause")
 
 // splitTable moves the organization's rows of table out of DEFAULT into its partition (copied
@@ -602,15 +632,11 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 	}
 	kcols := KeyCols(kr[0][0]) // a composite key: its columns (compkey.go)
 	// Under the CHECK on DEFAULT: the rows referenced by the organization's rows are locked
-	// FOR KEY SHARE, so a cascade from them waits and then finds the rows in the partition.
-	fks, err := rowsOf(ctx, cloud, `SELECT format('SELECT 1 FROM %s x WHERE (%s) IN (SELECT %s FROM %s d WHERE %s = %s) FOR KEY SHARE OF x',
-			c.confrelid::regclass,
-			(SELECT string_agg('x.' || quote_ident(a.attname), ', ' ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(n, ord)
-			   JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n),
-			(SELECT string_agg('d.' || quote_ident(a.attname), ', ' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(n, ord)
-			   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n),
-			$2::text, $3::text, $4::text)
-		FROM pg_constraint c WHERE c.conrelid = $1::regclass AND c.contype = 'f'`, qr(def), qr(def), key, val)
+	// FOR KEY SHARE, so a cascade from them waits and then finds the rows in the partition. They are
+	// read from the copy, which holds exactly the organization's rows (compared below) in a few
+	// pages read just now, not from DEFAULT's index and heap, scattered over a table of millions
+	// (R39: 1 min 54 s for the 1 million rows of one organization).
+	fks, err := refLockQueries(ctx, cloud, def, qr(part))
 	if err != nil {
 		return err
 	}
@@ -633,7 +659,15 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 	}
 	last := time.Now()
 	busySince := time.Now()
+	slow := false      // the quick comparison of the copy with DEFAULT found a copy of a deleted row
+	var steps []string // where the last transaction's time goes, logged when it is done
+	stepAt := time.Now()
+	step := func(name string) {
+		steps = append(steps, fmt.Sprintf("%s %s", name, time.Since(stepAt).Round(10*time.Millisecond)))
+		stepAt = time.Now()
+	}
 	for tries := 1; ; tries++ {
+		steps, stepAt = nil, time.Now()
 		err = pgx.BeginFunc(ctx, cloud, func(tx pgx.Tx) error {
 			left := time.Until(deadline)
 			if left <= 0 {
@@ -643,6 +677,9 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 			if !o.noReplica { // neither the application's triggers nor FK checks fire for the move
 				stmts = append(stmts, "SET LOCAL session_replication_role = replica")
 			}
+			// no parallel workers: the comparison below would put its hash joins in shared memory, which
+			// a Postgres in a container (/dev/shm of 64 MB) does not have for 600 000 rows
+			stmts = append(stmts, "SET LOCAL max_parallel_workers_per_gather = 0")
 			// the refs keep pointing at the moved rows (lokadb's own triggers on DEFAULT stand down)
 			for _, s := range append(stmts, "SELECT set_config('lokadb.moving', 'on', true)") {
 				if _, err := tx.Exec(ctx, s); err != nil {
@@ -662,11 +699,13 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 				fmt.Sprintf("LOCK TABLE ONLY %s IN SHARE UPDATE EXCLUSIVE MODE", qr(part))); err != nil {
 				return err
 			}
+			step("locks")
 			for _, f := range fks {
 				if _, err := tx.Exec(ctx, f[0]); err != nil {
 					return err
 				}
 			}
+			step("referenced rows locked")
 			// The application's triggers enabled ALWAYS or REPLICA fire under session_replication_role
 			// replica too: an AFTER DELETE one (an audit, a counter, a cascade by hand) saw the move
 			// as a delete of the organization's rows (review 3, R3-3). They are switched off for the
@@ -699,24 +738,59 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 			// those. A copy whose row is gone (deleted since the snapshot: an FK cascade, a writer
 			// past the proxy, even one that commits while this runs) goes too; separate statements
 			// let such a delete slip in between and the row came back in the partition.
+			step("triggers off")
 			var gone, stale int64
 			var ret, goneK []string
 			for i, c := range kcols {
 				ret, goneK = append(ret, fmt.Sprintf("%s AS k_%d", q(c), i+1)), append(goneK, fmt.Sprintf("k_%d", i+1))
 			}
-			if err := tx.QueryRow(ctx, fmt.Sprintf(`WITH gone AS (DELETE FROM %s WHERE %s = %s RETURNING %s),
-			stale AS (DELETE FROM %s p WHERE NOT EXISTS (SELECT 1 FROM gone WHERE %s) RETURNING 1)
-			SELECT (SELECT count(*) FROM gone), (SELECT count(*) FROM stale)`, qr(def), key, val, strings.Join(ret, ", "), qr(part),
-				keyEq("gone.", goneK, "p.", kcols))).Scan(&gone, &stale); err != nil {
-				return err
+			if slow {
+				// the copies of rows deleted since the snapshot go too (only after the quick way found
+				// some): one statement, the rows deleted are the rows kept
+				if err := tx.QueryRow(ctx, fmt.Sprintf(`WITH gone AS (DELETE FROM %s WHERE %s = %s RETURNING %s),
+				stale AS (DELETE FROM %s p WHERE NOT EXISTS (SELECT 1 FROM gone WHERE %s) RETURNING 1)
+				SELECT (SELECT count(*) FROM gone), (SELECT count(*) FROM stale)`, qr(def), key, val, strings.Join(ret, ", "), qr(part),
+					keyEq("gone.", goneK, "p.", kcols))).Scan(&gone, &stale); err != nil {
+					return err
+				}
+			} else {
+				// The quick way, which the statement with RETURNING and the anti-join of the copies is
+				// not (27 s against 6 for 600 000 rows): the copy holds exactly the rows of DEFAULT
+				// (two anti-joins, a second for 600 000), then a plain DELETE.
+				var missing, orphans int64
+				if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT
+					(SELECT count(*) FROM %[1]s d WHERE %[3]s = %[4]s AND NOT EXISTS (SELECT 1 FROM %[2]s p WHERE %[5]s)),
+					(SELECT count(*) FROM %[2]s p WHERE NOT EXISTS (SELECT 1 FROM %[1]s d WHERE %[3]s = %[4]s AND %[5]s))`,
+					qr(def), qr(part), key, val, keyEq("p.", kcols, "d.", kcols))).Scan(&missing, &orphans); err != nil {
+					return err
+				}
+				step("compared")
+				if missing > 0 {
+					return fmt.Errorf("%d rows of DEFAULT have no copy: they changed during the split; nothing moved", missing)
+				}
+				if orphans > 0 { // a copy of a row deleted since the snapshot
+					slow = true
+					return errSlowSplit
+				}
+				tag, err := tx.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE %s = %s", qr(def), key, val))
+				if err != nil {
+					return err
+				}
+				gone = tag.RowsAffected()
 			}
+			step("delete")
 			var inPart int64
 			if err := tx.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM %s", qr(part))).Scan(&inPart); err != nil {
 				return err
 			}
+			step("count")
 			// Nothing adds or changes the organization's rows in DEFAULT during the split (the
 			// pause, the CHECK): every row that left it has its copy.
 			if inPart != gone {
+				if !slow {
+					slow = true // the rows changed under the quick way: the slow one accounts for each
+					return errSlowSplit
+				}
 				return fmt.Errorf("%d rows left DEFAULT, the copy holds %d of them: they changed during the split; nothing moved", gone, inPart)
 			}
 			if stale > 0 {
@@ -731,12 +805,22 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 			if err := locked(tx, fmt.Sprintf("ALTER TABLE %s VALIDATE CONSTRAINT %s", qr(def), q(fmt.Sprintf("lokadb_not_org%d", o.Org)))); err != nil {
 				return err
 			}
+			step("validate")
 			// An INSERT routed before the ATTACH (it takes only SHARE UPDATE EXCLUSIVE on the
 			// parent) would go to DEFAULT: writers wait instead. EXCLUSIVE lets reads through.
-			return locked(tx, append([]string{
+			err = locked(tx, append([]string{
 				fmt.Sprintf("LOCK TABLE %s IN EXCLUSIVE MODE", qr(t)),
 				fmt.Sprintf("ALTER TABLE %s ATTACH PARTITION %s FOR VALUES IN (%s)", qr(t), qr(part), val)}, splitCaptureDrops(o, t)...)...)
+			step("attach")
+			if err != nil {
+				return err
+			}
+			_, err = tx.Exec(ctx, fmt.Sprintf("ALTER TABLE %s RESET (autovacuum_enabled)", qr(part)))
+			return err
 		})
+		if errors.Is(err, errSlowSplit) {
+			continue
+		}
 		var pgErr *pgconn.PgError
 		busy := errors.As(err, &pgErr) && (pgErr.Code == "55P03" || pgErr.Code == "40P01")
 		if !busy || time.Since(busySince) > o.LockTimeout*time.Duration(max(o.Attempts, 1)) || time.Until(deadline) < try {
@@ -757,11 +841,11 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 		if errors.Is(err, errSplitPause) || errors.As(err, &pgErr) && pgErr.Code == "57014" && !time.Now().Before(deadline) {
 			err = fmt.Errorf("%w (%s): the rows of %s stay in DEFAULT", errSplitPause, limit, t)
 		}
-		truncateCopy(cloud, o, part, log)
+		dropCopy(cloud, o, part, log)
 		return err
 	}
 	log.Info("organization split out of DEFAULT (the others went on)", "table", t, "took", time.Since(start).Round(time.Millisecond),
-		"last_transaction", time.Since(last).Round(time.Millisecond))
+		"last_transaction", time.Since(last).Round(time.Millisecond), "steps", strings.Join(steps, ", "))
 	return nil
 }
 
@@ -807,27 +891,38 @@ func splitCopy(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, def, part
 	return nil
 }
 
-// truncateCopy empties the organization's partition after a split that did not attach it.
-// An attached partition is never emptied, and one that cannot be told from one is not either:
-// the last transaction may have committed though its answer did not arrive, and then the partition
-// holds the only copy of the rows.
-func truncateCopy(cloud *pgx.Conn, o MoveOptions, part string, log *slog.Logger) {
+// dropCopy removes the copy this attempt made of the organization's rows (the partition, with its
+// own indexes, constraints and statistics) after a split that did not attach it. Only a table that
+// carries this attempt's mark (splitMark) and is not attached: an attached partition holds the
+// organization's only rows and is never touched, and one that cannot be told from one is not either
+// (the last transaction may have committed though its answer did not arrive).
+func dropCopy(cloud *pgx.Conn, o MoveOptions, part string, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	conn, err := connect(ctx, o.CloudDSN)
-	if err == nil {
-		defer conn.Close(context.Background())
-		var att bool
-		if err = conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = to_regclass($1))", qr(part)).Scan(&att); err == nil && att {
-			log.Warn("the partition of the split is attached: its rows are the organization's only copy, not emptied", "table", part)
-			return
-		}
-	}
 	if err != nil {
-		log.Warn("the copy of the split stays in its partition (whether it is attached is not known); the next move-org looks at it", "table", part, "err", err)
+		log.Warn("the copy of the split stays (whether it is attached is not known); the next move-org looks at it", "table", part, "err", err)
 		return
 	}
-	if err := lockedDDL(ctx, cloud, o, []string{"TRUNCATE " + qr(part)}); err != nil {
+	defer conn.Close(context.Background())
+	var exists, att, mine bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL,
+		EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = to_regclass($1)),
+		coalesce(obj_description(to_regclass($1), 'pg_class'), '') = $2`, qr(part), splitMark(o.Org)).Scan(&exists, &att, &mine); err != nil {
+		log.Warn("the copy of the split stays (whether it is attached is not known); the next move-org looks at it", "table", part, "err", err)
+		return
+	}
+	switch {
+	case !exists:
+		return
+	case att:
+		log.Warn("the partition of the split is attached: its rows are the organization's only copy, not touched", "table", part)
+		return
+	case !mine:
+		log.Warn("a table of this name is not the copy this split made: not touched", "table", part)
+		return
+	}
+	if err := lockedDDL(ctx, conn, o, []string{"DROP TABLE " + qr(part)}); err != nil {
 		log.Warn("the copy of the split stays in its partition (not attached: the application does not see it); the next move-org drops it", "table", part, "err", err)
 	}
 }
@@ -856,4 +951,133 @@ func notValid(def string) string {
 		return def
 	}
 	return def + " NOT VALID"
+}
+
+// splitSamplePages: the pages of DEFAULT the estimate's sample is taken from.
+const splitSamplePages = 1500
+
+// estimateSplitPause: how long the organization's writes wait for the split's last transactions.
+// The DELETE of a table costs by the pages of DEFAULT it touches, not by its rows: the
+// organization's rows lie on most of them (every fifth row of the table is its own), each page
+// is written whole into the log the first time it changes after a checkpoint, and a delete
+// larger than shared_buffers and max_wal_size sets checkpoints off and makes the backends
+// write what they evict (R39: 1302 MB table, 1.4 GB of log for one commit, 3 min 39 s against
+// the 1 min 36 s a sample of 10 000 rows promised). So: a DELETE of the rows on a sample of
+// pages (TABLESAMPLE SYSTEM, in a transaction rolled back, with lokadb.moving and the
+// triggers as the last transaction has them) gives the time per row; times the rows; times
+// 1 plus the log the pages would write against max_wal_size (at most 2 more, half of it counted)
+// and the pages against shared_buffers (a tenth of that, at most 1, half of it counted), the
+// two numbers measured on the run of the risk hunt (0.8 each). The factor is for the estimate before
+// the copy, the server quiet; after it (afterCopy) the sample alone: it is taken under the
+// checkpoints of the copy, as the pause will be. A table with triggers of the application is not
+// sampled (they would run): 30 µs a row and the same factors.
+func estimateSplitPause(ctx context.Context, cloud *pgx.Conn, o MoveOptions, tables []moveTable, log *slog.Logger) time.Duration {
+	var maxWAL, buffers int64
+	if err := cloud.QueryRow(ctx, "SELECT pg_size_bytes(current_setting('max_wal_size')), pg_size_bytes(current_setting('shared_buffers'))").Scan(&maxWAL, &buffers); err != nil {
+		maxWAL, buffers = 1<<30, 128<<20
+	}
+	var total time.Duration
+	var allRows int64
+	for _, t := range tables {
+		def := hn(t.name, "__cloud")
+		key, val := o.org().Key(t.tenant), o.org().Lit()
+		var rows int64
+		if err := cloud.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE %s = %s", qr(def), key, val)).Scan(&rows); err != nil || rows == 0 {
+			continue
+		}
+		allRows += rows
+		// the pages the rows lie on, if they lie as they come: pages x (1 - (1 - share)^rows per page)
+		var relpages int64
+		var reltuples float64
+		_ = cloud.QueryRow(ctx, "SELECT relpages::bigint, reltuples::float8 FROM pg_class WHERE oid = $1::regclass", qr(def)).Scan(&relpages, &reltuples)
+		pages := relpages
+		if relpages > 0 && reltuples > 0 {
+			share, perPage := min(float64(rows)/reltuples, 1), reltuples/float64(relpages)
+			pages = max(1, int64(float64(relpages)*(1-math.Pow(1-share, perPage))))
+		}
+		perRow := 30 * time.Microsecond
+		if took, ok := sampleDelete(ctx, cloud, o, def, key, val, relpages); ok {
+			perRow = took
+		}
+		wal := float64(pages)*8192 + float64(rows)*80
+		factor := 1 + 0.8*min(wal/float64(maxWAL), 2) + 0.8*min(float64(pages)*8192/float64(buffers)/10, 1)
+		est := time.Duration(float64(perRow) * float64(rows) * factor * 1.3) // a third more: the locks of the referenced rows and the comparison
+		log.Info("the DELETE of the split, estimated", "table", t.name, "rows", rows, "pages", pages, "per_row", perRow.Round(time.Microsecond),
+			"log_mb", int64(wal)>>20, "factor", fmt.Sprintf("%.2f", factor), "estimate", est.Round(time.Second))
+		total += est
+	}
+	log.Info("the organization's writes will wait for the split about (a forecast from a sample on a quiet table: on a big one under writes the pause has been up to four times longer than it says, and it is not a limit)", "forecast", total.Round(time.Second), "rows", allRows)
+	return total
+}
+
+// sampleDelete: the time per row of a DELETE, in a transaction rolled back, of the organization's rows
+// on about splitSamplePages pages of table def (all of its rows up to 10 000 when it has fewer
+// pages); ok false: it could not be taken (triggers of the application would run, an error).
+func sampleDelete(ctx context.Context, cloud *pgx.Conn, o MoveOptions, def, key, val string, relpages int64) (time.Duration, bool) {
+	// three samples of other pages, the lowest: one alone has been 3 s and 22 s for the same
+	// organization, and 207 µs a row right after enable (a cold cache, the checkpoints of the moment)
+	// against 71 a quarter of a minute later (risk hunt). The factor of estimateSplitPause is for the
+	// effects that come with the size of the DELETE; the cold ones of the moment are not its to add
+	var took []time.Duration
+	for seed := 1; seed <= 3; seed++ {
+		if d, ok := sampleDeleteOnce(ctx, cloud, o, def, key, val, relpages, seed); ok {
+			took = append(took, d)
+		}
+	}
+	if len(took) == 0 {
+		return 0, false
+	}
+	sort.Slice(took, func(i, j int) bool { return took[i] < took[j] })
+	return took[0], true
+}
+
+func sampleDeleteOnce(ctx context.Context, cloud *pgx.Conn, o MoveOptions, def, key, val string, relpages int64, seed int) (time.Duration, bool) {
+	tr, err := cloud.Begin(ctx)
+	if err != nil {
+		return 0, false
+	}
+	defer tr.Rollback(context.Background()) //nolint:errcheck
+	var n int
+	if err := tr.QueryRow(ctx, `SELECT count(*) FROM pg_trigger WHERE tgrelid = $1::regclass AND NOT tgisinternal AND tgenabled <> 'D'
+		AND tgfoid NOT IN (SELECT oid FROM pg_proc WHERE pronamespace = 'lokadb'::regnamespace)`, qr(def)).Scan(&n); err != nil || n > 0 {
+		return 0, false
+	}
+	for _, s := range []string{"SET LOCAL statement_timeout = '15s'", "SELECT set_config('lokadb.moving', 'on', true)"} {
+		if _, err := tr.Exec(ctx, s); err != nil {
+			return 0, false
+		}
+	}
+	if !o.noReplica {
+		if _, err := tr.Exec(ctx, "SET LOCAL session_replication_role = replica"); err != nil {
+			return 0, false
+		}
+	}
+	// Only the DELETE is timed. The locks of the referenced rows and the comparison were in the
+	// sample too (one probe by index a row): on a cold cache that is a random read each, 6 ms a row
+	// for 400 000 versions, 1 h 29 min for an organization that moves in 4 minutes, where the pause
+	// reads the pages in turn and joins them by hash (risk hunt, 9ece9db9). They are a third more
+	// of the DELETE's time in the estimate (estimateSplitPause).
+	pick := fmt.Sprintf("SELECT ctid FROM %s WHERE %s = %s LIMIT 10000", qr(def), key, val)
+	if relpages > 2*splitSamplePages {
+		pick = fmt.Sprintf("SELECT ctid FROM %s TABLESAMPLE SYSTEM (%f) REPEATABLE (%d) WHERE %s = %s", qr(def), 100*float64(splitSamplePages)/float64(relpages), seed, key, val)
+	}
+	start := time.Now()
+	tag, err := tr.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE ctid = ANY (ARRAY(%s))", qr(def), pick))
+	if err != nil || tag.RowsAffected() == 0 {
+		return 0, false
+	}
+	return time.Since(start) / time.Duration(tag.RowsAffected()), true
+}
+
+// refLockQueries: for each FK of table def, the statement that locks the rows it references FOR KEY
+// SHARE, those named by the rows of src (a table, or a sub-select aliased in its place: the estimate
+// takes a sample of pages), as rows of one column each: [][]string{{sql}}.
+func refLockQueries(ctx context.Context, q querier, def, src string) ([][]string, error) {
+	return rowsOf(ctx, q, `SELECT format('SELECT 1 FROM %s x WHERE (%s) IN (SELECT DISTINCT %s FROM '|| $2::text ||' d) FOR KEY SHARE OF x',
+			c.confrelid::regclass,
+			(SELECT string_agg('x.' || quote_ident(a.attname), ', ' ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(n, ord)
+			   JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n),
+			(SELECT string_agg('d.' || quote_ident(a.attname), ', ' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(n, ord)
+			   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n))
+		FROM pg_constraint c WHERE c.conrelid = $1::regclass AND c.contype = 'f'`, qr(def), src)
 }
