@@ -11,7 +11,7 @@ Enterprise customers increasingly ask a multi-tenant SaaS for the same thing: *"
 LokaDB is a Postgres wire-protocol proxy that takes a third way. Your application keeps one database connection string and keeps sending the SQL it sends today. LokaDB stores the rows of the tables you choose, for the organizations you choose, in **each organization's own Postgres**, and leaves everything else in your cloud database. Moving an organization out, and back, happens online while the application writes.
 
 
-> **Status:** early, ready for a pilot. LokaDB works with any application that talks to Postgres over its protocol, in any language and with any ORM: only the connection string changes. What decides is your schema and your queries, not the framework, and `lokadb check` tells you before anything is changed. Every build is tested end to end under load with three unmodified applications (Laravel, Django, Go) and against more than 300 failure scenarios. See [What's supported](#whats-supported), [Limits](docs/limits.md) and [the roadmap](ROADMAP.md).
+> **Status:** early, in production at [KeepPlain](https://keepplain.com), our first pilot (a Laravel SaaS on Postgres). LokaDB works with any application that talks to Postgres over its protocol, in any language and with any ORM: only the connection string changes. What decides is your schema and your queries, not the framework, and `lokadb check` tells you before anything is changed. Every build is tested end to end under load with three unmodified applications (Laravel, Django, Go) and against more than 300 failure scenarios. See [What's supported](#whats-supported), [Limits](docs/limits.md) and [the roadmap](ROADMAP.md).
 
 ---
 
@@ -144,7 +144,7 @@ Report vulnerabilities as described in the [security policy](SECURITY.md).
 
 ## Status
 
-LokaDB is under active development by a small team. The core — `check`, `enable`, the proxy, `move-org`, the way back, migrations, the tunnel — is complete for the supported scope and is covered by an end-to-end stand and a suite of regression checks for every defect found so far. It has not yet run a production customer. What is next is in the [Roadmap](ROADMAP.md).
+LokaDB is under active development by a small team. The core — `check`, `enable`, the proxy, `move-org`, the way back, migrations, the tunnel — is complete for the supported scope and is covered by an end-to-end stand and a suite of regression checks for every defect found so far. It runs in production at [KeepPlain](https://keepplain.com), a Laravel SaaS on Postgres and our first pilot. What is next is in the [Roadmap](ROADMAP.md).
 
 ## Documentation
 
