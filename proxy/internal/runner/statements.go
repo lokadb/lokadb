@@ -210,6 +210,7 @@ func (o *Ops) byTable(ctx context.Context, conn *pgx.Conn, items []proxy.Unroute
 		}
 		gaps[t] = append(gaps[t], x.Gaps...)
 	}
+	mode := o.Cfg.effectiveFanoutMode()
 	for i := range out {
 		g := &out[i]
 		g.Reason = o.tableReason(g.Table, gaps[g.Table])
@@ -223,7 +224,12 @@ func (o *Ops) byTable(ctx context.Context, conn *pgx.Conn, items []proxy.Unroute
 			}
 		}
 		if g.Table != "" {
-			g.Options = append(g.Options, "read", "allow", "refuse")
+			// "read" runs the reads of the table in every customer's database and leaves its writes to the mode: it
+			// changes something only for a table that has reads, under a mode that refuses them
+			if g.Reads > 0 && mode == proxy.FanoutReject {
+				g.Options = append(g.Options, "read")
+			}
+			g.Options = append(g.Options, "allow", "refuse")
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
@@ -391,7 +397,25 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 			}
 			key := "table:" + d.Table
 			switch d.Choice {
-			case "read", "allow", "refuse":
+			case "read":
+				// under a mode that already lets reads run, or for a table nobody reads, "read" changes nothing: the
+				// writes would be refused again and the table would come back to the list without a word
+				reads := false
+				for _, x := range c.unr.items {
+					if tableOf(*x) == d.Table && !x.Write {
+						reads = true
+					}
+				}
+				if mode := c.effectiveFanoutMode(); mode != proxy.FanoutReject || !reads {
+					why := "it has no query that reads"
+					if mode != proxy.FanoutReject {
+						why = "the policy (" + mode + ") already lets reads run"
+					}
+					res.Failed[key] = d.Table + ": " + why + ", so \"read\" would change nothing and its writes would still be refused: choose \"refuse\" or \"run reads and writes\""
+					continue
+				}
+				tables[d.Table] = d.Choice
+			case "allow", "refuse":
 				tables[d.Table] = d.Choice
 			case "key":
 				k := o.keyColumn(ctx, conn, gaps)
@@ -581,4 +605,26 @@ func (c *Config) addFanoutAllow(sql []string, tables map[string]string) error {
 		c.restart = true
 	}
 	return nil
+}
+
+// effectiveFanoutMode is the policy in force for the application's database: the panel's choice, else the
+// mode in proxy.json (its entry for the database, else "*"), else reject.
+func (c *Config) effectiveFanoutMode() string {
+	if c.fanoutMode != "" {
+		return c.fanoutMode
+	}
+	if b, err := os.ReadFile(filepath.Join(Dir, "proxy.json")); err == nil && c.found != nil {
+		var m struct {
+			Fanout map[string]struct{ Mode string } `json:"fanout"`
+		}
+		if json.Unmarshal(b, &m) == nil {
+			if e, ok := m.Fanout[c.found.DBName]; ok && e.Mode != "" {
+				return e.Mode
+			}
+			if e, ok := m.Fanout["*"]; ok && e.Mode != "" {
+				return e.Mode
+			}
+		}
+	}
+	return proxy.FanoutReject
 }

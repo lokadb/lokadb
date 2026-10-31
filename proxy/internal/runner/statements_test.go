@@ -158,7 +158,7 @@ func TestStatementsByTable(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() { _, _ = db.Exec(ctx, "DROP TABLE IF EXISTS bt_builds, bt_moments") })
-	write(t, dir+"/proxy.json", `{"listen": ":6432", "fanout": {"shop": {"mode": "reject-writes"}}}`)
+	write(t, dir+"/proxy.json", `{"listen": ":6432", "fanout": {"shop": {"mode": "reject"}}}`)
 	c := &Config{State: t.TempDir(), DB: dsn, found: &Found{DBName: "shop"},
 		spec: admin.Spec{Tables: []admin.SpecTable{{Name: "bt_builds", TenantColumn: "user_id"}, {Name: "bt_moments", TenantColumn: "user_id"}}}}
 	o := &Ops{Cfg: c}
@@ -203,7 +203,81 @@ func TestStatementsByTable(t *testing.T) {
 	if err := json.Unmarshal(read(t, dir+"/proxy.json"), &m); err != nil {
 		t.Fatal(err)
 	}
-	if shop := m.Fanout["shop"]; m.Listen != ":6432" || shop.Mode != "reject-writes" || shop.Tables["bt_builds"] != "read" || shop.Tables["bt_moments"] != "refuse" {
+	if shop := m.Fanout["shop"]; m.Listen != ":6432" || shop.Mode != "reject" || shop.Tables["bt_builds"] != "read" || shop.Tables["bt_moments"] != "refuse" {
+		t.Fatalf("proxy.json: %+v", m)
+	}
+}
+
+// Under reject-writes the reads of a table already run, so "read" offered for a table that only writes
+// changed nothing: its write was refused again and the table came back to the list with no word (KeepPlain,
+// runner 0.1.12). Now "read" is not offered there, Decide refuses it with the reason, and "refuse" and
+// "allow" take the table off the list for good.
+func TestReadIsNotOfferedWhereItChangesNothing(t *testing.T) {
+	dsn := os.Getenv("INIT_TEST_DSN")
+	if dsn == "" {
+		t.Skip("INIT_TEST_DSN is not set")
+	}
+	dir := useDir(t)
+	ctx := context.Background()
+	db, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(ctx)
+	for _, q := range []string{"DROP TABLE IF EXISTS wo_commits, wo_notices", "CREATE TABLE wo_commits (id serial PRIMARY KEY, user_id int, body text)", "CREATE TABLE wo_notices (id serial PRIMARY KEY, user_id int, body text)"} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _, _ = db.Exec(ctx, "DROP TABLE IF EXISTS wo_commits, wo_notices") })
+	write(t, dir+"/proxy.json", `{"listen": ":6432", "fanout": {"shop": {"mode": "reject-writes"}}}`)
+	c := &Config{State: t.TempDir(), DB: dsn, found: &Found{DBName: "shop"},
+		spec: admin.Spec{Tables: []admin.SpecTable{{Name: "wo_commits", TenantColumn: "user_id"}, {Name: "wo_notices", TenantColumn: "user_id"}}}}
+	o := &Ops{Cfg: c}
+	none := func(tbl string) []proxy.Gap { return []proxy.Gap{{Kind: proxy.GapNoCondition, Table: tbl}} }
+	c.collectUnrouted([]proxy.Unrouted{
+		{Fingerprint: "c", SQL: "INSERT INTO wo_commits (body) VALUES ($1)", Full: "x", Count: 4, Write: true, Gaps: none("wo_commits")},
+		{Fingerprint: "n", SQL: "INSERT INTO wo_notices (body) VALUES ($1)", Full: "x", Count: 3, Write: true, Gaps: none("wo_notices")},
+	}, 0)
+	res, err := o.Statements(ctx, cloudproto.StatementsArgs{})
+	if err != nil || len(res.Tables) != 2 {
+		t.Fatalf("%v %+v", err, res)
+	}
+	for _, tb := range res.Tables {
+		if strings.Contains(strings.Join(tb.Options, ","), "read") || tb.Reads != 0 || tb.Writes != 1 {
+			t.Fatalf("%s: read offered where there is no read to run: %+v", tb.Table, tb)
+		}
+	}
+	dec, err := o.Decide(ctx, cloudproto.DecideArgs{Decisions: []cloudproto.Decision{{Table: "wo_commits", Choice: "read"}}})
+	if err != nil || len(dec.Applied) != 0 || !strings.Contains(dec.Failed["table:wo_commits"], "already lets reads run") || !strings.Contains(dec.Failed["table:wo_commits"], "choose \"refuse\"") {
+		t.Fatalf("read on a table that only writes: %v %+v", err, dec)
+	}
+	if c.Info()["unrouted_open"] != "2" {
+		t.Fatalf("nothing was decided, both stay open: %v", c.Info())
+	}
+	dec, err = o.Decide(ctx, cloudproto.DecideArgs{Decisions: []cloudproto.Decision{{Table: "wo_commits", Choice: "refuse"}, {Table: "wo_notices", Choice: "allow"}}})
+	if err != nil || len(dec.Applied) != 2 || len(dec.Failed) != 0 {
+		t.Fatalf("refuse and allow: %v %+v", err, dec)
+	}
+	if c.Info()["unrouted_open"] != "0" {
+		t.Fatalf("both tables leave the list: %v", c.Info())
+	}
+	// the proxy goes on counting what it saw before it restarted; the count of an old statement is a delta of zero
+	// and does not bring the table back, and a restart of the proxy (c.restart) is what ends it
+	c.collectUnrouted([]proxy.Unrouted{{Fingerprint: "c", SQL: "INSERT INTO wo_commits (body) VALUES ($1)", Full: "x", Count: 4, Write: true, Gaps: none("wo_commits")}}, 0)
+	if c.Info()["unrouted_open"] != "0" {
+		t.Fatalf("an unchanged count brought the table back: %v", c.Info())
+	}
+	var m struct {
+		Fanout map[string]struct {
+			Mode   string
+			Tables map[string]string
+		}
+	}
+	if err := json.Unmarshal(read(t, dir+"/proxy.json"), &m); err != nil {
+		t.Fatal(err)
+	}
+	if tb := m.Fanout["shop"].Tables; m.Fanout["shop"].Mode != "reject-writes" || tb["wo_commits"] != "refuse" || tb["wo_notices"] != "allow" {
 		t.Fatalf("proxy.json: %+v", m)
 	}
 }

@@ -240,3 +240,26 @@ func TestUnroutedPerDatabase(t *testing.T) {
 		t.Fatalf("%+v", list)
 	}
 }
+
+// KeepPlain (runner 0.1.12): under reject-writes a table that only writes was offered "read", which left
+// its write refused and the table came back to the panel's list. Of the decisions, only "allow" and
+// "refuse" take a write-only table off the list: both end in a verdict that session.refuse does not count
+// as open (FanoutAllowed and FanoutDenied are not noted), "read" ends in FanoutRefused, which is.
+func TestFanoutWriteOnlyTableUnderRejectWrites(t *testing.T) {
+	m := testMeta()
+	write := `update documents set title = $1 where slug = $2`
+	want := map[string]FanoutVerdict{"": FanoutRefused, TableRead: FanoutRefused, TableAllow: FanoutAllowed, TableRefuse: FanoutDenied}
+	for choice, w := range want {
+		tables := map[string]string{}
+		if choice != "" {
+			tables["documents"] = choice
+		}
+		f, err := Config{Fanout: map[string]FanoutPolicy{"db": {Mode: FanoutRejectWrites, Tables: tables}}}.FanoutFor("db")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := f.Decide(write, analyze(write, m)); got != w {
+			t.Errorf("decision %q: %v, want %v", choice, got, w)
+		}
+	}
+}
