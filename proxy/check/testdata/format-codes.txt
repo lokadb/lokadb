@@ -30,17 +30,17 @@ customer_contents
 customer_creates
 customer_encoding
 customer_extension_privilege
-customer_syntax
-customer_other_org
 customer_extension_unavailable
 customer_extension_version
 customer_function_security_definer
 customer_function_untrusted
 customer_index_skipped
 customer_object_missing
+customer_other_org
 customer_previous_attempt
 customer_privileges
 customer_schema
+customer_syntax
 customer_table_exists
 customer_tables_unknown
 customer_unreachable
@@ -126,6 +126,7 @@ profile_no_lokadb_queries
 profile_org_not_moved
 profile_two_connections
 profile_unchanged
+query_ctid
 query_fanout_allowed
 query_forbidden
 query_refused

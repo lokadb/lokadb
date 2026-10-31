@@ -365,6 +365,7 @@ func (c *Config) watchApp(ctx context.Context, srv *proxy.Server) {
 			}
 		}
 		c.collectUnrouted(mine, over)
+		c.pruneRoutedSometimes(ctx)
 		var via int64
 		var last time.Time
 		for _, u := range srv.Seen() {

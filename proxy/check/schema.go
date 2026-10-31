@@ -479,7 +479,7 @@ func (c *checker) schema() error {
 			continue
 		}
 		if st.ParentTable != "" && parentFK[t][st.ParentColumn] != st.ParentTable {
-			c.add(Warning, "child_without_fk", t+"."+st.ParentColumn, fmt.Sprintf("%s.%s has no FK to %s: the proxy cannot find the organization from it, so queries by %s run in every organization's database",
+			c.add(Warning, "child_without_fk", t+"."+st.ParentColumn, fmt.Sprintf("%s.%s has no FK to %s: the proxy cannot find the organization from it, so a query by %s does not say which organization it is for: it covers many at once and runs separately in each organization's database",
 				t, st.ParentColumn, st.ParentTable, st.ParentColumn), nil)
 		}
 		// After enable a unique index exists per organization's partition. It stays globally
@@ -999,7 +999,7 @@ func (c *checker) cloudDeletes(fks map[string][]string) error {
 			if len(linked) > 0 {
 				why = fmt.Sprintf(" %s is shared by organizations (%s links it to the organizations table) and has no column that holds the organization of its rows, so it cannot be declared in routing.cloud_tables: deleting a row of it, or SET NULL on its key, touches every moved organization's database that references the row.", t, strings.Join(linked, ", "))
 			}
-			fix = why + " The statement has to be allowed to run in every organization's database: set the fanout policy of the database to log or allow, or allow only the reviewed statement (an allow-list entry for that DELETE in the proxy config), or delete softly in the application (a deleted_at column), so the foreign key is never triggered"
+			fix = why + " The statement has to be allowed to run separately in each organization's database (each changes only its own rows; nothing is copied between databases): set the fanout policy of the database to log or allow, or allow only the reviewed statement (an allow-list entry for that DELETE in the proxy config), or delete softly in the application (a deleted_at column), so the foreign key is never triggered"
 			alt = ""
 		}
 		switch {

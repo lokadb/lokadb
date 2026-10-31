@@ -194,3 +194,81 @@ func toText(v any) string {
 	}
 	return s
 }
+
+// Shapes recorded under older metadata (an enable still running, a table declared later) do not stay in
+// the open list for good: the ones the proxy routes by the metadata as it is now leave it. Needs INIT_TEST_DSN.
+func TestStaleShapesLeaveTheList(t *testing.T) {
+	base := os.Getenv("INIT_TEST_DSN")
+	if base == "" {
+		t.Skip("INIT_TEST_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	u, _ := url.Parse(base)
+	u.Path = "/postgres"
+	root, err := pgx.Connect(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close(ctx)
+	_, _ = root.Exec(ctx, "DROP DATABASE IF EXISTS stale_en WITH (FORCE)")
+	if _, err := root.Exec(ctx, "CREATE DATABASE stale_en"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = root.Exec(context.Background(), "DROP DATABASE IF EXISTS stale_en WITH (FORCE)") })
+	_, _ = root.Exec(ctx, "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'dec_owner') THEN CREATE ROLE dec_owner; END IF; END $$")
+	u.Path = "/stale_en"
+	dsn := u.String()
+	db, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(ctx)
+	for _, q := range []string{
+		`CREATE TABLE repositories (id bigint PRIMARY KEY, team_id bigint NOT NULL)`,
+		`CREATE TABLE commits (id bigint PRIMARY KEY, repository_id bigint NOT NULL REFERENCES repositories, sha text)`,
+		`INSERT INTO repositories VALUES (1, 7), (2, 8)`,
+		`INSERT INTO commits VALUES (1, 1, 'a'), (2, 2, 'b')`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := admin.Spec{Tables: []admin.SpecTable{{Name: "repositories", TenantColumn: "team_id"}, {Name: "commits", ParentTable: "repositories", ParentColumn: "repository_id"}}}
+	if err := admin.Enable(ctx, dsn, spec, "dec_owner", quiet); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	c := &Config{State: t.TempDir()}
+	ins := `INSERT INTO commits (id, sha, repository_id) VALUES ($1, $2, $3)`
+	byslug := `SELECT * FROM commits WHERE sha = $1`
+	gap := []proxy.Gap{{Kind: proxy.GapNoCondition, Table: "commits", Form: "INSERT"}}
+	c.collectUnrouted([]proxy.Unrouted{
+		{Fingerprint: "ins", SQL: ins, Full: ins, Table: "commits", Gaps: gap, Write: true, Count: 4, Refused: true},
+		{Fingerprint: "sel", SQL: byslug, Full: byslug, Table: "commits", Gaps: []proxy.Gap{{Kind: proxy.GapUnknownColumn, Table: "commits", Column: "sha", Form: "="}}, Count: 2, Refused: true},
+		{Fingerprint: "long", SQL: "SELECT …", Table: "commits", Gaps: gap, Count: 1}, // too long to read again: stays
+	}, 0)
+	if n := c.pruneRouted(ctx, db); n != 1 {
+		t.Errorf("pruned %d, want 1", n)
+	}
+	c.unr.mu.Lock()
+	_, hasIns := c.unr.items["ins"]
+	_, hasSel := c.unr.items["sel"]
+	_, hasLong := c.unr.items["long"]
+	c.unr.mu.Unlock()
+	if hasIns || !hasSel || !hasLong {
+		t.Errorf("after the prune: insert %v, lookup by sha %v, long %v", hasIns, hasSel, hasLong)
+	}
+	if got := c.Info()["unrouted_open"]; got != "2" {
+		t.Errorf("open: %q", got)
+	}
+	// the list on disk is the pruned one
+	again := &Config{State: c.State}
+	again.unr.mu.Lock()
+	again.loadUnrouted()
+	n := len(again.unr.items)
+	again.unr.mu.Unlock()
+	if n != 2 {
+		t.Errorf("after a restart: %d shapes", n)
+	}
+}

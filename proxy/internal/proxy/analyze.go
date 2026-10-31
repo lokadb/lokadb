@@ -54,10 +54,13 @@ type Analysis struct {
 	Forbidden string   // the statement must not run at all (LokaDB's own objects, FDW commands)
 	// FanoutByParam: Forbidden only for a set_config whose name is not a constant (setsFanout)
 	FanoutByParam bool
-	Commit        bool
-	Rollback      bool
-	TxControl     bool   // BEGIN/COMMIT/ROLLBACK/SAVEPOINT...: never inject anything before it
-	Rewritten     string // SQL to send instead of the original ("" = unchanged)
+	// Ctid: the LokaDB tables whose ctid the statement uses (ctid.go): refused, or rewritten to
+	// the key when it only picks rows of the table by its own ctid
+	Ctid      []string
+	Commit    bool
+	Rollback  bool
+	TxControl bool   // BEGIN/COMMIT/ROLLBACK/SAVEPOINT...: never inject anything before it
+	Rewritten string // SQL to send instead of the original ("" = unchanged)
 	// Prelude: statements the proxy runs right before this one, after lokadb.org and the
 	// pause lock, one statement each (COPY FROM: the staging table it loads into).
 	Prelude []string
@@ -273,6 +276,7 @@ func analyzeIn(sql string, m *Meta, path []string) *Analysis {
 	}
 	var out strings.Builder
 	prev, changed, reverted := 0, false, false
+	mentionsCtid := containsFold(sql, "ctid")
 	for _, raw := range tree.Stmts {
 		start := int(raw.StmtLocation)
 		end := len(sql)
@@ -297,7 +301,26 @@ func analyzeIn(sql string, m *Meta, path []string) *Analysis {
 		was, ddls := a.Lokadb, len(a.DDL)
 		a.Lokadb = false
 		a.Stmts = append(a.Stmts, sql[start:end])
+		// ctid is unique only inside a partition: found by it, rows of other organizations are
+		// hit (ctid.go). The shape with a safe equivalent is rewritten, the rest refused.
+		// a walk of the tree only for a text that has the word: almost no statement does (PF4: the
+		// analysis of a point statement is counted in allocations)
+		fixed, refusal, ctids := false, "", []string(nil)
+		if mentionsCtid {
+			fixed, refusal, ctids = ctidFix(raw.Stmt, m)
+		}
+		a.Ctid = append(a.Ctid, ctids...)
+		if refusal != "" && a.Forbidden == "" {
+			a.Forbidden = refusal
+		}
 		repl := a.statement(raw.Stmt, sql[start:end], m)
+		if fixed && repl == "" {
+			if s, err := deparseStmt(raw.Stmt); err == nil {
+				repl = s
+			} else if a.Forbidden == "" {
+				a.Forbidden = "lokadb: a statement that finds rows by ctid could not be rewritten to the table's key: " + err.Error()
+			}
+		}
 		if len(a.DDL) > ddls {
 			a.Events = append(a.Events, TxEvent{Kind: 'D', SQL: a.DDL[len(a.DDL)-1]})
 			// it has to run in organizations whose tables are not in public too (ddl.go orgDDL):
@@ -1774,9 +1797,11 @@ func (a *Analysis) insertHints(s *pg.InsertStmt, t *Table, m *Meta) {
 	// organization in a plain INSERT: the row is new, the lookup finds nothing. An upsert
 	// may hit an existing row.
 	own := func(col string) bool {
-		refs := m.Lookups[t.Name][col]
+		refs, has := m.Lookups[t.Name][col]
 		_, key := keyRefs(refs)
-		return (refs == t.Refs || key) && s.OnConflictClause == nil
+		// a column with no lookup is nobody's key: with Refs "" (a table the metadata knows
+		// without its refs table) every such column would count as the row's own
+		return has && (refs == t.Refs && refs != "" || key) && s.OnConflictClause == nil
 	}
 	found := false
 	for i, c := range s.Cols {

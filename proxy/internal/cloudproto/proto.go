@@ -498,6 +498,9 @@ type Statement struct {
 	Refused     bool     `json:"refused,omitempty"` // the last time the application got an error
 	Count       int64    `json:"count"`
 	Options     []string `json:"options"` // "key", "cloud", "allow"
+	// Ctid: the statement finds rows by ctid, which is unique only inside one partition: it cannot be
+	// run in every customer's database ("allow" is not offered); it has to use the primary key
+	Ctid bool `json:"ctid,omitempty"`
 }
 
 type StatementsResult struct {
@@ -524,6 +527,8 @@ type StatementTable struct {
 	Count   int64    `json:"count"` // times run or refused
 	Options []string `json:"options"`
 	SQL     []string `json:"sql"` // the shapes, most frequent first (up to 100)
+	// Ctid: one of the shapes finds rows by ctid: "allow" is not offered for the table
+	Ctid bool `json:"ctid,omitempty"`
 }
 
 // Decision: Choice is "key" (the column names the customer: a unique column such as a slug),

@@ -8,6 +8,7 @@ The proxy parses every statement with the Postgres parser (pg_query) and decides
 - **Inserts:** the organization comes from `VALUES` or from `UNNEST` arrays (Django `bulk_create`); for a child table, from its parent.
 - **Joins:** a value bound to one column binds every column equal to it: `d.project_id = p.id AND p.id = $1` gives the organization through `d.project_id`. `ON` conditions of inner joins count like `WHERE`; those of outer joins do not.
 - **Subqueries:** `conversation_id IN (SELECT id FROM conversations WHERE account_id = $1)` (Rails `where(conversation_id: account.conversations)`) goes to that organization's database when both columns resolve through the same lookup. A correlated subquery (`EXISTS (SELECT 1 FROM versions v WHERE v.document_id = d.id)`) takes the organization of the outer query, in the conditions and in the select list, `HAVING`, `ORDER BY` or an `UPDATE`'s `SET` alike: Laravel's `withCount`, `withSum`, `withExists`, `withMax` (`(SELECT count(*) FROM tasks WHERE projects.id = tasks.project_id) AS tasks_count`), Django's `annotate(Subquery(OuterRef(...)))` and `Exists`.
+- **`ctid`** is unique only inside one partition, and a LokaDB table has one for each organization, so a statement that finds rows by `ctid` could reach other organizations' rows. The proxy never passes one on as it is, whatever the fanout policy: `DELETE` or `UPDATE … WHERE ctid IN (SELECT ctid FROM <the same table> … LIMIT n)` (Laravel's `MassPrunable`, any `->limit()->delete()`) is rewritten to the table's primary key, every other use of `ctid` is refused with the reason. `lokadb check` reports the patterns that use it (`query_ctid`).
 - **`INSERT … SELECT`** gets the organization when the lookup column receives a constant, a parameter or a source column with the same lookup, and the `SELECT` names the organization.
 - If the tenant column is named (`organization_id = 1 AND id = 5`), the id is not looked up: the policy already shows only that organization's rows, and writing another organization's key is refused by `__refs` and the parent trigger.
 
@@ -15,7 +16,7 @@ Values of the condition that belong to several organizations (`organization_id I
 
 ## Statements without an organization
 
-Postgres would run such a statement in every partition, which means in the database of every moved organization: slowly, and with an error if any of those databases is down. The `fanout` policy in the proxy config decides, per database (that is, per service):
+Such a statement does not say which organization it is for, so it covers many organizations at once. Postgres would run it separately in every partition, which means in your database and in the database of each moved organization: each one reads or changes only its own rows, nothing is copied between the databases, and the answers of a read are put together for the application. It is slow, and it fails if any of those databases is down. (That the statement does not use the organization does not mean the table has no link to one: the table is still split by organization.) The `fanout` policy in the proxy config decides, per database (that is, per service):
 
 ```json
 "fanout": {
@@ -28,16 +29,16 @@ Postgres would run such a statement in every partition, which means in the datab
 | `mode` | What it does |
 |---|---|
 | `reject` | **default** (no entry, or no `fanout` at all): refused |
-| `reject-writes` | `INSERT`, `UPDATE`, `DELETE` refused; reads run in every database |
-| `log` | runs everywhere, with a warning in the proxy log |
-| `allow` | runs everywhere |
+| `reject-writes` | `INSERT`, `UPDATE`, `DELETE` refused; reads run separately in each database and the answers are put together |
+| `log` | runs separately in each database, with a warning in the proxy log |
+| `allow` | runs separately in each database |
 
 `allow` lists statements that were reviewed and allowed under any `mode` — an admin report across organizations, a background job. They are compared by pg_query fingerprint: constants, parameters, list lengths and quoting do not matter.
 
 A refused statement gets an ordinary Postgres error (`0A000`) raised by the server itself, so the transaction ends up exactly as after any error:
 
 ```
-ERROR:  lokadb: the statement does not name the organization of documents rows, so it would run in every organization's database (fanout policy "reject")
+ERROR:  lokadb: the statement does not name the organization of documents rows, so it covers many organizations at once and would run separately in each organization's database (fanout policy "reject")
 DETAIL:  why: unknown_column documents.slug (=)
 HINT:  Restrict it by the organization column, id or a parent id (= or IN), or add it to "allow" of this database's fanout policy in the proxy config.
 ```

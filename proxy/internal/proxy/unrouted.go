@@ -13,13 +13,16 @@ import (
 // by $n, so no customer's data is in it. The setup wizard shows these before the first customer
 // moves, so each can be given its organization, allowed by name, or turned into a cloud table.
 type Unrouted struct {
-	DB          string    `json:"db,omitempty"` // the database it was sent to: one proxy can serve several
-	Fingerprint string    `json:"fingerprint"`
-	SQL         string    `json:"sql"`
-	Full        string    `json:"full,omitempty"` // the same, not cut: what an allow-list entry is made of
-	Table       string    `json:"table"`
-	Gaps        []Gap     `json:"gaps,omitempty"`
-	Write       bool      `json:"write,omitempty"`
+	DB          string `json:"db,omitempty"` // the database it was sent to: one proxy can serve several
+	Fingerprint string `json:"fingerprint"`
+	SQL         string `json:"sql"`
+	Full        string `json:"full,omitempty"` // the same, not cut: what an allow-list entry is made of
+	Table       string `json:"table"`
+	Gaps        []Gap  `json:"gaps,omitempty"`
+	Write       bool   `json:"write,omitempty"`
+	// Ctid: the statement finds rows of a LokaDB table by ctid (ctid.go); what the proxy sends is
+	// the key-based rewrite, which is not what the application wrote
+	Ctid        bool      `json:"ctid,omitempty"`
 	Refused     bool      `json:"refused,omitempty"` // the last time: the client got an error
 	Count       int64     `json:"count"`
 	First, Last time.Time `json:"-"`
@@ -79,7 +82,7 @@ func (u *unroutedSet) note(db, sql string, an *Analysis, refused bool) (out unro
 			u.overflow++
 			return out
 		}
-		x = &Unrouted{DB: db, Fingerprint: fp, SQL: brief(sql), Full: full(sql), Table: fanoutTable(an), Gaps: append([]Gap(nil), an.Gaps...), Write: an.Write, First: time.Now()}
+		x = &Unrouted{DB: db, Fingerprint: fp, SQL: brief(sql), Full: full(sql), Table: fanoutTable(an), Gaps: append([]Gap(nil), an.Gaps...), Write: an.Write, Ctid: len(an.Ctid) > 0, First: time.Now()}
 		u.m[key] = x
 		out.first = true
 	}

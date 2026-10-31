@@ -138,10 +138,20 @@ func reasonOf(gaps []proxy.Gap) (reason, table, column string) {
 	return strings.Join(parts, "; "), table, column
 }
 
+// ctidReason: what the panel says of a statement that finds rows by ctid.
+const ctidReason = "finds rows by ctid, which is unique only inside one partition (it can reach other customers' rows): the application has to use the primary key, "
+
 // Statements answers the panel's review: the open statement shapes, with what can be done about each.
 func (o *Ops) Statements(ctx context.Context, _ cloudproto.StatementsArgs) (cloudproto.StatementsResult, error) {
 	c := o.Cfg
 	res := cloudproto.StatementsResult{Policy: c.fanoutMode, Items: []cloudproto.Statement{}}
+	conn, err := ownsql.Connect(ctx, c.DB)
+	if err != nil {
+		conn = nil // the list still shows; the choices that need the database are left out
+	} else {
+		defer conn.Close(context.Background())
+		c.pruneRouted(ctx, conn) // shapes recorded under older metadata that the proxy routes now
+	}
 	c.unr.mu.Lock()
 	c.loadUnrouted()
 	items := make([]proxy.Unrouted, 0, len(c.unr.items))
@@ -153,15 +163,12 @@ func (o *Ops) Statements(ctx context.Context, _ cloudproto.StatementsArgs) (clou
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Count > items[j].Count || items[i].Count == items[j].Count && items[i].Fingerprint < items[j].Fingerprint
 	})
-	conn, err := ownsql.Connect(ctx, c.DB)
-	if err != nil {
-		conn = nil // the list still shows; the choices that need the database are left out
-	} else {
-		defer conn.Close(context.Background())
-	}
 	for _, x := range items {
 		reason, table, col := reasonOf(x.Gaps)
-		st := cloudproto.Statement{Fingerprint: x.Fingerprint, SQL: x.SQL, Table: table, Column: col, Reason: reason, Write: x.Write, Refused: x.Refused, Count: x.Count, Options: []string{}}
+		st := cloudproto.Statement{Fingerprint: x.Fingerprint, SQL: x.SQL, Table: table, Column: col, Reason: reason, Write: x.Write, Refused: x.Refused, Count: x.Count, Options: []string{}, Ctid: x.Ctid}
+		if x.Ctid {
+			st.Reason = ctidReason + st.Reason
+		}
 		if conn != nil {
 			if o.keyColumn(ctx, conn, x.Gaps) != nil {
 				st.Options = append(st.Options, "key")
@@ -170,7 +177,7 @@ func (o *Ops) Statements(ctx context.Context, _ cloudproto.StatementsArgs) (clou
 				st.Options = append(st.Options, "cloud")
 			}
 		}
-		if x.Full != "" {
+		if x.Full != "" && !x.Ctid {
 			st.Options = append(st.Options, "allow")
 		}
 		res.Items = append(res.Items, st)
@@ -205,6 +212,7 @@ func (o *Ops) byTable(ctx context.Context, conn *pgx.Conn, items []proxy.Unroute
 			g.Reads++
 		}
 		g.Count += x.Count
+		g.Ctid = g.Ctid || x.Ctid
 		if len(g.SQL) < 100 {
 			g.SQL = append(g.SQL, x.SQL)
 		}
@@ -214,6 +222,9 @@ func (o *Ops) byTable(ctx context.Context, conn *pgx.Conn, items []proxy.Unroute
 	for i := range out {
 		g := &out[i]
 		g.Reason = o.tableReason(g.Table, gaps[g.Table])
+		if g.Ctid {
+			g.Reason = ctidReason + g.Reason
+		}
 		if conn != nil {
 			if k := o.keyColumn(ctx, conn, gaps[g.Table]); k != nil {
 				g.Column = k.Column
@@ -224,12 +235,15 @@ func (o *Ops) byTable(ctx context.Context, conn *pgx.Conn, items []proxy.Unroute
 			}
 		}
 		if g.Table != "" {
-			// "read" runs the reads of the table in every customer's database and leaves its writes to the mode: it
+			// "read" runs the reads of the table separately in each database and leaves its writes to the mode: it
 			// changes something only for a table that has reads, under a mode that refuses them
 			if g.Reads > 0 && mode == proxy.FanoutReject {
 				g.Options = append(g.Options, "read")
 			}
-			g.Options = append(g.Options, "allow", "refuse")
+			if !g.Ctid {
+				g.Options = append(g.Options, "allow")
+			}
+			g.Options = append(g.Options, "refuse")
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
@@ -246,8 +260,12 @@ func tableOf(x proxy.Unrouted) string {
 	return x.Table
 }
 
-// tableReason: why the statements of a table name no customer, in one line.
+// tableReason: why the statements of a table name no customer, in one line: they cover many customers at once.
 func (o *Ops) tableReason(table string, gaps []proxy.Gap) string {
+	return "They do not say which customer, so each covers many at once: " + o.tableGap(table, gaps)
+}
+
+func (o *Ops) tableGap(table string, gaps []proxy.Gap) string {
 	tc := ""
 	for _, t := range o.Cfg.spec.Tables {
 		if t.Name == table && t.TenantColumn != "" {
@@ -416,6 +434,16 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 				}
 				tables[d.Table] = d.Choice
 			case "allow", "refuse":
+				if d.Choice == "allow" {
+					ctid := false
+					for _, x := range c.unr.items {
+						ctid = ctid || tableOf(*x) == d.Table && x.Ctid
+					}
+					if ctid {
+						res.Failed[key] = d.Table + ": " + ctidReason + "so it cannot be run in every customer's database"
+						continue
+					}
+				}
 				tables[d.Table] = d.Choice
 			case "key":
 				k := o.keyColumn(ctx, conn, gaps)
@@ -452,6 +480,10 @@ func (o *Ops) Decide(ctx context.Context, a cloudproto.DecideArgs) (cloudproto.D
 		}
 		switch d.Choice {
 		case "allow":
+			if x.Ctid {
+				res.Failed[d.Fingerprint] = ctidReason + "so it cannot be run in every customer's database"
+				continue
+			}
 			if x.Full == "" {
 				res.Failed[d.Fingerprint] = "the statement is too long to be allowed by name"
 				continue

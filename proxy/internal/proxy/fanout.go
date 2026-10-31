@@ -137,7 +137,7 @@ func (f *Fanout) listed(sql string) bool {
 // error itself, so the transaction ends up exactly as after any error there (an implicit
 // transaction rolls back, an explicit one is aborted) and the rest of a pipeline is skipped.
 func (f *Fanout) raiseSQL(an *Analysis) string {
-	msg := fmt.Sprintf("lokadb: the statement does not name the organization of %s rows, so it would run in every organization's database (fanout policy %q)",
+	msg := fmt.Sprintf("lokadb: the statement does not name the organization of %s rows, so it covers many organizations at once and would run separately in each organization's database (fanout policy %q)",
 		fanoutTable(an), f.Mode)
 	hint := `Restrict it by the organization column, id or a parent id (= or IN), or add it to "allow" of this database's fanout policy in the proxy config.`
 	detail := ""

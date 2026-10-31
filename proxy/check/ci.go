@@ -137,7 +137,7 @@ var exampleKeyed = map[string]bool{
 var ciHints = map[string]string{
 	"query_refused": `the proxy refuses it after enable: restrict it by the organization (its column, id or a parent id, = or IN), ` +
 		`or, if it is meant to read every organization, accept it here and add it to "allow" of the proxy config`,
-	"query_without_organization": `it runs in every organization's database: restrict it by the organization (its column, id or a parent id, = or IN), ` +
+	"query_without_organization": `it does not say which organization it is for, so it covers many at once and runs separately in your database and in each moved organization's database (each looks at its own rows only): restrict it by the organization (its column, id or a parent id, = or IN), ` +
 		`or accept it here with the reason (a report, an admin page, a background job)`,
 	"query_forbidden":         "the proxy refuses it whatever its policy: use the LokaDB table itself, not lokadb's own objects",
 	"ddl_rejected":            "the proxy refuses this schema change after enable: change the migration",

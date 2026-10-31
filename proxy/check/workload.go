@@ -278,18 +278,19 @@ func (c *checker) workload() error {
 		}
 		c.addFinding(Finding{Severity: sev, Code: code, Message: plural(len(gs), one, many) + rest, Examples: ex, Patterns: pats})
 	}
+	c.ctidPatterns(groups)
 	c.rep.Summary.UnroutedPatterns = len(byKind[kFanout]) + len(byKind[kRefused]) + len(byKind[kAllowed])
 	c.rep.Summary.RefusedPatterns = len(byKind[kRefused])
 	report(kForbidden, Blocker, "query_forbidden", "statement is", "statements are",
-		" refused by the proxy after enable whatever its fanout policy: they address LokaDB's own objects (an organization's partition, a refs table, schema lokadb) or are foreign data wrapper commands. The application has to use the LokaDB table itself")
+		" refused by the proxy after enable whatever its fanout policy: they address LokaDB's own objects (an organization's partition, a refs table, schema lokadb), are foreign data wrapper commands, or find rows by ctid (query_ctid). The application has to use the LokaDB table itself, and its primary key")
 	report(kRefused, Blocker, "query_refused", "query pattern touches", "query patterns touch",
 		fmt.Sprintf(" LokaDB tables without naming the organization, and after enable the proxy refuses them (fanout policy %q of database %s): the application gets an error. Restrict them by the organization, or review them and add them to \"allow\" in the proxy config",
 			c.fan.Mode, c.rep.Database))
 	report(kFanout, Warning, "query_without_organization", "query pattern touches", "query patterns touch",
-		fmt.Sprintf(" LokaDB tables without naming the organization; the fanout policy %q lets them run in every organization's database, so they are slower and fail while any of those databases is unreachable",
+		fmt.Sprintf(" LokaDB tables without naming the organization; the fanout policy %q lets them run separately in your database and in each moved organization's database (each looks at its own rows only, the answers of a read are put together for your server), so they are slower and fail while any of those databases is unreachable",
 			c.fan.Mode))
 	report(kAllowed, Info, "query_fanout_allowed", "query pattern without the organization is", "query patterns without the organization are",
-		" on the allow list of the proxy config: they run in every organization's database")
+		" on the allow list of the proxy config: they run separately in each organization's database")
 	report(kDDLRejected, Warning, "ddl_rejected", "DDL pattern on LokaDB tables is", "DDL patterns on LokaDB tables are",
 		" refused by the proxy after enable. Past migrations can be ignored; new migrations of this kind have to change")
 	report(kParse, Warning, "parse_error", "statement is", "statements are", " not understood by the Postgres parser the proxy uses (PostgreSQL 17's grammar) and name no LokaDB table: the proxy sends them to the cloud as they are. A statement that names one is judged by the fanout policy like a query without the organization (query_refused, query_without_organization)")
@@ -769,4 +770,40 @@ func short(sql string) string {
 func firstLine(s string) string {
 	l, _, _ := strings.Cut(s, "\n")
 	return l
+}
+
+// ctidPatterns: the patterns that find rows of a LokaDB table by ctid. A ctid is unique only inside
+// one table, and after enable the table is one partition for each organization: such a statement
+// can read, change or delete the rows of other organizations that have the same ctid (Laravel's
+// MassPrunable, ->limit()->delete(), sends DELETE … WHERE ctid IN (SELECT ctid … LIMIT n)).
+func (c *checker) ctidPatterns(groups map[string]*group) {
+	var gs []*group
+	tables := map[*group][]string{}
+	for _, g := range groups {
+		if t := proxy.CtidUse(analyzable(g.sql), c.meta, c.directPath()); len(t) > 0 {
+			gs = append(gs, g)
+			tables[g] = t
+		}
+	}
+	if len(gs) == 0 {
+		return
+	}
+	sort.Slice(gs, func(i, j int) bool {
+		return gs[i].count > gs[j].count || gs[i].count == gs[j].count && gs[i].sql < gs[j].sql
+	})
+	var ex []string
+	var pats []Pattern
+	for i, g := range gs {
+		pats = append(pats, Pattern{Fingerprint: g.fingerprint, SQL: g.sql, Calls: g.count, Write: g.writes, Tables: tables[g],
+			Roles: keys(g.from.roles), Sources: keys(g.from.sources), Note: g.note})
+		if i < 8 {
+			ex = append(ex, fmt.Sprintf("x%d  %s", g.count, short(g.sql)))
+		} else if i == 8 {
+			ex = append(ex, fmt.Sprintf("... and %d more", len(gs)-i))
+		}
+	}
+	c.addFinding(Finding{Severity: Warning, Code: "query_ctid",
+		Message: plural(len(gs), "query pattern finds", "query patterns find") + " rows of LokaDB tables by ctid. A ctid is unique only inside one table, and after enable each organization has a partition of its own, so such a statement can read, change or delete the rows of other organizations that have the same ctid " +
+			"(Laravel's MassPrunable and ->limit()->delete() send DELETE … WHERE ctid IN (SELECT ctid … LIMIT n)). Through the proxy a statement of exactly that shape is rewritten to the table's primary key and any other use of ctid is refused; a connection that does not go through the proxy would lose data. Use the primary key",
+		Examples: ex, Patterns: pats})
 }

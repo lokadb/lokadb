@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -182,7 +183,7 @@ func TestStatementsByTable(t *testing.T) {
 	}
 	b := res.Tables[0]
 	if b.Table != "bt_builds" || b.Reads != 6 || b.Writes != 1 || len(b.SQL) != 7 || b.Column != "slug" || strings.Join(b.Options, ",") != "key,read,allow,refuse" ||
-		b.Reason != "no condition on user_id, the customer column; looked up by slug" {
+		b.Reason != "They do not say which customer, so each covers many at once: no condition on user_id, the customer column; looked up by slug" {
 		t.Fatalf("builds: %+v", b)
 	}
 	dec, err := o.Decide(ctx, cloudproto.DecideArgs{Decisions: []cloudproto.Decision{{Table: "bt_builds", Choice: "read"}, {Table: "bt_moments", Choice: "refuse"}}})
@@ -279,5 +280,43 @@ func TestReadIsNotOfferedWhereItChangesNothing(t *testing.T) {
 	}
 	if tb := m.Fanout["shop"].Tables; m.Fanout["shop"].Mode != "reject-writes" || tb["wo_commits"] != "refuse" || tb["wo_notices"] != "allow" {
 		t.Fatalf("proxy.json: %+v", m)
+	}
+}
+
+// A statement that finds rows by ctid (unique only inside one partition) is never offered "allow",
+// nor is its table: running it in every customer's database would reach other customers' rows.
+func TestCtidStatementIsNotAllowed(t *testing.T) {
+	c := &Config{State: t.TempDir()}
+	gap := []proxy.Gap{{Kind: proxy.GapNoCondition, Table: "moderation_decisions"}}
+	prune := `DELETE FROM "moderation_decisions" WHERE ctid IN (SELECT ctid FROM "moderation_decisions" WHERE created_at < $1 LIMIT $2)`
+	c.collectUnrouted([]proxy.Unrouted{
+		{Fingerprint: "p1", SQL: prune, Full: prune, Table: "moderation_decisions", Gaps: gap, Write: true, Ctid: true, Count: 3, Refused: true},
+		{Fingerprint: "p2", SQL: "SELECT * FROM notices", Full: "SELECT * FROM notices", Table: "notices", Gaps: []proxy.Gap{{Kind: proxy.GapNoCondition, Table: "notices"}}, Write: true, Count: 1, Refused: true},
+	}, 0)
+	res, err := (&Ops{Cfg: c}).Statements(context.Background(), cloudproto.StatementsArgs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]cloudproto.Statement{}
+	for _, s := range res.Items {
+		by[s.Fingerprint] = s
+	}
+	if p := by["p1"]; !p.Ctid || slices.Contains(p.Options, "allow") || !strings.Contains(p.Reason, "ctid") {
+		t.Errorf("the ctid statement: %+v", p)
+	}
+	if p := by["p2"]; p.Ctid || !slices.Contains(p.Options, "allow") {
+		t.Errorf("the ordinary statement is offered allow: %+v", p)
+	}
+	for _, tb := range res.Tables {
+		switch tb.Table {
+		case "moderation_decisions":
+			if !tb.Ctid || slices.Contains(tb.Options, "allow") || !slices.Contains(tb.Options, "refuse") || !strings.Contains(tb.Reason, "ctid") {
+				t.Errorf("the ctid table: %+v", tb)
+			}
+		case "notices":
+			if tb.Ctid || !slices.Contains(tb.Options, "allow") {
+				t.Errorf("the ordinary table: %+v", tb)
+			}
+		}
 	}
 }

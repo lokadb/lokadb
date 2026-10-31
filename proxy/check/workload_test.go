@@ -361,3 +361,37 @@ func TestCopyFromCost(t *testing.T) {
 		t.Fatalf("no COPY FROM: findings %+v", c.rep.Findings)
 	}
 }
+
+// A pattern that finds rows of a LokaDB table by ctid is reported: a ctid is unique only inside one
+// partition, and after enable the table has one for each organization.
+func TestCtidPatterns(t *testing.T) {
+	c := testChecker()
+	groups := map[string]*group{
+		"a": {kind: kRouted, sql: `delete from "documents" where "ctid" in (select "documents"."ctid" from "documents" where "slug" < $1 limit $2)`, count: 5, writes: true, top: 5},
+		"b": {kind: kForbidden, sql: `delete from documents where ctid = $1`, count: 1, writes: true, top: 1},
+		"c": {kind: kRouted, sql: `select * from documents where id = $1`, count: 9, top: 9},
+		"d": {kind: kCloud, sql: `delete from audit_log where ctid in (select ctid from audit_log limit 5)`, count: 3, writes: true, top: 3},
+	}
+	c.ctidPatterns(groups)
+	var f *Finding
+	for i := range c.rep.Findings {
+		if c.rep.Findings[i].Code == "query_ctid" {
+			f = &c.rep.Findings[i]
+		}
+	}
+	if f == nil || f.Severity != Warning || len(f.Patterns) != 2 {
+		t.Fatalf("finding: %+v", f)
+	}
+	if f.Patterns[0].Calls != 5 || f.Patterns[1].Calls != 1 || len(f.Patterns[0].Tables) != 1 || f.Patterns[0].Tables[0] != "documents" || !f.Patterns[0].Write {
+		t.Errorf("patterns: %+v", f.Patterns)
+	}
+	if !strings.Contains(f.Message, "2 query patterns find rows of LokaDB tables by ctid") || !strings.Contains(f.Message, "primary key") {
+		t.Errorf("message: %s", f.Message)
+	}
+	// none: no finding
+	c2 := testChecker()
+	c2.ctidPatterns(map[string]*group{"c": groups["c"], "d": groups["d"]})
+	if len(c2.rep.Findings) != 0 {
+		t.Errorf("findings without ctid: %+v", c2.rep.Findings)
+	}
+}
