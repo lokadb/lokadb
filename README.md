@@ -1,3 +1,5 @@
+<a href="https://lokadb.com"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/lokadb-logo-dark.svg"><img src="docs/assets/lokadb-logo-light.svg" alt="LokaDB" width="240"></picture></a>
+
 # LokaDB
 
 **Let your SaaS customers keep their data in their own Postgres — without rewriting your app.**
