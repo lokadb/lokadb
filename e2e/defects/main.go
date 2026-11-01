@@ -37,11 +37,11 @@ func dsn(host, db, user string) string {
 // env is one check run: a lokadb binary and a database of the same name in the cloud
 // and in the customer Postgres.
 type env struct {
-	ctx  context.Context
-	bin  string
-	db   string
-	spec string // tables spec; "" = documents + document_versions
-	port int    // the proxy's port, when the check starts one
+	ctx   context.Context
+	bin   string
+	db    string
+	spec  string // tables spec; "" = documents + document_versions
+	port  int    // the proxy's port, when the check starts one
 	admin string // the cloud DSN of the move's commands, when it is not the superuser's (movenosuper.go)
 	// cloudHost: the cloud Postgres of the check ("cloud", wal_level = logical; "cloudplain",
 	// wal_level = replica; "cloud16", Postgres 16 with wal_level = logical; "cloud13", "cloud14",
@@ -464,8 +464,8 @@ func (e *env) proxyCfg(customers map[string]string, extra map[string]any) (func(
 		"listen":    fmt.Sprintf(":%d", e.port),
 		"upstream":  "host=" + e.cloudHost + " port=5432 sslmode=disable",
 		"customers": map[string]any{e.db: customers},
-		"fanout":    map[string]any{e.db: map[string]string{"mode": "log"}},
-		"route_log": true, // the checks read the line "route" (off by default since 26.10)
+		"fanout":    map[string]any{e.db: map[string]string{"mode": "allow"}}, // runs everywhere, as log did before a move (log is reject after one: R4-26)
+		"route_log": true,                                                     // the checks read the line "route" (off by default since 26.10)
 	}
 	for k, v := range extra {
 		c[k] = v

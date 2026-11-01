@@ -52,17 +52,44 @@ func TestHbaTooWide(t *testing.T) {
 func TestHbaOpenOrder(t *testing.T) {
 	proxies, _ := parseHosts([]string{"10.1.1.250", "10.1.1.251"})
 	rules := [][]string{
-		{"host", "app", "10.1.1.250", "255.255.255.255", "scram-sha-256", "1"},
-		{"host", "app", "10.1.1.251", "255.255.255.255", "scram-sha-256", "2"},
-		{"host", "app", "all", "", "reject", "3"},
-		{"local", "all", "", "", "trust", "120"},
-		{"host", "all", "127.0.0.1", "255.255.255.255", "trust", "122"},
-		{"host", "all", "all", "", "scram-sha-256", "131"},
+		{"host", "app", "10.1.1.250", "255.255.255.255", "scram-sha-256", "1", "all"},
+		{"host", "app", "10.1.1.251", "255.255.255.255", "scram-sha-256", "2", "all"},
+		{"host", "app", "all", "", "reject", "3", "all"},
+		{"local", "all", "", "", "trust", "120", "all"},
+		{"host", "all", "127.0.0.1", "255.255.255.255", "trust", "122", "all"},
+		{"host", "all", "all", "", "scram-sha-256", "131", "all"},
 	}
-	if got := hbaOpen(rules, "app", nil, proxies); len(got) != 0 {
+	if got := hbaOpen(rules, "app_db", "app", nil, proxies); len(got) != 0 {
 		t.Fatalf("the stand's rules: %q", got)
 	}
-	if got := hbaOpen(rules[3:], "app", nil, proxies); len(got) != 1 || !strings.Contains(got[0], "line 131") {
+	if got := hbaOpen(rules[3:], "app_db", "app", nil, proxies); len(got) != 1 || !strings.Contains(got[0], "line 131") {
 		t.Fatalf("the image's rules alone: %q", got)
+	}
+}
+
+// R4-38: a rule for another kind of connection or another database does not end the search.
+func TestR4HbaTypeAndDatabase(t *testing.T) {
+	for name, rules := range map[string][][]string{
+		"hostnossl reject, then hostssl open": {
+			{"hostnossl", "all", "0.0.0.0", "0.0.0.0", "reject", "1", "all"},
+			{"hostssl", "all", "0.0.0.0", "0.0.0.0", "scram-sha-256", "2", "all"},
+		},
+		"a reject for another database, then open": {
+			{"host", "all", "0.0.0.0", "0.0.0.0", "reject", "1", "otherdb"},
+			{"host", "app", "0.0.0.0", "0.0.0.0", "scram-sha-256", "3", "all"},
+		},
+	} {
+		if open := hbaOpen(rules, "app_db", "app", map[string]bool{}, nil); len(open) != 1 || !strings.Contains(open[0], "line 2") && !strings.Contains(open[0], "line 3") {
+			t.Errorf("%s: %q", name, open)
+		}
+	}
+	// a host reject for this database (by name) still ends it; a rule for another database is not reported
+	rules := [][]string{
+		{"host", "all", "0.0.0.0", "0.0.0.0", "scram-sha-256", "1", "otherdb"},
+		{"host", "all", "all", "", "reject", "2", "app_db"},
+		{"host", "all", "all", "", "scram-sha-256", "3", "all"},
+	}
+	if open := hbaOpen(rules, "app_db", "app", nil, nil); len(open) != 0 {
+		t.Errorf("reject for app_db: %q", open)
 	}
 }

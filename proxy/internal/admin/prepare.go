@@ -731,12 +731,12 @@ func (c *prep) table(st SpecTable) error {
 		}
 		// a row whose parent is missing keeps NULL: no organization (<table>__none)
 		bk := newBKey(k, c.p.keyType[t])
-		if err := c.batches(t, bk, fmt.Sprintf(`WITH b AS (SELECT %[1]s FROM %[2]s x WHERE %[7]s ORDER BY %[8]s LIMIT %[3]d),
+		if err := c.batchesQuiet(t, bk, fmt.Sprintf(`WITH b AS (SELECT %[1]s FROM %[2]s x WHERE %[7]s ORDER BY %[8]s LIMIT %[3]d),
 			u AS (UPDATE %[2]s c SET %[4]s = (SELECT p.tenant FROM %[5]s p WHERE p.id = c.%[6]s)
 				WHERE %[9]s IN (SELECT %[10]s FROM b) AND c.%[4]s IS DISTINCT FROM (SELECT p.tenant FROM %[5]s p WHERE p.id = c.%[6]s) RETURNING 1)
 			SELECT %[11]s, (SELECT count(*) FROM b)::text, (SELECT count(*) FROM u)::text`,
 			bk.sel("x."), qr(t), prepBatch, q(tc), qr(hn(st.ParentTable, "__refs")), q(st.ParentColumn), bk.within("x."), bk.order("x.", false),
-			bk.row("c."), bk.names(), bk.lastOf("b"))); err != nil {
+			bk.row("c."), bk.names(), bk.lastOf("b")), true); err != nil {
 			return err
 		}
 	}
@@ -798,7 +798,50 @@ const batchFrom = "__lokadb_from__"
 // batches runs sql, a batch from key $1 (batchFrom) up to key $2, until it finds no row, and
 // logs the progress. Keys of any kind (block 17) travel as text, cast by sql.
 // sql gives the last key, the rows of the batch, the rows it changed.
-func (c *prep) batches(t string, k bkey, sql string) error {
+func (c *prep) batches(t string, k bkey, sql string) error { return c.batchesQuiet(t, k, sql, false) }
+
+// batchesQuiet: batches; quiet keeps the application's triggers of t out of them (the fill of
+// a child's organization column, R4-5): each batch in a transaction of its own under
+// session_replication_role = replica, which only this session's statements feel. Triggers that
+// fire under it (ALWAYS, REPLICA), or a role that may not set it, are refused before any row
+// is touched.
+func (c *prep) batchesQuiet(t string, k bkey, sql string, quiet bool) error {
+	run := func(sql string, args ...any) ([][]string, error) { return rowsOf(c.ctx, c.conn, sql, args...) }
+	if quiet {
+		always, has, err := c.quietNeeded(t)
+		if err != nil {
+			return err
+		}
+		if has {
+			if len(always) > 0 {
+				return refuseQuiet(t, always, "")
+			}
+			probe, err := c.conn.Begin(c.ctx)
+			if err != nil {
+				return err
+			}
+			_, perr := probe.Exec(c.ctx, "SET LOCAL session_replication_role = replica")
+			_ = probe.Rollback(c.ctx)
+			if perr != nil {
+				return refuseQuiet(t, nil, perr.Error())
+			}
+			run = func(sql string, args ...any) ([][]string, error) {
+				tx, err := c.conn.Begin(c.ctx)
+				if err != nil {
+					return nil, err
+				}
+				defer tx.Rollback(c.ctx) //nolint:errcheck // after a commit it is a no-op
+				if _, err := tx.Exec(c.ctx, "SET LOCAL session_replication_role = replica"); err != nil {
+					return nil, err
+				}
+				out, err := rowsOf(c.ctx, tx, sql, args...)
+				if err != nil {
+					return nil, err
+				}
+				return out, tx.Commit(c.ctx)
+			}
+		}
+	}
 	cur, err := rowsOf(c.ctx, c.conn, `SELECT stage, done::text, total::text, coalesce(last::text, '') FROM lokadb.prepare WHERE table_name = $1`, t)
 	if err != nil {
 		return err
@@ -823,7 +866,7 @@ func (c *prep) batches(t string, k bkey, sql string) error {
 	}
 	start, logged, changed := time.Now(), time.Now(), int64(0)
 	for {
-		r, err := rowsOf(c.ctx, c.conn, strings.Replace(sql, batchFrom, from, 1), last, bounds[0][1])
+		r, err := run(strings.Replace(sql, batchFrom, from, 1), last, bounds[0][1])
 		if err != nil {
 			return err
 		}

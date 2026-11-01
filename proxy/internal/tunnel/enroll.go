@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -104,6 +105,8 @@ CREATE TABLE IF NOT EXISTS lokadb_cp.agent_certs (
 -- parent: the certificate a renewal replaced; superseded_at: when it was replaced (it opens no
 -- new session after that; revoking a certificate revokes its renewals too)
 ALTER TABLE lokadb_cp.agent_certs ADD COLUMN IF NOT EXISTS parent text, ADD COLUMN IF NOT EXISTS superseded_at timestamptz;
+CREATE INDEX IF NOT EXISTS agent_certs_parent ON lokadb_cp.agent_certs (parent);
+CREATE INDEX IF NOT EXISTS agent_certs_org ON lokadb_cp.agent_certs (org);
 -- cloud_access: an organization's agent may reach the cloud database until "until"
 -- (relay cloud_access "window"); move-org opens it for the move and closes it after.
 CREATE TABLE IF NOT EXISTS lokadb_cp.cloud_access (
@@ -128,16 +131,15 @@ CREATE TABLE IF NOT EXISTS lokadb_cp.org_revocations (
   org text PRIMARY KEY,
   at  timestamptz NOT NULL
 );
--- cert_revoked: the certificate, one it was renewed from, or its organization (before it was
--- issued) is revoked. A renewal written after its parent was revoked is revoked with it.
+-- cert_revoked: the certificate, the one it was renewed from, or its organization (before it was
+-- issued) is revoked. Revoking marks the whole chain, and a renewal takes its parent's mark when it is
+-- written (RecordCert), so one step up covers a renewal written while the revocation ran: the chain
+-- is not walked (it grows by a link per renewal: review 4, R4-36).
 CREATE OR REPLACE FUNCTION lokadb_cp.cert_revoked(s text) RETURNS boolean LANGUAGE sql STABLE AS $$
-  WITH RECURSIVE up AS (
-    SELECT serial, parent, org, revoked_at, issued_at, 1 AS depth FROM lokadb_cp.agent_certs WHERE serial = s
-    UNION ALL
-    SELECT c.serial, c.parent, c.org, c.revoked_at, c.issued_at, up.depth + 1
-      FROM lokadb_cp.agent_certs c JOIN up ON c.serial = up.parent WHERE up.depth < 10000)
-  SELECT EXISTS (SELECT FROM up WHERE revoked_at IS NOT NULL)
-      OR EXISTS (SELECT FROM up JOIN lokadb_cp.org_revocations r ON r.org = up.org WHERE up.depth = 1 AND up.issued_at <= r.at)
+  SELECT coalesce((SELECT c.revoked_at IS NOT NULL
+      OR EXISTS (SELECT FROM lokadb_cp.agent_certs p WHERE p.serial = c.parent AND p.revoked_at IS NOT NULL)
+      OR EXISTS (SELECT FROM lokadb_cp.org_revocations r WHERE r.org = c.org AND c.issued_at <= r.at)
+    FROM lokadb_cp.agent_certs c WHERE c.serial = s), false)
 $$;
 -- cloud_sources: the addresses the SaaS database connects to the organizations' ports from (pin.go):
 -- probe (proven by lokadb pin from that database), manual (confirmed by a person), seen (the first
@@ -326,8 +328,8 @@ func (s *PGStore) UseToken(ctx context.Context, tokenHash, remote string) (strin
 
 func (s *PGStore) RecordCert(ctx context.Context, serial, org string, notAfter time.Time, kind, remote, parent string) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO lokadb_cp.agent_certs (serial, org, kind, not_after, remote, parent)
-			VALUES ($1, $2, $3, $4, $5, nullif($6, ''))`, serial, org, kind, notAfter, remote, parent)
+		_, err := tx.Exec(ctx, `INSERT INTO lokadb_cp.agent_certs (serial, org, kind, not_after, remote, parent, revoked_at)
+			VALUES ($1, $2, $3, $4, $5, nullif($6, ''), (SELECT revoked_at FROM lokadb_cp.agent_certs WHERE serial = $6))`, serial, org, kind, notAfter, remote, parent)
 		return err
 	})
 }
@@ -432,14 +434,19 @@ func (s *PGStore) Revoke(ctx context.Context, org, serial string) (certs, tokens
 			}
 			tokens = tag.RowsAffected()
 		}
-		tag, err := tx.Exec(ctx, `WITH RECURSIVE up AS (
-				SELECT serial, parent FROM lokadb_cp.agent_certs WHERE org = $1 AND serial = $2
-				UNION SELECT c.serial, c.parent FROM lokadb_cp.agent_certs c JOIN up ON c.serial = up.parent),
-			chain AS (
-				SELECT serial FROM lokadb_cp.agent_certs WHERE org = $1 AND ($2 = '' OR serial IN (
-					SELECT serial FROM up u WHERE NOT EXISTS (SELECT FROM lokadb_cp.agent_certs p WHERE p.serial = u.parent)))
-				UNION SELECT c.serial FROM lokadb_cp.agent_certs c JOIN chain ON c.parent = chain.serial)
-			UPDATE lokadb_cp.agent_certs SET revoked_at = now() WHERE revoked_at IS NULL AND serial IN (SELECT serial FROM chain)`, org, serial)
+		var tag pgconn.CommandTag
+		var err error
+		if serial == "" { // the organization: every certificate of it
+			tag, err = tx.Exec(ctx, `UPDATE lokadb_cp.agent_certs SET revoked_at = now() WHERE org = $1 AND revoked_at IS NULL`, org)
+		} else { // the chain of the serial: up to the enrollment, then down every renewal of it
+			tag, err = tx.Exec(ctx, `WITH RECURSIVE up AS (
+					SELECT serial, parent FROM lokadb_cp.agent_certs WHERE org = $1 AND serial = $2
+					UNION ALL SELECT c.serial, c.parent FROM lokadb_cp.agent_certs c JOIN up ON c.serial = up.parent),
+				chain AS (
+					SELECT serial FROM up WHERE parent IS NULL OR NOT EXISTS (SELECT FROM lokadb_cp.agent_certs p WHERE p.serial = up.parent)
+					UNION ALL SELECT c.serial FROM lokadb_cp.agent_certs c JOIN chain ON c.parent = chain.serial)
+				UPDATE lokadb_cp.agent_certs SET revoked_at = now() WHERE revoked_at IS NULL AND serial IN (SELECT serial FROM chain)`, org, serial)
+		}
 		if err != nil {
 			return err
 		}

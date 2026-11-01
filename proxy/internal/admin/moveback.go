@@ -118,10 +118,26 @@ func MoveBack(ctx context.Context, o MoveBackOptions) (err error) {
 	}
 	server, schema, err := orgServer(ctx, cloud, o.Org)
 	if err != nil {
-		// Switched by an earlier run that did not finish: only what follows the switch is left.
-		if back, berr := attachedBack(ctx, cloud, tables); berr == nil && back {
+		// Switched by an earlier run that did not finish: only what follows the switch is left,
+		// with the server, schema and way that run recorded in its switch. Partitions in the
+		// cloud and no row in lokadb.orgs is also what a move-org that failed after its split
+		// leaves (review 4, R4-2): taken for a move-back, its customer schema was "" (public), and
+		// the customer's own tables of the same names were marked "the customer may drop it".
+		rec, rerr := rowsOf(ctx, cloud, `SELECT server, schema, capture::text, abandon::text FROM lokadb.moveback WHERE org = $1`, o.Org)
+		if rerr != nil {
+			return rerr
+		}
+		if len(rec) > 0 {
 			log.Info("the organization is already back in the cloud: finishing what the earlier run left")
-			return afterSwitch(ctx, cloud, nil, nil, o, tables, "", "", true, log)
+			if rec[0][3] == "true" {
+				o = MoveBackOptions{Org: o.Org, CloudDSN: o.CloudDSN, Abandon: true}
+			}
+			return afterSwitch(ctx, cloud, nil, nil, o, tables, rec[0][0], rec[0][1], rec[0][2] == "true", log)
+		}
+		if back, berr := attachedBack(ctx, cloud, tables); berr == nil && back {
+			return fmt.Errorf("organization %d is not moved: lokadb.orgs has no row of it, and its rows are in the cloud's partitions (%s). "+
+				"No move-back switched it: this is what a move-org that failed after its split leaves, and the cloud serves the organization. "+
+				"move-back changed nothing (it would have taken the customer's own tables of these names for its copy); run move-org again to move it", o.Org, qr(tables[0].local()))
 		}
 		return err
 	}
@@ -269,7 +285,7 @@ func MoveBack(ctx context.Context, o MoveBackOptions) (err error) {
 	var snapTx, cloudSnap pgx.Tx
 	for attempt := 1; ; attempt++ {
 		var p pause
-		p, snapTx, cloudSnap, err = switchBack(ctx, cloud, apply, cust, locker, lockTx, snap, mo, tables, plan.Way, server)
+		p, snapTx, cloudSnap, err = switchBack(ctx, cloud, apply, cust, locker, lockTx, snap, mo, tables, plan.Way, server, schema)
 		if err == nil {
 			switched = true
 			log.Info("switched", "writes_paused", p.total, "wait_last_changes", p.catchUp, "swap_partitions", p.swap, "attempt", attempt)
@@ -446,7 +462,7 @@ func lockCustomer(ctx context.Context, conn *pgx.Conn, tables []moveTable, wait 
 // sides as switched: the cloud's on apply, which the drain is done with), and swaps the
 // foreign partitions for the local ones. lockTx: the lock the pause way holds since before
 // its copy (nil: taken here).
-func switchBack(ctx context.Context, cloud, apply, cust, locker *pgx.Conn, lockTx pgx.Tx, snap *pgx.Conn, o MoveOptions, tables []moveTable, way, server string) (pause, pgx.Tx, pgx.Tx, error) {
+func switchBack(ctx context.Context, cloud, apply, cust, locker *pgx.Conn, lockTx pgx.Tx, snap *pgx.Conn, o MoveOptions, tables []moveTable, way, server, schema string) (pause, pgx.Tx, pgx.Tx, error) {
 	var p pause
 	tx, err := cloud.Begin(ctx)
 	if err != nil {
@@ -541,7 +557,8 @@ func switchBack(ctx context.Context, cloud, apply, cust, locker *pgx.Conn, lockT
 	if len(dbID) > 0 {
 		steps = append(steps, returnedSteps(o.Org, dbID[0][0])...)
 	}
-	steps = append(steps, fmt.Sprintf("DELETE FROM lokadb.orgs WHERE org = %d", o.Org), metaChanged)
+	steps = append(steps, movebackRecord(o.Org, server, schema, way == WayCapture, false),
+		fmt.Sprintf("DELETE FROM lokadb.orgs WHERE org = %d", o.Org), metaChanged)
 	for _, s := range steps {
 		if _, err := tx.Exec(ctx, s); err != nil {
 			return fail(fmt.Errorf("%w\n  in: %s\n  the organization stays in its database; run move-back again", err, s))
@@ -770,7 +787,17 @@ func afterSwitch(ctx context.Context, cloud *pgx.Conn, snapTx, cloudSnap pgx.Tx,
 		drops = append(drops, doTag(fmt.Sprintf(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class WHERE oid = to_regclass(%s) AND relkind = 'v') THEN
 			EXECUTE 'DROP VIEW ' || %s; END IF; END $$`, lit(qr(t.bridge())), lit(qr(t.bridge())))))
 	}
+	// done: a later move-back of the organization has nothing of this one to finish
+	drops = append(drops, fmt.Sprintf("DELETE FROM lokadb.moveback WHERE org = %d", o.Org))
 	return execAll(ctx, cloud, drops)
+}
+
+// movebackRecord: the switch's record of what a run after it needs to finish the move-back
+// (lokadb.moveback): the organization's server, its schema in its database, the way.
+func movebackRecord(org int64, server, schema string, capture, abandon bool) string {
+	return fmt.Sprintf(`INSERT INTO lokadb.moveback (org, server, schema, capture, abandon) VALUES (%d, %s, %s, %t, %t)
+		ON CONFLICT (org) DO UPDATE SET server = EXCLUDED.server, schema = EXCLUDED.schema, capture = EXCLUDED.capture, abandon = EXCLUDED.abandon, at = now()`,
+		org, lit(server), lit(schema), capture, abandon)
 }
 
 // markReturned removes the capture from the organization's database and marks its tables:
@@ -871,7 +898,8 @@ func abandon(ctx context.Context, cloud *pgx.Conn, o MoveOptions, tables []moveT
 	for i := len(tables) - 1; i >= 0; i-- {
 		steps = append(steps, fmt.Sprintf("DELETE FROM %s WHERE tenant = %s", qr(hn(tables[i].name, "__refs")), tables[i].val))
 	}
-	steps = append(steps, fmt.Sprintf("DELETE FROM lokadb.orgs WHERE org = %d", o.Org), metaChanged)
+	steps = append(steps, movebackRecord(o.Org, server, "", false, true),
+		fmt.Sprintf("DELETE FROM lokadb.orgs WHERE org = %d", o.Org), metaChanged)
 	for _, s := range steps {
 		if _, err := tx.Exec(ctx, s); err != nil {
 			return fmt.Errorf("%w\n  in: %s\n  nothing changed (cloud rows that reference the organization's rows and refuse their deletion stop -abandon)", err, s)

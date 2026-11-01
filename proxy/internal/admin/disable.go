@@ -321,8 +321,11 @@ func Disable(ctx context.Context, o DisableOptions) error {
 		if err != nil {
 			return err
 		}
+		// the application's triggers of the parent, made again on the plain table; none of lokadb's
+		// (review 4, R4-24: lokadb_key_<col> of a child with a routing key came back on it, and
+		// DROP COLUMN of the organization column it watches failed)
 		trgs, err := rn.rows(`SELECT tgname::text, pg_get_triggerdef(oid), tgenabled::text FROM pg_trigger
-			WHERE tgrelid = $1::regclass AND NOT tgisinternal AND tgname NOT IN ('lokadb_refs', 'lokadb_parent') ORDER BY tgname`, qr(t))
+			WHERE tgrelid = $1::regclass AND NOT tgisinternal AND tgname NOT LIKE 'lokadb\_%' ORDER BY tgname`, qr(t))
 		if err != nil {
 			return err
 		}
@@ -783,6 +786,15 @@ func undoPrepare(ctx context.Context, conn *pgx.Conn, spec Spec, log *slog.Logge
 		for _, tg := range []string{prepRefsTrigger, prepTenantTrigger, prepTenantAfter, prepMovedTrigger} {
 			steps = append(steps, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", tg, qr(st.Name)))
 		}
+		// the map of a declared key (prepare_routing.go): its trigger watches the organization
+		// column dropped below (review 4, R4-24)
+		if spec.Routing != nil {
+			for _, k := range spec.Routing.Keys {
+				if RelKey(SplitKey(k.Table)) == st.Name {
+					steps = append(steps, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", q(prepKeyTrigger(k.Column)), qr(st.Name)))
+				}
+			}
+		}
 		if r, err := rowsOf(ctx, conn, `SELECT (to_regclass($1) IS NOT NULL)::text`, qr(hn(st.Name, "__refs"))); err != nil {
 			return err
 		} else if r[0][0] == "true" {
@@ -809,7 +821,15 @@ func undoPrepare(ctx context.Context, conn *pgx.Conn, spec Spec, log *slog.Logge
 			}
 		}
 		steps = append(steps, fmt.Sprintf("DROP INDEX IF EXISTS %s", qr(inSchemaOf(st.Name, keyIndex(st.Name)))))
-		if err := execAll(ctx, conn, steps); err != nil {
+		// one transaction a table: a step that fails leaves it as -prepare made it, not half undone
+		if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+			for _, s := range steps {
+				if _, err := tx.Exec(ctx, s); err != nil {
+					return fmt.Errorf("%w\n  in: %s", err, s)
+				}
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
 		log.Info("enable -prepare undone", "table", st.Name)

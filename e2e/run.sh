@@ -636,7 +636,7 @@ if part goapp && [[ " $APPS " == *" goapp "* ]]; then
     lokadb move-org -db "host=cloud user=postgres password=pw dbname=guardapp sslmode=disable" -spec /specs/guardapp.json -owner app -org 1 \
       -customer "host=relay port=15001 dbname=cust_guardapp user=postgres password=pw sslmode=disable" >/dev/null 2>&1 || fail "guardapp move-org"
   fi
-  log "fanout policy: goapp refuses statements that name no organization (reject), guardapp only logs them (log)"
+  log "fanout policy: goapp refuses statements that name no organization (reject); guardapp (log) too, its organization 1 has moved"
   out=$($C exec -T cloud psql "host=proxy port=6432 dbname=goapp user=app password=app sslmode=disable" 2>&1 <<'SQL'
 SELECT count(*) FROM documents WHERE title LIKE 'fanout-%';
 SELECT count(*) FROM documents WHERE title LIKE $1 \bind 'fanout-%' \g
@@ -661,12 +661,13 @@ SQL
   grep -q 'current transaction is aborted' <<<"$out" && echo "PASS  inside BEGIN the refusal aborts the transaction like any server error" \
     || fail "goapp: the transaction was not aborted"
   grep -qE '^\(0 rows\)' <<<"$out" && echo "PASS  a statement on the allow list runs (lookup by slug)" || fail "goapp: the allowed lookup did not run"
+  # log is reject once an organization has moved (third review R4-26): guardapp's organization 1 has
   n=$($C exec -T cloud psql "host=proxy port=6432 dbname=guardapp user=app password=app sslmode=disable" -tAc "SELECT count(*) FROM documents WHERE title LIKE '%'" 2>&1)
   sleep 1
-  if [ "$n" = 2 ] && $C logs --no-color proxy 2>&1 | grep "a statement names no customer" | grep -q "db=guardapp"; then
-    echo "PASS  guardapp (mode log): the same kind of statement runs and the proxy logs a warning"
+  if grep -q "ERROR:  lokadb: the statement does not name the organization of documents rows" <<<"$n"     && $C logs --no-color proxy 2>&1 | grep "refused: the statement names no customer" | grep -q "db=guardapp"; then
+    echo "PASS  guardapp (mode log, organization 1 moved): the same kind of statement is refused as under reject, and the proxy logs it"
   else
-    fail "guardapp log mode: '$n'"
+    fail "guardapp log mode after a move: '$n'"
   fi
   sleep 3 # the recording
   run_check check_goapp_refused.log -db "host=cloud user=postgres password=pw dbname=goapp sslmode=disable" -spec /specs/goapp.json \

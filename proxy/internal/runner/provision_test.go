@@ -328,7 +328,7 @@ func TestPublicProxy(t *testing.T) {
 	dir := useDir(t)
 	embeddedDone.Store(false)
 	write(t, dir+"/proxy.json", `{"listen": ":6432", "upstream": "env:LOKADB_UPSTREAM", "fanout": {"*": {"mode": "reject"}}}`)
-	c := &Config{}
+	c := &Config{Embedded: true}
 	pub := &cloudproto.PublicProxy{Name: "lokadb.example.com", Allow: []string{"203.0.113.7", "198.51.100.0/24"}}
 	if _, err := c.ApplySettings(&cloudproto.Settings{ProxyPublic: pub}); err != nil {
 		t.Fatal(err)

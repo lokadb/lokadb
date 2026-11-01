@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -48,6 +49,75 @@ func markedOrg(m string) int64 {
 		return org
 	}
 	return 0
+}
+
+// markedDBID: the database id in the mark m ("" if it has none).
+func markedDBID(m string) string {
+	if i := strings.Index(m, " database "); i >= 0 {
+		return strings.TrimSpace(m[i+len(" database "):])
+	}
+	return ""
+}
+
+// The ids this cloud gave the tables of its move-org attempts at the customer are in lokadb.attempts
+// (baseSQL; the switch moves the id to lokadb.orgs). A table at the customer marked with this
+// organization's number but an id the cloud never gave is another cloud's (a second install, this
+// database restored from a backup, a staging copy): the same number does not make it this cloud's
+// leftover.
+
+// attemptIDs: the ids this cloud knows for organization org's tables at the customer: those of its
+// attempts, the one of the organization's database once moved (lokadb.orgs) and of a copy
+// move-back left there (lokadb.returned). A database enabled
+// by an older version has no lokadb.attempts yet (move-org makes it).
+func attemptIDs(ctx context.Context, cloud querier, org int64) (map[string]bool, error) {
+	sql := `SELECT coalesce(to_jsonb(o) ->> 'db_id', '') FROM lokadb.orgs o WHERE org = $1`
+	ok, err := rowsOf(ctx, cloud, `SELECT (to_regclass('lokadb.attempts') IS NOT NULL)::text, (to_regclass('lokadb.returned') IS NOT NULL)::text`)
+	if err != nil {
+		return nil, err
+	}
+	if ok[0][0] == "true" {
+		sql += ` UNION SELECT db_id FROM lokadb.attempts WHERE org = $1`
+	}
+	if ok[0][1] == "true" { // a copy move-back left there (checkReturned has its say about it)
+		sql += ` UNION SELECT db_id FROM lokadb.returned WHERE org = $1`
+	}
+	rows, err := rowsOf(ctx, cloud, sql, org)
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	for _, r := range rows {
+		if r[0] != "" {
+			known[r[0]] = true
+		}
+	}
+	return known, nil
+}
+
+// ForeignDBTables: the tables in the organization's database marked with this organization's
+// number and a database id the cloud did not give (known: its attempts' ids): "schema.table
+// (database id)". Tables without an id (made before it) are taken as the cloud's own.
+func ForeignDBTables(ctx context.Context, cust querier, org int64, known map[string]bool) ([]string, error) {
+	rows, err := rowsOf(ctx, cust, `SELECT n.nspname::text || '.' || c.relname::text, obj_description(c.oid, 'pg_class')
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind IN ('r', 'p', 'f') AND NOT c.relispartition
+		  AND coalesce(obj_description(c.oid, 'pg_class'), '') LIKE $1 ORDER BY 1`, TableMark+" organization %")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range rows {
+		if id := markedDBID(r[1]); id != "" && isOrgMark(r[1], org) && !known[id] {
+			out = append(out, fmt.Sprintf("%s (database %s)", r[0], id))
+		}
+	}
+	return out, nil
+}
+
+// ForeignDBMessage: what move-org says about ForeignDBTables.
+func ForeignDBMessage(org int64, tables []string) string {
+	return fmt.Sprintf("this database holds tables of organization %d that this cloud database did not make (%s): they belong to another LokaDB database (a second install, this one restored from a backup, a staging copy) and may hold the only copy of the organization's rows, "+
+		"so they are not replaced. Use another database for this organization (if they are the leftovers of a move that failed in a database that is gone, drop them by hand)", org, strings.Join(tables, ", "))
 }
 
 // nullLit: s as a literal, NULL for "".

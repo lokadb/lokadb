@@ -170,7 +170,7 @@ func (s *session) directCopyStart(sql string, an *Analysis) bool {
 	di := &directInfo{tables: []string{t.Name}, write: &directWrite{table: t}}
 	rollback := func() {
 		if own {
-			s.cloudRun("ROLLBACK")
+			s.cloudRollback()
 		}
 	}
 	if own {
@@ -264,7 +264,7 @@ func (cp *directCopy) fail(s *session, e *pgproto3.ErrorResponse) {
 		return
 	}
 	_, _, _ = s.orgSimple(cp.dc, "ROLLBACK")
-	s.cloudRun("ROLLBACK")
+	s.cloudRollback()
 	s.toClient(e)
 	s.toClient(s.clientRFQ(s.txStatus()))
 	s.flushClient()
@@ -274,7 +274,7 @@ func (cp *directCopy) fail(s *session, e *pgproto3.ErrorResponse) {
 // cloud transaction rolls back; a direct transaction ends with 08006.
 func (cp *directCopy) lostAt(s *session, err error) {
 	if cp.own {
-		s.cloudRun("ROLLBACK")
+		s.cloudRollback()
 		s.directLost(cp.org, err)
 		return
 	}
@@ -347,7 +347,7 @@ func (s *session) copyLost(err error) {
 	cp.lost = err
 	s.directBusy.Store(nil)
 	if cp.own {
-		s.cloudRun("ROLLBACK")
+		s.cloudRollback()
 	} else {
 		s.direct.tx.dc = nil
 	}
@@ -461,7 +461,7 @@ func (s *session) copyEnd(end pgproto3.FrontendMessage) {
 				}
 				e = errUnknown(cp.org, err)
 			} else {
-				s.cloudRun("ROLLBACK")
+				s.cloudRollback()
 			}
 			s.toClient(e)
 			s.toClient(s.clientRFQ(s.txStatus()))

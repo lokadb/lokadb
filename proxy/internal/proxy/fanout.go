@@ -40,6 +40,8 @@ type Fanout struct {
 	Allowed int // statements on the allow list
 	allow   map[string]bool
 	tables  map[string]string
+	// strict: the same policy under reject, for log once an organization has moved (session.policy)
+	strict *Fanout
 }
 
 // FanoutFor compiles the policy of database db: its own entry, else "*", else reject.
@@ -70,6 +72,9 @@ func (c Config) FanoutFor(db string) (*Fanout, error) {
 			return nil, fmt.Errorf("fanout policy of %s: table %s: %q, want read, allow or refuse", db, t, d)
 		}
 		f.tables[t] = d
+	}
+	if f.Mode == FanoutLog {
+		f.strict = &Fanout{Mode: FanoutReject, Allowed: f.Allowed, allow: f.allow, tables: f.tables}
 	}
 	return f, nil
 }
@@ -111,20 +116,77 @@ func (f *Fanout) decide(sql string, an *Analysis, unhinted bool) FanoutVerdict {
 			return FanoutAllowed
 		}
 	}
-	switch f.tables[fanoutTable(an)] {
-	case TableRead:
-		if !an.Write {
-			return FanoutAllowed
-		}
-	case TableAllow:
-		return FanoutAllowed
-	case TableRefuse:
-		return FanoutDenied
+	if v, decided := f.tableVerdict(an); decided {
+		return v
 	}
 	if f.Mode == FanoutAllow || f.Mode == FanoutLog || f.Mode == FanoutRejectWrites && !an.Write {
 		return FanoutRun
 	}
 	return FanoutRefused
+}
+
+// openTables: every LokaDB table the statement leaves without an organization (the scopes' and the gaps').
+func (a *Analysis) openTables() []string {
+	out := append([]string(nil), a.UnhintedTables...)
+	seen := map[string]bool{}
+	for _, t := range out {
+		seen[t] = true
+	}
+	for _, g := range a.Gaps {
+		if g.Table != "" && !seen[g.Table] {
+			seen[g.Table] = true
+			out = append(out, g.Table)
+		}
+	}
+	return out
+}
+
+// tableVerdict: what the decisions about tables say of a statement that leaves several tables without an
+// organization: "refuse" of any of them refuses it; "read" / "allow" lets it run only when each of them has one.
+func (f *Fanout) tableVerdict(an *Analysis) (FanoutVerdict, bool) {
+	tables := an.openTables()
+	if len(tables) == 0 {
+		tables = []string{fanoutTable(an)}
+	}
+	allowed := true
+	for _, t := range tables {
+		switch f.tables[t] {
+		case TableRefuse:
+			return FanoutDenied, true
+		case TableAllow:
+		case TableRead:
+			allowed = allowed && !an.Write
+		default:
+			allowed = false
+		}
+	}
+	return FanoutAllowed, allowed
+}
+
+// openView: the analysis as the open list shows it: only the tables nobody decided (a statement that
+// joins a decided table and an undecided one is listed under the undecided one, where the person can answer it).
+func (f *Fanout) openView(an *Analysis) *Analysis {
+	open := an.openTables()
+	if len(f.tables) == 0 || len(open) < 2 {
+		return an
+	}
+	v := *an
+	v.UnhintedTable, v.UnhintedTables, v.Gaps = "", nil, nil
+	for _, t := range open {
+		if f.tables[t] == "" {
+			v.UnhintedTables = append(v.UnhintedTables, t)
+		}
+	}
+	if len(v.UnhintedTables) == 0 {
+		return an
+	}
+	v.UnhintedTable = v.UnhintedTables[0]
+	for _, g := range an.Gaps {
+		if g.Table == "" || f.tables[g.Table] == "" {
+			v.Gaps = append(v.Gaps, g)
+		}
+	}
+	return &v
 }
 
 // listed: sql is on the allow list (by fingerprint).
@@ -166,3 +228,18 @@ func raise(sql string) []outMsg {
 		{msg: &pgproto3.Execute{Portal: "lokadb_rp"}, mode: mDrop},
 	}
 }
+
+// For: the policy as it applies under metadata m. log is reject once an organization has moved
+// out of the cloud (its foreign partition, or a profile in lokadb.orgs), as its log line
+// promises: the mode was read once at the start, and a proxy nobody restarted after the first
+// move ran a statement without a customer in every organization's database, the moved one's
+// through FDW, and a statement it cannot read under every organization (third review R4-26).
+func (f *Fanout) For(m *Meta) *Fanout {
+	if f != nil && f.strict != nil && m != nil && m.anyMoved() {
+		return f.strict
+	}
+	return f
+}
+
+// policy: the session's fanout policy as it applies now (For).
+func (s *session) policy() *Fanout { return s.fanout.For(s.meta) }

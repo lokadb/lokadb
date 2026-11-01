@@ -2,6 +2,8 @@
 
 **Let your SaaS customers keep their data in their own Postgres — without rewriting your app.**
 
+**[lokadb.com](https://lokadb.com)** · [Documentation](https://docs.lokadb.com) · [Playground](https://play.lokadb.com)
+
 [![CI](https://github.com/lokadb/lokadb/actions/workflows/ci.yml/badge.svg)](https://github.com/lokadb/lokadb/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/lokadb/lokadb?include_prereleases&label=release)](https://github.com/lokadb/lokadb/releases)

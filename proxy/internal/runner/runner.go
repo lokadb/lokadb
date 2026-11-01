@@ -65,13 +65,19 @@ type Runner struct {
 	mu        sync.Mutex
 	st        State
 	running   map[string]*job
-	exclusive sync.Mutex // move, move_back, enable: one at a time
-	lastErr   string
-	invHash   string
-	interval  time.Duration
-	inv       *cloudproto.Inventory
-	problems  []cloudproto.Problem                       // the config's, while it is not ready (untilReady)
-	check     func(context.Context) []cloudproto.Problem // Cfg.Check (a test sets another)
+	jobs      sync.WaitGroup // the job goroutines: Run waits for them to send their results
+	exclusive sync.Mutex     // move, move_back, enable: one at a time
+	// restartPending: the process is to end and start again as soon as no job is running (a setting of
+	// the proxy inside it changed): a job in the middle is never cut by it (review 4, R4-16)
+	restartPending bool
+	// settingsHeld: the panel's settings came while a job ran: applied when the last one ends
+	settingsHeld bool
+	lastErr      string
+	invHash      string
+	interval     time.Duration
+	inv          *cloudproto.Inventory
+	problems     []cloudproto.Problem                       // the config's, while it is not ready (untilReady)
+	check        func(context.Context) []cloudproto.Problem // Cfg.Check (a test sets another)
 	// RevokedWait: the first wait after the service refuses the identity and there is no new token (doubles, up to ten minutes)
 	RevokedWait time.Duration
 	triedToken  string // the token (hashed) already tried after a refusal
@@ -221,6 +227,15 @@ func (r *Runner) Run(ctx context.Context) error {
 		j.cancel()
 	}
 	r.mu.Unlock()
+	// the jobs send their results (interrupted) before the process ends; one that cannot stays in
+	// runner.json and is reported at the next start (review R4-15)
+	jobsDone := make(chan struct{})
+	go func() { r.jobs.Wait(); close(jobsDone) }()
+	select {
+	case <-jobsDone:
+	case <-time.After(resultGrace + 5*time.Second):
+		r.Log.Warn("jobs still ending at the stop: they are reported at the next start")
+	}
 	wg.Wait()
 	return err
 }
@@ -429,6 +444,7 @@ func (r *Runner) pollLoop(ctx context.Context) error {
 			if changed {
 				r.mu.Lock()
 				idle := r.ops != nil && len(r.running) == 0
+				r.settingsHeld = r.settingsHeld || !idle
 				r.mu.Unlock()
 				if idle {
 					r.applySettings()
@@ -496,8 +512,9 @@ func (r *Runner) start(ctx context.Context, j cloudproto.Job) {
 	r.running[j.ID] = rj
 	r.st.Running = append(r.st.Running, j.ID)
 	_ = r.saveState()
+	r.jobs.Add(1)
 	r.mu.Unlock()
-	go r.runJob(ctx, jctx, rj)
+	go func() { defer r.jobs.Done(); r.runJob(ctx, jctx, rj) }()
 }
 
 func (r *Runner) runJob(ctx, jctx context.Context, rj *job) {
@@ -528,24 +545,98 @@ func (r *Runner) runJob(ctx, jctx context.Context, rj *job) {
 			r.sendInventory(ctx, &inv)
 		}
 	}
-	r.postResult(ctx, rj.j.ID, res)
-	r.mu.Lock()
-	delete(r.running, rj.j.ID)
-	for i, id := range r.st.Running {
-		if id == rj.j.ID {
-			r.st.Running = append(r.st.Running[:i], r.st.Running[i+1:]...)
-			break
+	if rj.j.Kind == cloudproto.KindDecide && res.Error == nil {
+		r.keepDecidedSpec(res)
+	}
+	// The runner stopping (SIGTERM, an update, its own Stop) ends the job too: its result still goes
+	// to the service, as interrupted, on a context of its own. Only a result the service took
+	// takes the job out of runner.json: otherwise the next start reports it interrupted (review
+	// R4-15: the service waited for it for good).
+	sendCtx := ctx
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		sendCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), resultGrace)
+		defer cancel()
+		if res.Status != cloudproto.StatusOK {
+			res = cloudproto.Result{Status: cloudproto.StatusFailed, Result: res.Result, Error: &cloudproto.JobError{Code: "interrupted",
+				Message: "the runner stopped while the job ran", Retryable: true}}
 		}
 	}
-	_ = r.saveState()
+	sent := r.postResult(sendCtx, rj.j.ID, res)
+	r.mu.Lock()
+	delete(r.running, rj.j.ID)
+	if sent {
+		for i, id := range r.st.Running {
+			if id == rj.j.ID {
+				r.st.Running = append(r.st.Running[:i], r.st.Running[i+1:]...)
+				break
+			}
+		}
+		_ = r.saveState()
+	}
 	r.mu.Unlock()
 	// the choices about tables are in the proxy's config, which the proxy inside this process reads when it starts:
 	// restart it now that the panel has the answer, not at the next look at the config (up to 30 s later, during
 	// which the application's queries are still refused by the old rule and the table comes back to the list)
-	if rj.j.Kind == cloudproto.KindDecide && res.Error == nil && r.Cfg.RestartRequested() && r.Stop != nil {
-		log.Warn("ending the process to start it again with the choices made for the proxy")
-		r.Stop()
+	r.mu.Lock()
+	held := r.settingsHeld && len(r.running) == 0
+	if held {
+		r.settingsHeld = false
 	}
+	r.mu.Unlock()
+	if held {
+		r.applySettings() // what the panel changed while jobs ran
+	}
+	if rj.j.Kind == cloudproto.KindDecide && res.Error == nil && r.Cfg.RestartRequested() {
+		r.restartWhenIdle("the choices made for the proxy")
+	} else {
+		r.restartIfPending()
+	}
+}
+
+// keepDecidedSpec: the spec a decision left is the settings' now (the service saves it too): a check that starts
+// before the next poll must not put the older one back (review 4, R4-35).
+func (r *Runner) keepDecidedSpec(res cloudproto.Result) {
+	var dr cloudproto.DecideResult
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if json.Unmarshal(res.Result, &dr) == nil && len(dr.Spec) > 0 && r.settings != nil {
+		cp := *r.settings
+		cp.Spec = dr.Spec
+		r.settings = &cp
+	}
+}
+
+// restartWhenIdle ends the process (its supervisor starts it again) now when no job runs, else when the
+// last one ends. Ending it in the middle of a move would cut the move and, with its result lost, leave it
+// running for the service for good.
+func (r *Runner) restartWhenIdle(why string) {
+	if r.Stop == nil {
+		return
+	}
+	r.mu.Lock()
+	r.restartPending = true
+	r.mu.Unlock()
+	r.restartIfPending(why)
+}
+
+// restartIfPending: the restart asked for waits for the jobs; the one that ends last carries it out.
+func (r *Runner) restartIfPending(why ...string) {
+	r.mu.Lock()
+	go1 := r.restartPending && len(r.running) == 0 && r.Stop != nil
+	if go1 {
+		r.restartPending = false
+	}
+	r.mu.Unlock()
+	if !go1 {
+		return
+	}
+	reason := "the new proxy setting"
+	if len(why) > 0 {
+		reason = why[0]
+	}
+	r.Log.Warn("ending the process to start it again with " + reason)
+	r.Stop()
 }
 
 // do runs the job and makes its result.
@@ -702,7 +793,12 @@ func (r *Runner) flushEvents(ctx context.Context, rj *job, done <-chan struct{})
 }
 
 // postResult sends a job's result until the service takes it (or refuses it for good).
-func (r *Runner) postResult(ctx context.Context, id string, res cloudproto.Result) {
+// resultGrace: how long a job ended by the runner's stop has to send its result.
+const resultGrace = 10 * time.Second
+
+// postResult sends a job's result until the service takes it (true), refuses it for good (true:
+// sending again would not help), or ctx ends (false: nothing reached the service).
+func (r *Runner) postResult(ctx context.Context, id string, res cloudproto.Result) bool {
 	backoff := time.Second
 	for {
 		code, err := r.call(ctx, "", "/v1/runner/jobs/"+id+"/result", res, nil)
@@ -710,7 +806,7 @@ func (r *Runner) postResult(ctx context.Context, id string, res cloudproto.Resul
 			if err != nil && ctx.Err() == nil {
 				r.Log.Warn("the service refused the job's result", "job", id, "err", err)
 			}
-			return
+			return err == nil || ctx.Err() == nil
 		}
 		r.Log.Warn("sending the result", "job", id, "err", err, "retry_in", backoff)
 		sleep(ctx, backoff)

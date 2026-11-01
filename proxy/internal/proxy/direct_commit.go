@@ -133,7 +133,7 @@ func (s *session) orgTxStatus(org, xid string) string {
 // side that keeps the superset: the cloud commits and the log names refs-sync.
 func (s *session) unknownSide(d *directTx) {
 	if d.refsDeleted && !d.refsAdded {
-		s.cloudRun("ROLLBACK")
+		s.cloudRollback()
 		return
 	}
 	if c := s.cloudRun("COMMIT"); c.err != nil {
@@ -142,4 +142,16 @@ func (s *session) unknownSide(d *directTx) {
 	if d.refsDeleted {
 		s.log.Error("a direct transaction that added and deleted refs rows lost its organization's connection at the COMMIT, the outcome unknown: if the organization did not commit, the rows it deleted have no refs rows. Run lokadb refs-diff / refs-sync", "org", d.org)
 	}
+}
+
+// cloudRollback: the proxy's own ROLLBACK of the cloud's transaction of a direct path. It
+// undoes what the transaction set there, lokadb.org of a statement on cloud tables among
+// it, so upOrg is no longer known: the next statement sets it again (a statement the cloud's
+// way, as the client's own ROLLBACK does; R4-9 of the third review: the statement that
+// the analyzer does not see LokaDB tables in ran under the organization of a rolled back
+// transaction, or under none, every one).
+func (s *session) cloudRollback() *capture {
+	c := s.cloudRun("ROLLBACK")
+	s.upOrg = "?"
+	return c
 }

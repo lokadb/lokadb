@@ -241,7 +241,10 @@ func (s *session) cancelDirect() {
 }
 
 func sendCancel(addr string, tc *tls.Config, plainOK bool, pid uint32, secret []byte) error {
-	raw, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	// like the connection it cancels: admitted at a relay's port that takes only proven addresses (R4-37)
+	dctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	raw, err := tunnel.DialProving(directNetDial)(dctx, "tcp", addr)
 	if err != nil {
 		return err
 	}

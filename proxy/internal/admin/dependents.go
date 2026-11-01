@@ -61,7 +61,22 @@ UNION
 -- a function that takes the row type (or an array of it): made again over the parent's, the old
 -- one dropped. One that only returns it goes on working (rows of the partition are of the parent's).
 SELECT 'rowtype_function', p.oid::regprocedure::text,
-    CASE WHEN p.prokind IN ('f', 'p') THEN pg_get_functiondef(p.oid) ELSE '' END,
+    -- the new one is another object: it takes the old one's owner, privileges and comment (R4-12:
+    -- made by the administrator with the defaults, a SECURITY DEFINER function ran as a
+    -- superuser and PUBLIC could call it)
+    CASE WHEN p.prokind IN ('f', 'p') THEN pg_get_functiondef(p.oid)
+        || E';
+ALTER ' || (CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END) || ' ' || p.oid::regprocedure::text || ' OWNER TO ' || quote_ident(pg_get_userbyid(p.proowner))
+        || CASE WHEN p.proacl IS NULL THEN '' ELSE E';
+REVOKE ALL ON ' || (CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END) || ' ' || p.oid::regprocedure::text || ' FROM PUBLIC'
+            || coalesce((SELECT string_agg(E';
+GRANT ' || x.privilege_type || ' ON ' || (CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END) || ' ' || p.oid::regprocedure::text || ' TO '
+                || CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(x.grantee)) END
+                || CASE WHEN x.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END, '')
+              FROM aclexplode(p.proacl) x WHERE x.grantee <> p.proowner), '') END
+        || coalesce(E';
+COMMENT ON ' || (CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END) || ' ' || p.oid::regprocedure::text || ' IS ' || quote_literal(obj_description(p.oid, 'pg_proc')), '')
+      ELSE '' END,
     format('DO $lokadb$ BEGIN EXECUTE %L || %s::regprocedure::text; END $lokadb$',
       CASE p.prokind WHEN 'p' THEN 'DROP PROCEDURE ' ELSE 'DROP FUNCTION ' END, p.oid),
     p.prokind IN ('f', 'p') AND x.what IS NULL,

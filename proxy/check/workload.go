@@ -69,6 +69,20 @@ func (o *origin) merge(p origin) {
 	delete(o.sources, "")
 }
 
+// withoutValues: a text of pg_stat_statements with its constants as $n. It keeps some statements
+// as the application sent them (DECLARE ... CURSOR before 16, COPY (SELECT ...) TO), values of
+// the application's rows included, and the report goes to LokaDB Cloud (review 3, R4-27); the
+// proxy's recording is normalized the same way. A text that does not parse loses its quoted
+// strings.
+func withoutValues(sql string) string {
+	if n, err := pg.Normalize(sql); err == nil {
+		return n
+	}
+	return quotedRe.ReplaceAllString(sql, "'?'")
+}
+
+var quotedRe = regexp.MustCompile(`'(?:[^']|'')*'`)
+
 func (c *checker) workload() error {
 	pats := map[string]int64{} // normalized SQL -> executions
 	from := map[string]*origin{}
@@ -132,6 +146,7 @@ func (c *checker) workload() error {
 					skipped[role]++
 				default:
 					n, _ := strconv.ParseInt(r[1], 10, 64)
+					query = withoutValues(query)
 					pats[query] = max(pats[query], n)
 					seen(query, role, "pg_stat_statements")
 					kept++
@@ -215,7 +230,10 @@ func (c *checker) workload() error {
 	for sql, n := range pats {
 		k, note := c.classifyNamed(sql, named)
 		if k == kFanout {
-			k = c.fanoutKind(sql)
+			var denied string
+			if k, denied = c.fanoutDecision(sql); denied != "" && note == "" {
+				note = denied
+			}
 		}
 		fp, err := pg.Fingerprint(analyzable(sql))
 		key := strconv.Itoa(int(k)) + " " + fp
@@ -556,14 +574,23 @@ func (c *checker) proxyMade(sql string) bool {
 
 // fanoutKind: what the proxy's fanout policy does with a statement that names no organization.
 func (c *checker) fanoutKind(sql string) kind {
+	k, _ := c.fanoutDecision(sql)
+	return k
+}
+
+// fanoutDecision: fanoutKind, and a note when a decision about its table refuses it ("refuse"
+// in fanout.tables: the proxy answers FanoutDenied with an error; review 3, R4-39).
+func (c *checker) fanoutDecision(sql string) (kind, string) {
 	sql = analyzable(sql)
-	switch c.fan.Decide(sql, c.analyze(sql, c.meta)) {
+	switch c.fan.For(c.meta).Decide(sql, c.analyze(sql, c.meta)) { // log is reject once an organization has moved, as in the proxy
 	case proxy.FanoutRefused:
-		return kRefused
+		return kRefused, ""
+	case proxy.FanoutDenied:
+		return kRefused, "refused by the decision about its table"
 	case proxy.FanoutAllowed:
-		return kAllowed
+		return kAllowed, ""
 	}
-	return kFanout
+	return kFanout, ""
 }
 
 func (c *checker) classify(sql string) (kind, string) {

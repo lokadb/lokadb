@@ -19,7 +19,8 @@ func (c *checker) cloudDirectAccess(roles []string) error {
 	if _, err := c.tx.Exec(c.ctx, "SAVEPOINT lokadb_hba"); err != nil {
 		return err
 	}
-	rules, err := c.rows(`SELECT type, array_to_string(user_name, ','), coalesce(address, ''), coalesce(netmask, ''), auth_method, line_number::text
+	rules, err := c.rows(`SELECT type, array_to_string(user_name, ','), coalesce(address, ''), coalesce(netmask, ''), auth_method, line_number::text,
+			array_to_string(database, ',')
 		FROM pg_hba_file_rules h WHERE error IS NULL ORDER BY h.line_number`) // the number, not its text (1, 120, 2...)
 	if err != nil {
 		if _, rerr := c.tx.Exec(c.ctx, "ROLLBACK TO SAVEPOINT lokadb_hba"); rerr != nil {
@@ -41,21 +42,23 @@ func (c *checker) cloudDirectAccess(roles []string) error {
 		c.add(Warning, "cloud_direct_access", "", "-proxy-hosts: these entries are not IPs or CIDRs", bad)
 	}
 	for _, role := range roles {
-		if open := hbaOpen(rules, role, inGroup, allowed); len(open) > 0 {
+		if open := hbaOpen(rules, c.rep.Database, role, inGroup, allowed); len(open) > 0 {
 			c.add(Warning, "cloud_direct_access", role, fmt.Sprintf("the application's role %s can connect to the cloud database from addresses other than the proxy's: there, without the proxy, a query sees and changes every organization's rows. Let it in from the proxy and the relay only (pg_hba: host … %s <proxy>/32 …, then a reject for it), and keep the database off other networks (firewall, security group)", role, role), open)
 		}
 	}
 	return nil
 }
 
-// hbaOpen: the rules (type, users, address, netmask, method, line) that admit role from
-// outside allowed, in pg_hba's order: the first rule that matches every address for the
-// role ends it (a reject included).
-func hbaOpen(rules [][]string, role string, inGroup map[string]bool, allowed []*net.IPNet) []string {
+// hbaOpen: the rules (type, users, address, netmask, method, line, databases) that admit role
+// to database db from outside allowed, in pg_hba's order: the first rule of type host for db
+// that matches every address for the role ends it (a reject included). A rule of one kind of
+// connection only (hostssl, hostnossl, hostgssenc, hostnogssenc) leaves the others to the next
+// rules (review 3, R4-38).
+func hbaOpen(rules [][]string, db, role string, inGroup map[string]bool, allowed []*net.IPNet) []string {
 	var open []string
 	for _, r := range rules {
 		typ, users, addr, mask, method, line := r[0], strings.Split(r[1], ","), r[2], r[3], r[4], r[5]
-		if typ == "local" || !hbaUser(users, role, inGroup) {
+		if typ == "local" || !hbaUser(users, role, inGroup) || !hbaDatabase(strings.Split(r[6], ","), db, role, inGroup) {
 			continue
 		}
 		if method != "reject" {
@@ -63,7 +66,7 @@ func hbaOpen(rules [][]string, role string, inGroup map[string]bool, allowed []*
 				open = append(open, fmt.Sprintf("pg_hba.conf line %s: %s %s %s %s (%s)", line, typ, r[1], hbaAddr(addr, mask), method, why))
 			}
 		}
-		if hbaMatchesAll(addr, mask) {
+		if typ == "host" && hbaMatchesAll(addr, mask) {
 			break
 		}
 	}
@@ -105,6 +108,19 @@ func hbaUser(users []string, role string, inGroup map[string]bool) bool {
 		case u == "all", u == role:
 			return true
 		case strings.HasPrefix(u, "+") && inGroup[role+" "+u]:
+			return true
+		}
+	}
+	return false
+}
+
+// hbaDatabase: a rule's database list names db for role (all, db, sameuser, samerole).
+func hbaDatabase(dbs []string, db, role string, inGroup map[string]bool) bool {
+	for _, d := range dbs {
+		switch {
+		case d == "all", d == db:
+			return true
+		case d == "sameuser" && role == db, d == "samerole" && (role == db || inGroup[role+" +"+db]):
 			return true
 		}
 	}

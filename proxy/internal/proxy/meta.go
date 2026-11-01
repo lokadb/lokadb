@@ -105,11 +105,14 @@ type Meta struct {
 	// Direct[partition]: a foreign partition on which the session's role has every privilege
 	// it has on the parent (lokadb.sync_grants gives them): a statement aimed straight at it
 	// would otherwise fail with permission denied where the parent allows it (foreignPart).
+	// Not for a table with a policy of the application (any but lokadb_tenant): the partition
+	// has none, so such a table is read and written through its parent, as the direct path does
+	// (R4-10).
 	Direct map[string]bool
 	// GrantSync: the database has lokadb.grant_sync and the session's role may call it (a GRANT
 	// on a LokaDB table goes through it).
 	GrantSync bool
-	// StmtTriggers[table]: the application has a statement-level trigger on the parent.
+	// StmtTriggers[table]: the application has a statement-level trigger on the parent, or a rule.
 	// Postgres fires it for a statement on the parent only, not on a partition: writes
 	// stay on the parent (foreignPart).
 	StmtTriggers map[string]bool
@@ -496,7 +499,8 @@ func readMeta(q queryFunc) (*Meta, error) {
 		(has_table_privilege(c.oid, 'INSERT') AND has_table_privilege(c.oid, 'UPDATE'))::text,
 		(NOT EXISTS (SELECT 1 FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE']) pr
 			WHERE has_any_column_privilege(p.oid, pr) AND NOT has_table_privilege(c.oid, pr))
-			AND (NOT has_table_privilege(p.oid, 'DELETE') OR has_table_privilege(c.oid, 'DELETE')))::text
+			AND (NOT has_table_privilege(p.oid, 'DELETE') OR has_table_privilege(c.oid, 'DELETE'))
+			AND NOT EXISTS (SELECT FROM pg_policy WHERE polrelid = p.oid AND polname <> 'lokadb_tenant'))::text
 		FROM pg_inherits i
 		JOIN pg_class c ON c.oid = i.inhrelid
 		JOIN pg_class p ON p.oid = i.inhparent
@@ -807,6 +811,19 @@ func triggers(q queryFunc, m *Meta, src string) error {
 	for _, r := range rows {
 		m.StmtTriggers[r[0]] = true
 	}
+	// A rule (CREATE RULE … ON UPDATE/DELETE/INSERT) of the parent is like a statement trigger:
+	// Postgres fires it for a statement on the parent only, never on a partition. enable moves
+	// the application's rules to the parent; a write aimed straight at a moved organization's
+	// partition skipped them (a soft delete by rule became a real one; review 3, R4-20).
+	if rows, err = q(`SELECT DISTINCT t.table_name FROM pg_rewrite w
+		JOIN pg_class p ON p.oid = w.ev_class
+		JOIN ` + src + ` ON t.table_name = ` + keyOf("p") + `
+		WHERE w.rulename <> '_RETURN' AND w.ev_type IN ('2', '3', '4')`); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		m.StmtTriggers[r[0]] = true
+	}
 	if rows, err = q(`SELECT t.table_name, bit_or(g.tgtype::int & 28)::text FROM ` + src + `
 		JOIN pg_class p ON t.table_name = ` + keyOf("p") + `
 		JOIN pg_trigger g ON g.tgrelid = p.oid OR g.tgrelid IN (SELECT inhrelid FROM pg_inherits WHERE inhparent = p.oid)
@@ -867,4 +884,15 @@ func (m *Meta) anyDirect() bool {
 		}
 	}
 	return false
+}
+
+// anyMoved: some organization has moved out of the cloud (a foreign partition, or a routing
+// profile in lokadb.orgs).
+func (m *Meta) anyMoved() bool {
+	for _, orgs := range m.Foreign {
+		if len(orgs) > 0 {
+			return true
+		}
+	}
+	return len(m.Profiles) > 0
 }

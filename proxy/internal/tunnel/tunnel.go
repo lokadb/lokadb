@@ -539,6 +539,9 @@ func (r *Relay) api(iss signer) http.Handler {
 			reply(w, http.StatusInternalServerError, enrollResponse{Error: "registry unavailable"})
 			return
 		}
+		if kind == "renew" && parent != nil {
+			r.renewed(parent)
+		}
 		if blk, _ := pem.Decode(certPEM); blk != nil {
 			if c, err := x509.ParseCertificate(blk.Bytes); err == nil {
 				if err := r.store.SetCertKey(req.Context(), serial, keyHash(c)); err != nil {
@@ -777,11 +780,22 @@ func (r *Relay) renewTooOften(cert *x509.Certificate) string {
 	if r.renewals[serial] >= maxRenewalsPerCert {
 		return "renewal refused: this certificate was renewed already"
 	}
+	return ""
+}
+
+// renewed counts a renewal of cert that was signed and recorded: a failed attempt (the issuing service
+// down, the registry refusing) asks again without using the certificate up (review 4, R4-17).
+func (r *Relay) renewed(cert *x509.Certificate) {
+	serial := cert.SerialNumber.Text(16)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.renewals == nil {
+		r.renewals = map[string]int{}
+	}
 	r.renewals[serial]++
 	if len(r.renewals) > 100000 { // a relay running for long: forget; a refusal is a nicety, not a guard
 		r.renewals = map[string]int{serial: r.renewals[serial]}
 	}
-	return ""
 }
 
 // keyHash: sha256 of a certificate's public key (SubjectPublicKeyInfo), hex.
@@ -1090,11 +1104,9 @@ func (r *Relay) graceCheck(serial string, regErr error) (string, bool) {
 // watchRevocations drops sessions whose certificate has been revoked. (Expiry is checked
 // at connection time: a live session outlasting its certificate is not cut, so queries in
 // flight are not broken every certificate lifetime; a stolen key cannot open new ones.)
-// retireWait: how long a replaced session may finish its streams before it is closed.
-const retireWait = 10 * time.Minute
-
 // retire takes a session out of service: GoAway (no new streams either way), closed once its
-// streams end or after retireWait; watchRevocations still watches it.
+// streams end, however long that takes (a long move step, a table copy, a long query): new streams are barred
+// by GoAway, a dead peer ends them by keepalive and a revoked certificate by watchRevocations.
 func (r *Relay) retire(as *agentSession) {
 	_ = as.sess.GoAway()
 	r.mu.Lock()
@@ -1104,7 +1116,7 @@ func (r *Relay) retire(as *agentSession) {
 	r.retiring[as] = true
 	r.mu.Unlock()
 	go func() {
-		for deadline := time.Now().Add(retireWait); as.sess.NumStreams() > 0 && time.Now().Before(deadline) && !as.sess.IsClosed(); {
+		for as.sess.NumStreams() > 0 && !as.sess.IsClosed() {
 			time.Sleep(time.Second)
 		}
 		as.sess.Close()
@@ -1701,11 +1713,11 @@ func (a *Agent) session(relay string, slot int, tlsCfg *tls.Config, stop chan st
 	}
 }
 
-// retireSession: GoAway, then closed once its streams end (at most retireWait).
+// retireSession: GoAway, then closed once its streams end.
 func retireSession(sess *yamux.Session) {
 	_ = sess.GoAway()
 	go func() {
-		for deadline := time.Now().Add(retireWait); sess.NumStreams() > 0 && time.Now().Before(deadline) && !sess.IsClosed(); {
+		for sess.NumStreams() > 0 && !sess.IsClosed() {
 			time.Sleep(time.Second)
 		}
 		sess.Close()

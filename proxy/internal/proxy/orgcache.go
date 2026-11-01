@@ -12,7 +12,9 @@ import (
 //
 // The key is the database, the role the metadata is read under (what a lookup sees is the
 // role's), the refs table and the id. A database's entries go at once when a statement through
-// this proxy may change what a lookup answers (orgVersion, as the sessions' caches did), when
+// this proxy may change what a lookup answers (orgVersion, as the sessions' caches did), again
+// when that statement's transaction is over (what was read in between is the committed rows of
+// before: third review R4-22), when
 // a session hears that the metadata changed (enable, disable: refs tables under the same names
 // may be others), and every orgCacheTTL (other proxies, writes past the proxy). The whole cache
 // holds at most limit bytes (an estimate per entry) and is emptied when one more does not fit.

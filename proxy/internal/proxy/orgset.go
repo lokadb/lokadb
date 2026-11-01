@@ -123,10 +123,10 @@ func (s *session) openOrg(sql, named string) string {
 		return named
 	case named == TenantAll && s.allRole():
 		return ""
-	case s.fanout == nil:
-	case s.fanout.Mode == FanoutAllow || s.fanout.Mode == FanoutLog:
+	case s.policy() == nil:
+	case s.policy().Mode == FanoutAllow || s.policy().Mode == FanoutLog:
 		return ""
-	case len(s.fanout.allow) > 0 && s.fanout.listed(sql):
+	case len(s.policy().allow) > 0 && s.policy().listed(sql):
 		return ""
 	}
 	return "-1"

@@ -565,7 +565,7 @@ func (s *session) commitQuiet() *pgproto3.ErrorResponse {
 	}
 	<-c.done
 	if lost != nil {
-		s.cloudRun("ROLLBACK")
+		s.cloudRollback()
 		s.endTx()
 		return &pgproto3.ErrorResponse{Severity: "ERROR", Code: "08006",
 			Message: "lokadb: the connection to organization " + d.org + "'s database was lost before the COMMIT: the transaction is rolled back on both sides: " + lost.Error()}
@@ -576,7 +576,7 @@ func (s *session) commitQuiet() *pgproto3.ErrorResponse {
 				s.dropDirect(d.dc)
 			}
 		}
-		s.cloudRun("ROLLBACK")
+		s.cloudRollback()
 		s.endTx()
 		e := c.resp
 		if e == nil {
@@ -587,7 +587,7 @@ func (s *session) commitQuiet() *pgproto3.ErrorResponse {
 	if d.dc != nil && !d.beginPending {
 		switch failed, outcome := s.orgCommit(d.dc, xid, xidKnown); outcome {
 		case orgAborted:
-			s.cloudRun("ROLLBACK")
+			s.cloudRollback()
 			s.endTx()
 			return failed
 		case orgUnknown:
@@ -623,7 +623,7 @@ func (s *session) rollbackTx() {
 				s.dropDirect(d.dc)
 			}
 		}
-		s.cloudRun("ROLLBACK")
+		s.cloudRollback()
 	}
 	s.endTx()
 }
@@ -679,7 +679,7 @@ func (s *session) txGateAll(org string, dis []*directInfo, dc *directConn, extra
 	}
 	if !allowed {
 		if open {
-			s.cloudRun("ROLLBACK")
+			s.cloudRollback()
 			if r := c.resp; r != nil && (strings.HasPrefix(r.Code, "57") || r.Code == "55P03" || r.Code == "40P01") {
 				s.failTx(r) // the client's statement fails in its (deferred) transaction, as on the server
 				return nil, false, true

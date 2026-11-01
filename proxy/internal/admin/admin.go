@@ -397,6 +397,12 @@ ALTER TABLE lokadb.orgs ADD COLUMN IF NOT EXISTS schema text NOT NULL DEFAULT 'p
 ALTER TABLE lokadb.orgs ADD COLUMN IF NOT EXISTS db_id text;
 -- the copies move-back left in organizations' databases it could not mark as returned (returned.go)
 CREATE TABLE IF NOT EXISTS lokadb.returned (db_id text PRIMARY KEY, org bigint NOT NULL, at timestamptz NOT NULL DEFAULT now());
+-- the ids of move-org's attempts at the customer, to tell its leftovers from another cloud's tables (dbid.go)
+CREATE TABLE IF NOT EXISTS lokadb.attempts (db_id text PRIMARY KEY, org bigint NOT NULL, at timestamptz NOT NULL DEFAULT now());
+-- a move-back that switched and has not finished (review 4, R4-2): what a run after it needs to
+-- finish it; written in the switch's transaction, deleted when it is done (moveback.go)
+CREATE TABLE IF NOT EXISTS lokadb.moveback (org bigint PRIMARY KEY, server text NOT NULL, schema text NOT NULL,
+  capture boolean NOT NULL, abandon boolean NOT NULL DEFAULT false, at timestamptz NOT NULL DEFAULT now());
 -- the table's key: its one-column primary key, or id (refs and lookups map it to the organization)
 ALTER TABLE lokadb.tables ADD COLUMN IF NOT EXISTS key_column text NOT NULL DEFAULT 'id';
 -- What enable changes and disable gives back: the table's owner before enable, and its
@@ -593,10 +599,14 @@ END $$;
 -- parent got permission denied for documents__org1. A foreign partition holds the rows of its
 -- one organization, which such a role reads through the parent all the same. Not for the
 -- cloud's local partitions: DEFAULT holds every cloud organization, the policy that keeps
--- them apart is the parent's (enable revokes them there).
+-- them apart is the parent's (enable revokes them there). Not for a table with a policy of
+-- the application (any but lokadb_tenant): the partition has none, so a role that may read
+-- the parent through its policy must not read the partition; the proxy reads such a table
+-- through the parent, and the partitions keep no privileges of the roles (R4-10).
 CREATE OR REPLACE FUNCTION lokadb.sync_grants(parent text) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
   p oid := lokadb.qrel(parent)::regclass;
+  guarded boolean := EXISTS (SELECT FROM pg_policy WHERE polrelid = p AND polname <> 'lokadb_tenant');
   part record;
   g record;
 BEGIN
@@ -609,12 +619,12 @@ BEGIN
         WHERE c.oid = part.oid AND x.grantee <> part.relowner AND x.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
       EXCEPT SELECT coalesce(quote_ident(r.rolname), 'PUBLIC'), x.privilege_type
         FROM pg_class c CROSS JOIN LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) x LEFT JOIN pg_roles r ON r.oid = x.grantee
-        WHERE c.oid = p) LOOP
+        WHERE c.oid = p AND NOT guarded) LOOP
       EXECUTE format('REVOKE %s ON %s FROM %s', g.priv, part.name, g.role);
     END LOOP;
     FOR g IN (SELECT coalesce(quote_ident(r.rolname), 'PUBLIC') AS role, x.privilege_type AS priv
         FROM pg_class c CROSS JOIN LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) x LEFT JOIN pg_roles r ON r.oid = x.grantee
-        WHERE c.oid = p AND x.grantee <> part.relowner AND x.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+        WHERE c.oid = p AND NOT guarded AND x.grantee <> part.relowner AND x.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
       EXCEPT SELECT coalesce(quote_ident(r.rolname), 'PUBLIC'), x.privilege_type
         FROM pg_class c CROSS JOIN LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) x LEFT JOIN pg_roles r ON r.oid = x.grantee
         WHERE c.oid = part.oid) LOOP
@@ -626,12 +636,12 @@ BEGIN
         WHERE a.attrelid = part.oid AND x.grantee <> part.relowner AND x.privilege_type IN ('SELECT', 'INSERT', 'UPDATE')
       EXCEPT SELECT a.attname, coalesce(quote_ident(r.rolname), 'PUBLIC'), x.privilege_type
         FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x LEFT JOIN pg_roles r ON r.oid = x.grantee
-        WHERE a.attrelid = p) LOOP
+        WHERE a.attrelid = p AND NOT guarded) LOOP
       EXECUTE format('REVOKE %s (%I) ON %s FROM %s', g.priv, g.col, part.name, g.role);
     END LOOP;
     FOR g IN (SELECT a.attname AS col, coalesce(quote_ident(r.rolname), 'PUBLIC') AS role, x.privilege_type AS priv
         FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x LEFT JOIN pg_roles r ON r.oid = x.grantee
-        WHERE a.attrelid = p AND x.grantee <> part.relowner AND x.privilege_type IN ('SELECT', 'INSERT', 'UPDATE')
+        WHERE a.attrelid = p AND NOT guarded AND x.grantee <> part.relowner AND x.privilege_type IN ('SELECT', 'INSERT', 'UPDATE')
           AND EXISTS (SELECT 1 FROM pg_attribute pa WHERE pa.attrelid = part.oid AND pa.attname = a.attname AND NOT pa.attisdropped)
       EXCEPT SELECT a.attname, coalesce(quote_ident(r.rolname), 'PUBLIC'), x.privilege_type
         FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x LEFT JOIN pg_roles r ON r.oid = x.grantee
@@ -1249,8 +1259,10 @@ func enableOnce(ctx context.Context, o EnableOptions) error {
 			}
 			// From the parent's refs table (key -> organization): filled above in this run, or
 			// by the enable that converted the parent.
-			if err := r.exec(fmt.Sprintf("UPDATE %s c SET %s = p.tenant FROM %s p WHERE p.id = c.%s",
-				qr(t), q(tc), qr(hn(st.ParentTable, "__refs")), q(st.ParentColumn))); err != nil {
+			if err := r.quietly(t, func() error {
+				return r.exec(fmt.Sprintf("UPDATE %s c SET %s = p.tenant FROM %s p WHERE p.id = c.%s",
+					qr(t), q(tc), qr(hn(st.ParentTable, "__refs")), q(st.ParentColumn)))
+			}); err != nil {
 				return err
 			}
 			// Rows without a parent, or under a parent of no organization, keep NULL: they

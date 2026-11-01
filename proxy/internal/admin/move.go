@@ -324,6 +324,15 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	} else if len(other) > 0 {
 		return fmt.Errorf("%s (nothing was changed)", OtherOrgMessage(other))
 	}
+	known, err := attemptIDs(ctx, cloud, o.Org)
+	if err != nil {
+		return err
+	}
+	if foreign, err := ForeignDBTables(ctx, cust, o.Org, known); err != nil {
+		return fmt.Errorf("customer database: %w", err)
+	} else if len(foreign) > 0 {
+		return fmt.Errorf("%s (nothing was changed)", ForeignDBMessage(o.Org, foreign))
+	}
 	mode, err := chooseMode(ctx, cloud, cust, o, log)
 	if err != nil {
 		return err
@@ -395,6 +404,11 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	}
 	if moved[0][0] != "0" {
 		switched = true // nothing of this run to clean up: leave the moved organization alone
+		if done, err := finishInterrupted(ctx, cloud, cust, o, custVer, log); err != nil {
+			return err
+		} else if done {
+			return nil
+		}
 		return fmt.Errorf("organization %d is already in its own database", o.Org)
 	}
 
@@ -410,6 +424,11 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	}
 	o.dbID = newDBID() // in the mark on the tables and in lokadb.orgs (dbid.go)
 	custDDL = withDBID(custDDL, o.Org, o.dbID)
+	// recorded before the tables are made: a retry of this attempt knows them for its own
+	if _, err := cloud.Exec(ctx, "INSERT INTO lokadb.attempts (db_id, org) VALUES ($1, $2)", o.dbID, o.Org); err != nil {
+		return err
+	}
+	known[o.dbID] = true
 
 	log.Info("step 2/6: customer schema", "host", cc.Host, "db", cc.Database)
 	if err := dropSubscription(ctx, cust, cloud, sub, slot); err != nil {
@@ -444,7 +463,7 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	if err := checkReturned(ctx, cloud, cust, tables, o.CustomerSchema); err != nil {
 		return fmt.Errorf("customer database: %w", err)
 	}
-	if err := customerSchema(ctx, cust, tables, app.User, o.CustomerSchema, append(markerDDL, custDDL...), o.DropReturned, log); err != nil {
+	if err := customerSchema(ctx, cust, tables, app.User, o.CustomerSchema, append(markerDDL, custDDL...), o.DropReturned, known, log); err != nil {
 		return fmt.Errorf("customer database: %w", err)
 	}
 
@@ -729,6 +748,52 @@ func finishMove(ctx context.Context, cloud, marker, cust *pgx.Conn, o MoveOption
 	}
 	log.Info("source partitions dropped from the cloud database")
 	return nil
+}
+
+// finishInterrupted ends a move that was cut off after its switch committed (R4-21): the
+// organization's rows from before the move are still in the cloud, in <table>__o<N>_source. They
+// are compared with the organization's database as it is now and dropped when equal; when they
+// differ (the organization has written since: nothing to tell a difference from a damaged copy)
+// they are kept and the error says so. Without -retain-source only. done: they were dropped.
+func finishInterrupted(ctx context.Context, cloud, cust *pgx.Conn, o MoveOptions, custVer int, log *slog.Logger) (bool, error) {
+	if o.RetainSource {
+		return false, nil
+	}
+	tables, _, err := describe(ctx, cloud, o.Spec, o.org(), custVer)
+	if err != nil {
+		return false, err
+	}
+	var left []moveTable
+	for _, t := range tables {
+		r, err := rowsOf(ctx, cloud, `SELECT (to_regclass($1) IS NOT NULL)::text`, qr(t.retired()))
+		if err != nil {
+			return false, err
+		}
+		if r[0][0] == "true" {
+			left = append(left, t)
+		}
+	}
+	if len(left) == 0 {
+		return false, nil
+	}
+	log.Info("organization is in its own database, and a move cut off after its switch left the rows it had in the cloud: comparing them with the organization's database", "tables", len(left))
+	same, err := compare(ctx, cloud, cust, left, func(t moveTable) string { return t.retired() }, func(t moveTable) string { return t.name })
+	if err != nil {
+		return false, fmt.Errorf("verifying the rows an interrupted move left in the cloud: %w", err)
+	}
+	if !same {
+		return false, fmt.Errorf("organization %d is already in its own database, and the rows a move cut off after its switch left in the cloud (%s__o%d_source) differ from its database now "+
+			"(it has written since, or the copy was damaged): kept; compare them and drop them by hand", o.Org, left[0].name, o.Org)
+	}
+	var drops []string
+	for i := len(left) - 1; i >= 0; i-- {
+		drops = append(drops, "DROP TABLE "+qr(left[i].retired()))
+	}
+	if err := execAll(ctx, cloud, drops); err != nil {
+		return false, err
+	}
+	log.Info("the rows the interrupted move left in the cloud equal the organization's database: dropped from the cloud database")
+	return true, nil
 }
 
 // analyzeForeign gives the organization's new foreign partitions their statistics. Postgres
@@ -1136,6 +1201,7 @@ func finishSwitch(ctx context.Context, tx pgx.Tx, cust, snap *pgx.Conn, o MoveOp
 	steps = append(steps, "SELECT lokadb.fk_cloud_sync()")
 	// the children's __refs on a parent's cascade, for the new foreign partitions (fkcascade.go)
 	steps = append(steps, "SELECT lokadb.fk_cascade_sync()")
+	steps = append(steps, fmt.Sprintf("DELETE FROM lokadb.attempts WHERE org = %d", o.Org))
 	steps = append(steps, fmt.Sprintf("INSERT INTO lokadb.orgs (org, server, schema, db_id) VALUES (%d, %s, %s, %s)", o.Org, lit(server), lit(o.CustomerSchema), nullLit(o.dbID)))
 	// a user mapping for every role that may read the tables, also through a role it is a
 	// member of (mappedRoles has the roles granted directly)
@@ -1370,7 +1436,7 @@ const TableMark = "lokadb:"
 // customerSchema (re)creates the staging tables in the customer database. The organization
 // is still served from the cloud at this point, so leftovers of a failed attempt are dropped.
 // A table of the same name without TableMark belongs to the customer and stops the move.
-func customerSchema(ctx context.Context, cust *pgx.Conn, tables []moveTable, owner, schema string, ddl []string, dropReturned bool, log *slog.Logger) error {
+func customerSchema(ctx context.Context, cust *pgx.Conn, tables []moveTable, owner, schema string, ddl []string, dropReturned bool, known map[string]bool, log *slog.Logger) error {
 	tx, err := cust.Begin(ctx)
 	if err != nil {
 		return err
@@ -1393,6 +1459,12 @@ func customerSchema(ctx context.Context, cust *pgx.Conn, tables []moveTable, own
 				if other := markedOrg(mark); other > 0 && other != t.org {
 					return fmt.Errorf("table %s in schema %s holds organization %d (moved here by lokadb): organization %d cannot take its name; "+
 						"give it another database, or another schema (-customer-schema)", nameOf(name), custSchemaOf(name, schema), other, t.org)
+				}
+			}
+			// the same organization's table made by another cloud database: not this attempt's leftover (R4-1)
+			if err == nil && t.org > 0 && isOrgMark(mark, t.org) {
+				if id := markedDBID(mark); id != "" && !known[id] {
+					return fmt.Errorf("%s", ForeignDBMessage(t.org, []string{fmt.Sprintf("%s.%s (database %s)", custSchemaOf(name, schema), nameOf(name), id)}))
 				}
 			}
 			if err == nil && !strings.HasPrefix(mark, TableMark) {

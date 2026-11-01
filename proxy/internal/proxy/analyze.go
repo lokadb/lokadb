@@ -42,6 +42,9 @@ type Analysis struct {
 	// UnhintedTable: the first LokaDB table found without a restriction; Write: the statement
 	// inserts, updates or deletes rows of a LokaDB table.
 	UnhintedTable string
+	// UnhintedTables: every LokaDB table found without a restriction, in the order found (a decision about a
+	// table covers the statement only when it stands at each of them).
+	UnhintedTables []string
 	// Gaps: why each unhinted scope names no organization (empty when Unhinted is false).
 	Gaps  []Gap
 	Write bool
@@ -132,6 +135,12 @@ func (a *Analysis) unhinted(table string) {
 	if a.UnhintedTable == "" {
 		a.UnhintedTable = table
 	}
+	for _, t := range a.UnhintedTables {
+		if t == table {
+			return
+		}
+	}
+	a.UnhintedTables = append(a.UnhintedTables, table)
 }
 
 // changesLookups: see Analysis.ChangesLookups.
@@ -1155,8 +1164,10 @@ func (a *Analysis) scan(n *pg.Node, m *Meta) {
 	var funcs []string
 	defer func() {
 		// A function over LokaDB tables runs under the statement's organization, if it has one.
+		// It may write (what it does is not in the statement), so it counts as a write, as a
+		// DO block does: reject-writes and a "read" decision must not let it run everywhere.
 		if len(funcs) > 0 {
-			a.Lokadb = true
+			a.Lokadb, a.Write = true, true
 			if len(a.Hints) == hints {
 				a.unhinted(funcs[0] + "()")
 				for _, f := range funcs {
@@ -1218,7 +1229,7 @@ func (a *Analysis) scan(n *pg.Node, m *Meta) {
 			sc := newScope(m)
 			sc.addRel(s.Relation)
 			sc.collect(s.SourceRelation)
-			a.Write = a.Write || m.table(s.Relation) != nil
+			a.Write = a.Write || m.table(s.Relation) != nil || m.view(s.Relation) != nil
 			a.scope(sc, s.JoinCondition, m)
 		case *pg.InsertStmt:
 			if t := m.table(s.Relation); t != nil {

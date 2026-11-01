@@ -654,7 +654,7 @@ func (s *session) writeDirect(dc *directConn, org string, di *directInfo, vals v
 			t.KeyDefault, n, refs, t.orgLit(org))))
 	}
 	c := s.cloudRunStmts(qs...)
-	rollback := func() { s.cloudRun("ROLLBACK") }
+	rollback := func() { s.cloudRollback() }
 	if c.err != nil || len(c.rows) < 2 || len(c.rows[1]) != 3 || !s.gateAllows(c.rows[1], org, di) {
 		rollback()
 		if r := c.resp; r != nil && (strings.HasPrefix(r.Code, "57") || r.Code == "55P03" || r.Code == "40P01") {

@@ -414,18 +414,19 @@ type session struct {
 	orgDirty       atomic.Bool // an error since: upOrg may have been rolled back (set by the relay)
 	// DDL the cloud ran in the open transaction, not replayed yet (see ddl.go); written by
 	// the relay goroutine, under ddlMu.
-	ddlMu      sync.Mutex
-	ddlPending []string
-	savepts    []savept
-	ddlOpen    bool                         // DDL was sent in this transaction (its responses may still be on the way)
-	orgCache   map[string]map[string]string // refs table -> id -> tenant: the session's own (orgcache.go: ownOrgs, or no process cache)
-	ownOrgs    bool                         // the open transaction changed what lookups answer: the session's own cache until it ends
-	orgVer     int64                        // orgVersion(db) the cache is valid for; orgAt: when it was emptied
-	orgAt      time.Time
-	anCache    *byteCache[string, *Analysis] // by text, bounded in bytes (bytecache.go)
-	anSeen     seenSet                       // texts met once: kept from the second sighting
-	track      *txTracker                    // nil unless the workload is recorded
-	fanout     *Fanout                       // policy for statements that name no organization
+	ddlMu        sync.Mutex
+	ddlPending   []string
+	savepts      []savept
+	ddlOpen      bool                         // DDL was sent in this transaction (its responses may still be on the way)
+	orgCache     map[string]map[string]string // refs table -> id -> tenant: the session's own (orgcache.go: ownOrgs, or no process cache)
+	ownOrgs      bool                         // the open transaction changed what lookups answer: the session's own cache until it ends
+	lookupsMoved atomic.Bool                  // a statement that changes lookups ran: orgVersion moves again when it is over (ReadyForQuery 'I')
+	orgVer       int64                        // orgVersion(db) the cache is valid for; orgAt: when it was emptied
+	orgAt        time.Time
+	anCache      *byteCache[string, *Analysis] // by text, bounded in bytes (bytecache.go)
+	anSeen       seenSet                       // texts met once: kept from the second sighting
+	track        *txTracker                    // nil unless the workload is recorded
+	fanout       *Fanout                       // policy for statements that name no organization
 	// tenant: the organization the application named (lokadb.tenant, the cooperative mode,
 	// tenant.go), as the statements sent so far leave it; tenantImpl: an implicit transaction
 	// of a pipeline is open in its view (SET LOCAL lasts until its Sync).
@@ -914,7 +915,7 @@ func (s *session) handleQuery(sql string) {
 	}
 	evs := an.Events
 	if s.refuseNamed(sql, an, false, named) {
-		_ = s.send([]outMsg{{msg: &pgproto3.Query{String: s.fanout.raiseSQL(an)}}})
+		_ = s.send([]outMsg{{msg: &pgproto3.Query{String: s.policy().raiseSQL(an)}}})
 		return
 	}
 	// profile fdw+direct: straight to the organization's database (direct_session.go; a COPY
@@ -998,7 +999,7 @@ func (s *session) handleQuery(sql string) {
 					return
 				}
 				if unknown && s.refuseNamed(sql, an, true, named) {
-					_ = s.send([]outMsg{{msg: &pgproto3.Query{String: s.fanout.raiseSQL(an)}}})
+					_ = s.send([]outMsg{{msg: &pgproto3.Query{String: s.policy().raiseSQL(an)}}})
 					return
 				}
 			}
@@ -1460,7 +1461,7 @@ func (s *session) handleBatch(final pgproto3.FrontendMessage) {
 		}
 		// A refused statement: the server raises the error before the client's Bind and skips the rest of the batch.
 		if s.refuseNamed(e.st.sql, an, false, named) {
-			inject[e.idx] = append(inject[e.idx], raise(s.fanout.raiseSQL(an))...)
+			inject[e.idx] = append(inject[e.idx], raise(s.policy().raiseSQL(an))...)
 			refused = true
 			continue
 		}
@@ -1524,14 +1525,14 @@ func (s *session) handleBatch(final pgproto3.FrontendMessage) {
 			}
 			// Inside a pipeline without Sync (P3) the refs cannot be read: the statement would
 			// run in every organization's database, which is the fanout policy's to allow.
-			if v := s.fanout.decide(e.st.sql, an, true); incomplete && txNow != 'E' && (v == FanoutRefused || v == FanoutDenied) {
+			if v := s.policy().decide(e.st.sql, an, true); incomplete && txNow != 'E' && (v == FanoutRefused || v == FanoutDenied) {
 				s.log.Warn("refused: its organization needs a lookup inside a pipeline", "table", fanoutTable(an), "sql", brief(e.st.sql))
 				inject[e.idx] = append(inject[e.idx], raise(raiseSQL(lookupMsg))...)
 				refused = true
 				continue
 			}
 			if unknown && s.refuseNamed(e.st.sql, an, true, named) {
-				inject[e.idx] = append(inject[e.idx], raise(s.fanout.raiseSQL(an))...)
+				inject[e.idx] = append(inject[e.idx], raise(s.policy().raiseSQL(an))...)
 				refused = true
 				continue
 			}
@@ -2149,6 +2150,17 @@ func (s *session) resolveOrg(an *Analysis, vals valuesFunc, lookup bool) (org st
 	if org, ok := s.tenantNamed(an, vals); ok {
 		return org, false, false, nil
 	}
+	// read: what this statement's lookup found. The second pass takes it from here, not from the
+	// cache: a lookup's rows may not have been kept there (another session changed lookups
+	// meanwhile, the bound, orgCacheTTL), and an id found must not become one found nowhere,
+	// '-1' (third review R4-3).
+	var read map[string]map[string]string
+	orgOf := func(refs, x string) (string, bool) {
+		if o, ok := read[refs][x]; ok {
+			return o, true
+		}
+		return s.orgOf(refs, x)
+	}
 	for pass := 0; pass < 2; pass++ {
 		orgs := map[string]bool{}
 		missing := map[string][]string{}
@@ -2176,7 +2188,7 @@ func (s *session) resolveOrg(an *Analysis, vals valuesFunc, lookup bool) (org st
 					seen++
 					if refs == "" {
 						orgs[x] = true
-					} else if o, ok := s.orgOf(refs, x); ok {
+					} else if o, ok := orgOf(refs, x); ok {
 						orgs[o] = true
 					} else {
 						missing[refs] = append(missing[refs], x)
@@ -2219,7 +2231,7 @@ func (s *session) resolveOrg(an *Analysis, vals valuesFunc, lookup bool) (org st
 						continue
 					}
 					x := tupleKey(k)
-					if o, ok := s.orgOf(refs, x); ok {
+					if o, ok := orgOf(refs, x); ok {
 						orgs[o] = true
 					} else {
 						missing[refs] = append(missing[refs], x)
@@ -2231,7 +2243,7 @@ func (s *session) resolveOrg(an *Analysis, vals valuesFunc, lookup bool) (org st
 			if !lookup {
 				return "", true, false, nil
 			}
-			if err := s.lookup(missing); err != nil {
+			if read, err = s.lookup(missing); err != nil {
 				return "", false, false, err
 			}
 			continue
@@ -2328,6 +2340,7 @@ func (s *session) freshOrgs(an *Analysis) {
 	v := orgVersion(s.db)
 	if an.ChangesLookups {
 		v.Add(1)
+		s.lookupsMoved.Store(true)
 	}
 	switch inTx := s.txStatus() != 'I' || s.direct.tx != nil || s.direct.deferred.Load(); { // a deferred BEGIN is the client's transaction too
 	case !inTx:
@@ -2344,12 +2357,13 @@ func (s *session) freshOrgs(an *Analysis) {
 	}
 }
 
-// lookup reads the tenants of ids from the refs tables into orgCache. In a failed
-// transaction nothing can be read; the statement fails there anyway.
-func (s *session) lookup(missing map[string][]string) error {
+// lookup reads the tenants of ids from the refs tables, keeps them (keepOrgs) and returns
+// them, refs table -> id -> tenant. In a failed transaction nothing can be read; the statement
+// fails there anyway.
+func (s *session) lookup(missing map[string][]string) (map[string]map[string]string, error) {
 	tx := s.txStatus()
 	if tx == 'E' {
-		return nil
+		return nil, nil
 	}
 	n := 0
 	for _, c := range s.orgCache {
@@ -2359,11 +2373,14 @@ func (s *session) lookup(missing map[string][]string) error {
 		s.orgCache = map[string]map[string]string{}
 	}
 	ver := orgVersion(s.db).Load() // what the lookups read is kept only if nothing changed meanwhile
+	read := make(map[string]map[string]string, len(missing))
 	for refs, ids := range missing {
 		if kinds := s.meta.tupleKinds(refs); kinds != nil { // a composite key (tuples.go)
-			if err := s.lookupTuples(refs, kinds, ids, tx, ver); err != nil {
-				return err
+			found, err := s.lookupTuples(refs, kinds, ids, tx, ver)
+			if err != nil {
+				return nil, err
 			}
+			read[refs] = found
 			continue
 		}
 		// An integer key's values go as numbers (canonicalInt: digits alone): one past int8 is
@@ -2389,20 +2406,21 @@ func (s *session) lookup(missing map[string][]string) error {
 		rows, err := s.lookupQuery(q, tx == 'T')
 		if err != nil {
 			s.log.Warn("refs lookup failed", "refs", refs, "err", err)
-			return fmt.Errorf("could not find the organization of the referenced rows: %w", err)
+			return nil, fmt.Errorf("could not find the organization of the referenced rows: %w", err)
 		}
 		got := make(map[string]string, len(rows))
 		for _, r := range rows {
 			got[r[0]] = r[1]
 		}
 		s.keepOrgs(refs, ver, got)
+		read[refs] = got
 	}
-	return nil
+	return read, nil
 }
 
 // lookupTuples reads the organizations of composite keys (tupleKey) from refs table refs,
 // whose columns id_1 … id_n hold them.
-func (s *session) lookupTuples(refs string, kinds []string, keys []string, tx byte, ver int64) error {
+func (s *session) lookupTuples(refs string, kinds []string, keys []string, tx byte, ver int64) (map[string]string, error) {
 	var rows, cols, sel []string
 	for i := range kinds {
 		cols = append(cols, fmt.Sprintf("id_%d", i+1))
@@ -2424,21 +2442,21 @@ func (s *session) lookupTuples(refs string, kinds []string, keys []string, tx by
 		rows = append(rows, "("+strings.Join(lits, ", ")+")")
 	}
 	if len(rows) == 0 {
-		return nil
+		return nil, nil
 	}
 	q := fmt.Sprintf("SELECT %s, coalesce(tenant::text, %s) FROM %s WHERE (%s) IN (%s)",
 		strings.Join(sel, ", "), sqlString(noOrg), qrel(refs), strings.Join(cols, ", "), strings.Join(rows, ", "))
 	got, err := s.lookupQuery(q, tx == 'T')
 	if err != nil {
 		s.log.Warn("refs lookup failed", "refs", refs, "err", err)
-		return fmt.Errorf("could not find the organization of the referenced rows: %w", err)
+		return nil, fmt.Errorf("could not find the organization of the referenced rows: %w", err)
 	}
 	found := make(map[string]string, len(got))
 	for _, r := range got {
 		found[tupleKey(r[:len(kinds)])] = r[len(kinds)]
 	}
 	s.keepOrgs(refs, ver, found)
-	return nil
+	return found, nil
 }
 
 // lookupQuery runs a refs lookup; inside the client's transaction under a savepoint, so
@@ -2555,15 +2573,15 @@ func (s *session) capture(sql string) ([][]string, error) {
 // refuse applies the fanout policy: true if the statement must not run. unknown: the
 // statement has an organization restriction, but its values are not organization numbers.
 func (s *session) refuse(sql string, an *Analysis, unknown bool) bool {
-	v := s.fanout.Decide(sql, an)
+	v := s.policy().Decide(sql, an)
 	if unknown {
-		v = s.fanout.decide(sql, an, true)
+		v = s.policy().decide(sql, an, true)
 	}
 	switch v {
 	case FanoutRefused:
-		l := s.srv.unrouted.note(s.db, sql, an, true)
+		l := s.srv.unrouted.note(s.db, sql, s.fanout.openView(an), true)
 		if l.first || l.refused {
-			s.log.Warn("refused: the statement names no customer; decide it in the panel (setup, step 5)", "table", fanoutTable(an), "policy", s.fanout.Mode,
+			s.log.Warn("refused: the statement names no customer; decide it in the panel (setup, step 5)", "table", fanoutTable(an), "policy", s.policy().Mode,
 				"gap", an.GapText(), "sql", brief(sql), "refused_since_last_line", l.since)
 		}
 		s.logUnroutedSummary(l)
@@ -2571,7 +2589,7 @@ func (s *session) refuse(sql string, an *Analysis, unknown bool) bool {
 	case FanoutDenied: // decided in the panel: refused, and not asked about again
 		return true
 	case FanoutRun:
-		l := s.srv.unrouted.note(s.db, sql, an, false)
+		l := s.srv.unrouted.note(s.db, sql, s.fanout.openView(an), false)
 		if l.first && s.fanout.Mode == FanoutLog {
 			s.log.Warn("a statement names no customer (logged; refused once a customer has moved unless you decide it): decide it in the panel (setup, step 5)",
 				"table", fanoutTable(an), "sql", brief(sql))
@@ -2838,6 +2856,12 @@ func (s *session) route(msg pgproto3.BackendMessage, skip *bool) {
 	case *pgproto3.ReadyForQuery:
 		if prev := s.tx.Swap(uint32(m.TxStatus)); prev != 'I' && m.TxStatus == 'I' {
 			s.pathTxEnd()
+		}
+		// The change of lookups is committed (or rolled back) now, not when the statement began:
+		// what another session read in between, the committed rows of before, went to the
+		// process cache under the version of then, and goes now (third review R4-22).
+		if m.TxStatus == 'I' && s.lookupsMoved.Swap(false) {
+			orgVersion(s.db).Add(1)
 		}
 		done = h.kind == kQuery || h.kind == kSync || h.kind == kFunc
 		if h.kind == kSync {

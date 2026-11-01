@@ -241,30 +241,30 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		return fmt.Errorf("%w\n  already split out of DEFAULT, and left so (their rows are in their partitions <table>__o%d): %s; the next move-org goes on with the other tables",
 			err, o.Org, strings.Join(done, ", "))
 	}
+	// One snapshot for all the tables (R4-7): each copy taken at its own would hold changes the
+	// next table's log replays again, in the order they were made and through states the
+	// database never had (a UNIQUE value made, deleted and made again; a parent made and deleted
+	// under its child's FK). The log's entries that snapshot sees are in the copies already:
+	// applyLog leaves them out (logCursor.copy).
 	copyDeadline := time.Now().Add(o.copyTimeout())
+	snapID, copySnap, endSnap, err := exportSnapshot(ctx, o)
+	if err != nil {
+		dropAll()
+		return fmt.Errorf("split out of DEFAULT: the snapshot of the copy: %w", err)
+	}
+	defer endSnap()
 	for _, t := range tables {
 		def := hn(t.name, "__cloud")
 		cols, err := copyColsOf(ctx, cloud, def)
 		if err == nil {
-			err = splitCopy(ctx, cloud, o, t.name, def, t.local(), o.org().Key(t.tenant), cols, copyDeadline, log)
+			err = splitCopy(ctx, cloud, o, t.name, def, t.local(), o.org().Key(t.tenant), cols, snapID, copyDeadline, log)
 		}
 		if err != nil {
 			dropAll()
 			return fmt.Errorf("split %s out of DEFAULT: copying the rows: %w; they stay in DEFAULT", t.name, err)
 		}
 	}
-	for _, t := range tables {
-		// NOT VALID takes the referenced table for a moment; the validation reads the copy and
-		// holds nobody back (the organization still writes, the others too)
-		if err := lockedDDL(ctx, cloud, o, later[t.name]); err != nil {
-			dropAll()
-			return fmt.Errorf("split %s out of DEFAULT: the FKs of its partition: %w; the rows stay in DEFAULT", t.name, err)
-		}
-		if err := execAll(ctx, cloud, validate[t.name]); err != nil {
-			dropAll()
-			return fmt.Errorf("split %s out of DEFAULT: the FKs of its partition: %w; the rows stay in DEFAULT", t.name, err)
-		}
-	}
+	endSnap()
 	// the copy has no statistics (no autovacuum on it): the comparison and the locks of the last
 	// transaction plan their joins from them
 	for _, t := range tables {
@@ -273,7 +273,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 		}
 	}
 	// what changed meanwhile, the organization still writing (rounds until the log is short)
-	cur := &logCursor{}
+	cur := &logCursor{copy: copySnap}
 	for {
 		if err := captureOK(ctx, cloud, o.Org); err != nil {
 			dropAll()
@@ -319,7 +319,7 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 	// The CHECK waits for the transactions of DEFAULT still open, so after it no change of the
 	// organization's rows of the table is in flight; what they logged is applied before the
 	// last transaction drops the copies of rows gone.
-	cur = &logCursor{}
+	cur = &logCursor{copy: copySnap}
 	for _, t := range tables {
 		if g := guard[t.name]; g != "" {
 			if err := lockedDDL(ctx, cloud, o, []string{g}); err != nil {
@@ -340,6 +340,17 @@ func splitOnline(ctx context.Context, cloud *pgx.Conn, o MoveOptions, todo []Spe
 			if n == 0 {
 				break
 			}
+		}
+		// Without session_replication_role the FKs of the partition come now, with the log applied to
+		// its end and the organization paused: before, the log's inserts were checked against the
+		// referenced rows of the present (a parent made and deleted meanwhile is gone: R4-7), and the
+		// validation against a copy that still held rows the log deletes. NOT VALID takes the
+		// referenced table for a moment; the validation holds nobody back.
+		if err := lockedDDL(ctx, cloud, o, later[t.name]); err != nil {
+			return fail(fmt.Errorf("split %s out of DEFAULT: the FKs of its partition: %w", t.name, err))
+		}
+		if err := execAll(ctx, cloud, validate[t.name]); err != nil {
+			return fail(fmt.Errorf("split %s out of DEFAULT: the FKs of its partition: %w", t.name, err))
 		}
 		if err := splitTable(ctx, cloud, o, t.name, t.tenant, pausedAt, log); err != nil {
 			return fail(fmt.Errorf("split %s out of DEFAULT: %w", t.name, err))
@@ -851,7 +862,7 @@ func splitTable(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, tc strin
 
 // splitCopy copies the organization's rows of DEFAULT into its partition from one snapshot,
 // BatchRows per transaction, reporting progress.
-func splitCopy(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, def, part, key string, cols []string, deadline time.Time, log *slog.Logger) error {
+func splitCopy(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, def, part, key string, cols []string, snapID string, deadline time.Time, log *slog.Logger) error {
 	cctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	reader, err := connect(cctx, o.CloudDSN)
@@ -864,6 +875,9 @@ func splitCopy(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, def, part
 		return err
 	}
 	defer snap.Rollback(context.Background()) //nolint:errcheck
+	if _, err := snap.Exec(cctx, "SET TRANSACTION SNAPSHOT "+lit(snapID)); err != nil {
+		return err
+	}
 	var total int64
 	if err := snap.QueryRow(cctx, fmt.Sprintf("SELECT count(*) FROM %s WHERE %s = %s", qr(def), key, o.org().Lit())).Scan(&total); err != nil {
 		return err
@@ -889,6 +903,33 @@ func splitCopy(ctx context.Context, cloud *pgx.Conn, o MoveOptions, t, def, part
 	}
 	p.done()
 	return nil
+}
+
+// exportSnapshot takes the snapshot every table's copy reads (R4-7): its id for SET TRANSACTION
+// SNAPSHOT, the same as pg_snapshot (the log's entries it sees are in the copies), and the end
+// that lets it go (after the last copy has begun; safe to call twice).
+func exportSnapshot(ctx context.Context, o MoveOptions) (id, snap string, end func(), err error) {
+	conn, err := connect(ctx, o.CloudDSN)
+	if err != nil {
+		return "", "", nil, err
+	}
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		conn.Close(context.Background())
+		return "", "", nil, err
+	}
+	if err := tx.QueryRow(ctx, "SELECT pg_export_snapshot(), pg_current_snapshot()::text").Scan(&id, &snap); err != nil {
+		conn.Close(context.Background())
+		return "", "", nil, err
+	}
+	done := false
+	return id, snap, func() {
+		if !done {
+			done = true
+			_ = tx.Rollback(context.Background())
+			conn.Close(context.Background())
+		}
+	}, nil
 }
 
 // dropCopy removes the copy this attempt made of the organization's rows (the partition, with its

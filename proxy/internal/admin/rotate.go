@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -154,7 +155,12 @@ func (r *rotation) one(kind, dsn string) (string, error) {
 		return "", err
 	}
 	if _, err := cust.Exec(r.ctx, "ALTER ROLE CURRENT_USER PASSWORD "+lit(scramVerifier(pass))); err != nil {
-		_, _ = r.cp.Exec(r.ctx, `UPDATE lokadb_cp.cred_rotations SET next = NULL WHERE installation = $1 AND db = $2 AND org = $3 AND kind = $4`, r.inst, r.db, r.org, kind)
+		// only the server's own refusal proves the password did not change; a connection cut after the command went
+		// may have run it, and next is what the following rotation finds the role by
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			_, _ = r.cp.Exec(r.ctx, `UPDATE lokadb_cp.cred_rotations SET next = NULL WHERE installation = $1 AND db = $2 AND org = $3 AND kind = $4`, r.inst, r.db, r.org, kind)
+		}
 		return "", fmt.Errorf("ALTER ROLE %s PASSWORD at the customer: %w", role, err)
 	}
 	return role, r.finish(kind, role, nd)

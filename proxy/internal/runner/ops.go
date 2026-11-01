@@ -251,6 +251,13 @@ func (o *Ops) Prepare(ctx context.Context, a cloudproto.PrepareArgs) (cloudproto
 		if a.InstallerKey == "" {
 			return res, errors.New("agent.prepare: no installer key to seal the enrollment token to")
 		}
+		// an organization that is moved already has its agent: a new token would put another one in its place, and
+		// the service's connections to the customer's database would go to it (review 4, R4-29)
+		if moved, err := o.orgIsMoved(ctx, a.Org); err != nil {
+			return res, err
+		} else if moved {
+			return res, &cloudproto.JobError{Code: "already_moved", Message: fmt.Sprintf("agent.prepare: organization %d is moved already and has its agent: a new one is not set up from here", a.Org)}
+		}
 		if _, _, err := o.Tun.Revoke(ctx, org, ""); err != nil {
 			return res, err
 		}
@@ -267,6 +274,22 @@ func (o *Ops) Prepare(ctx context.Context, a cloudproto.PrepareArgs) (cloudproto
 	}
 	res.Extensions, err = o.Extensions(ctx)
 	return res, err
+}
+
+// orgIsMoved: the organization is in lokadb.orgs of the SaaS database.
+func (o *Ops) orgIsMoved(ctx context.Context, org int64) (bool, error) {
+	conn, err := ownsql.Connect(ctx, o.Cfg.DB)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close(context.Background())
+	var has bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('lokadb.orgs') IS NOT NULL`).Scan(&has); err != nil || !has {
+		return false, err
+	}
+	var moved bool
+	err = conn.QueryRow(ctx, `SELECT EXISTS (SELECT FROM lokadb.orgs WHERE org = $1)`, org).Scan(&moved)
+	return moved, err
 }
 
 func (o *Ops) relayInfo() (cloudproto.RelayInfo, error) {

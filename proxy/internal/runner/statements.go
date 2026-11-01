@@ -685,14 +685,19 @@ var writeConfig = writeFileAtomicOrInPlace
 // writeFileAtomicOrInPlace replaces the file through a temporary one; where that cannot be (the file itself is
 // bind-mounted into the container, or its directory is not writable) it is written in place.
 func writeFileAtomicOrInPlace(path string, b []byte) error {
+	perm := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm() // the person's file keeps its rights (a 0600 config does not become world-readable)
+	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err == nil {
+	if err := os.WriteFile(tmp, b, perm); err == nil {
+		_ = os.Chmod(tmp, perm)
 		if err := os.Rename(tmp, path); err == nil {
 			return nil
 		}
 		_ = os.Remove(tmp)
 	}
-	return os.WriteFile(path, b, 0o644)
+	return os.WriteFile(path, b, perm)
 }
 
 // effectiveFanoutMode is the policy in force for the application's database: the panel's choice, else the

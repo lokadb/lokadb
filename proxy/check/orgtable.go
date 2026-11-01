@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -347,12 +348,13 @@ var pivotColumns = map[string]bool{"created_at": true, "updated_at": true, "dele
 
 // linkTable: s has one foreign key to the organizations table and no data of its own: its other
 // foreign keys all go to tables that do not reach it (tenant_users: tenant_id -> tenants,
-// user_id -> users), and what else it holds is a role or a timestamp.
-func (g *orgGraph) linkTable(s, org string, reach map[string]bool) (others []string, ok bool) {
+// user_id -> users), and what else it holds is a role or a timestamp. byName: references by
+// the columns' names, taken as foreign keys.
+func (g *orgGraph) linkTable(s, org string, reach map[string]bool, byName ...orgFK) (others []string, ok bool) {
 	t := g.tabs[s]
 	n := 0
 	fkc := map[string]bool{}
-	for _, f := range g.fks {
+	for _, f := range append(slices.Clone(g.fks), byName...) {
 		if f.src != s {
 			continue
 		}
@@ -754,6 +756,12 @@ func (r *orgRun) byNames() error {
 			continue
 		}
 		if ok[0].dst == r.org {
+			// a membership table without foreign keys (Laravel Jetstream's team_user) is one by
+			// its columns' names, like one with them (review 3, R4-40)
+			if others, link := g.linkTable(s, r.org, g.reaches(r.org, nil, true), g.nameEdges(s)...); link {
+				r.linkRole(s, ok[0].col, others)
+				continue
+			}
 			r.choose(s, &orgNode{col: ok[0].col, basis: "name"})
 			r.byName = append(r.byName, s)
 			continue

@@ -290,9 +290,8 @@ func (r *Runner) applySettings() {
 	if changed {
 		r.Log.Info("the panel's settings applied", "relay", s.RelayPublic, "owner", s.Owner, "spec", len(s.Spec) > 0)
 	}
-	if r.Cfg.RestartRequested() && r.Stop != nil {
-		r.Log.Warn("ending the process to start it again with the new proxy setting")
-		r.Stop()
+	if r.Cfg.RestartRequested() {
+		r.restartWhenIdle("the new proxy setting")
 	}
 }
 
@@ -674,6 +673,9 @@ func ValidatePublicProxy(p *cloudproto.PublicProxy) error { return p.Validate() 
 // proxy off. It reports a change. A proxy that is already running is restarted (the process exits,
 // and its supervisor starts it again: a second of reconnecting for the application).
 func (c *Config) applyPublicProxy() bool {
+	if !c.Embedded {
+		return false // a proxy of its own is the person's: its tls and allow are theirs, the panel's public proxy is for the pasted one (R4-13)
+	}
 	if !c.publicKnown {
 		return false // a restart must not wipe what was applied before the panel's settings come
 	}

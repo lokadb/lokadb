@@ -466,20 +466,26 @@ func applyKeys(r *runner, spec Spec, tables map[string]string, want map[string]b
 			if err != nil {
 				return err
 			}
+			// The trigger comes before the fill, as in enable -prepare: CREATE TRIGGER waits for the
+			// transactions that have written the table, so a value they wrote is committed by the time
+			// the fill reads it, and every later one goes through the trigger. The other way round
+			// a value written meanwhile was in neither.
 			steps := []string{
 				fmt.Sprintf("CREATE TABLE lokadb.%s (id text PRIMARY KEY, tenant %s)", q(kt), tenantType(dbKind)),
-				fmt.Sprintf("INSERT INTO lokadb.%s SELECT %s::text, %s FROM %s WHERE %s IS NOT NULL", q(kt), q(k.Column), q(tables[k.Table]), qr(k.Table), q(k.Column)),
 				fmt.Sprintf("SELECT lokadb.owner_to('TABLE', %s, %s)", lit("lokadb."+q(kt)), lit(owner[0][0])),
-				fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.key_sync(%s, %s, %s)",
-					q("lokadb_key_"+k.Column), trigCols(k.Column, tables[k.Table]), qr(k.Table), lit(kt), lit(k.Column), lit(tables[k.Table])),
-				fmt.Sprintf(`INSERT INTO lokadb.lookups VALUES (%s, %s, %s) ON CONFLICT (table_name, column_name) DO UPDATE SET refs_table = EXCLUDED.refs_table`,
-					lit(k.Table), lit(k.Column), lit("lokadb."+kt)),
-				fmt.Sprintf(`INSERT INTO lokadb.routing VALUES ('key', %s, %s, %s)`, lit(k.Table), lit(k.Column), lit(kt)),
 			}
 			for _, g := range grantees {
 				// writers fire the trigger, readers are looked up by the proxy as themselves
 				steps = append(steps, fmt.Sprintf("GRANT SELECT, INSERT, DELETE ON lokadb.%s TO %s", q(kt), g[0]))
 			}
+			steps = append(steps,
+				fmt.Sprintf("CREATE TRIGGER %s AFTER INSERT OR DELETE OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION lokadb.key_sync(%s, %s, %s)",
+					q("lokadb_key_"+k.Column), trigCols(k.Column, tables[k.Table]), qr(k.Table), lit(kt), lit(k.Column), lit(tables[k.Table])),
+				fmt.Sprintf("INSERT INTO lokadb.%s SELECT %s::text, %s FROM %s WHERE %s IS NOT NULL ON CONFLICT (id) DO NOTHING", q(kt), q(k.Column), q(tables[k.Table]), qr(k.Table), q(k.Column)),
+				fmt.Sprintf(`INSERT INTO lokadb.lookups VALUES (%s, %s, %s) ON CONFLICT (table_name, column_name) DO UPDATE SET refs_table = EXCLUDED.refs_table`,
+					lit(k.Table), lit(k.Column), lit("lokadb."+kt)),
+				fmt.Sprintf(`INSERT INTO lokadb.routing VALUES ('key', %s, %s, %s)`, lit(k.Table), lit(k.Column), lit(kt)),
+			)
 			for _, s := range steps {
 				if err := r.exec(s); err != nil {
 					return err

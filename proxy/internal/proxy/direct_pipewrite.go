@@ -264,7 +264,7 @@ func (s *session) pipeWrite(org string, units []*pipeUnit, dis []*directInfo, dc
 		s.log.Warn("organization's database connection lost in a pipeline: both sides roll back", "org", org, "err", err)
 		e := &pgproto3.ErrorResponse{Severity: "ERROR", Code: "08006", Message: "lokadb: the connection to organization " + org + "'s database was lost: " + err.Error()}
 		if implicit {
-			s.cloudRun("ROLLBACK")
+			s.cloudRollback()
 			s.endTx()
 			s.toClient(e)
 			s.toClient(s.clientRFQ(s.txStatus()))

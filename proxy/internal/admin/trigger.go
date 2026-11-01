@@ -744,6 +744,7 @@ type logCursor struct {
 	last int64
 	snap string // pg_snapshot of the last read ("": none yet)
 	more bool   // the last round stopped at a limit (applyRoundEntries, applyRoundBytes): more is there
+	copy string // pg_snapshot the copy was read at ("": none): the entries it sees are in the copy, left out (the split, R4-7)
 }
 
 // noSnapshot: what an empty cursor's late part reads with (it matches no entry: seq <= 0)
@@ -772,12 +773,12 @@ const logCols = `seq, tbl, op::text, old_id, new_id, row::text, src`
 // fresh entry past $5 bytes of images before it, read without its image and left for the next
 // round (the first one never is: a row larger than the budget goes alone).
 const logRound = `(SELECT ` + logCols + `, false, false FROM lokadb.move_log
-		WHERE org = $1 AND seq <= $2 AND NOT pg_visible_in_snapshot(xid, $3::pg_snapshot))
+		WHERE org = $1 AND seq <= $2 AND NOT pg_visible_in_snapshot(xid, $3::pg_snapshot) AND NOT pg_visible_in_snapshot(xid, $6::pg_snapshot))
 	UNION ALL
 	(SELECT seq, tbl, op::text, old_id, new_id, CASE WHEN NOT over THEN f.row::text END, src, true, over FROM (
 		SELECT seq, tbl, op, old_id, new_id, row, src,
 			sum(coalesce(pg_column_size(row), 0)) OVER (ORDER BY seq) - coalesce(pg_column_size(row), 0) > $5 AS over
-		FROM lokadb.move_log WHERE org = $1 AND seq > $2 ORDER BY seq LIMIT $4) f)
+		FROM lokadb.move_log WHERE org = $1 AND seq > $2 AND NOT pg_visible_in_snapshot(xid, $6::pg_snapshot) ORDER BY seq LIMIT $4) f)
 	ORDER BY 1`
 
 // applyLog applies up to max entries of the log, in their order, in the organization's
@@ -800,7 +801,11 @@ func applyLog(ctx context.Context, src pgx.Tx, cloud *pgx.Conn, cust *pgx.Conn, 
 		prev = noSnapshot
 	}
 	read := func(qr pgx.Tx) error {
-		rows, err := qr.Query(ctx, logRound, o.Org, cur.last, prev, max, applyRoundBytes)
+		copied := cur.copy
+		if copied == "" {
+			copied = noSnapshot // sees nothing: no entry left out
+		}
+		rows, err := qr.Query(ctx, logRound, o.Org, cur.last, prev, max, applyRoundBytes, copied)
 		if err != nil {
 			return err
 		}
@@ -914,6 +919,9 @@ func applyLog(ctx context.Context, src pgx.Tx, cloud *pgx.Conn, cust *pgx.Conn, 
 		err = applySteps(ctx, cust, from, byName, steps, right.ok)
 	}
 	if err != nil {
+		if o.replica != nil { // the split applies it in the cloud
+			return 0, fmt.Errorf("cloud database: applying the log of the copy: %w", err)
+		}
 		return 0, fmt.Errorf("customer database: applying the move log: %w", err)
 	}
 	phase := "catch-up"
