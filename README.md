@@ -15,7 +15,7 @@ Enterprise customers increasingly ask a multi-tenant SaaS for the same thing: *"
 LokaDB is a Postgres wire-protocol proxy that takes a third way. Your application keeps one database connection string and keeps sending the SQL it sends today. LokaDB stores the rows of the tables you choose, for the organizations you choose, in **each organization's own Postgres**, and leaves everything else in your cloud database. Moving an organization out, and back, happens online while the application writes.
 
 
-> **Status:** early, in production at [KeepPlain](https://keepplain.com), our first pilot (a Laravel SaaS on Postgres). LokaDB works with any application that talks to Postgres over its protocol, in any language and with any ORM: only the connection string changes. What decides is your schema and your queries, not the framework, and `lokadb check` tells you before anything is changed. Every build is tested end to end under load with three unmodified applications (Laravel, Django, Go) and against more than 300 failure scenarios. See [What's supported](#whats-supported), [Limits](docs/limits.md) and [the roadmap](ROADMAP.md).
+> **Status:** early, in production at [KeepPlain](https://keepplain.com), our own Laravel SaaS on Postgres, where LokaDB started. LokaDB works with any application that talks to Postgres over its protocol, in any language and with any ORM: only the connection string changes. What decides is your schema and your queries, not the framework, and `lokadb check` tells you before anything is changed. Every build is tested end to end under load with three unmodified applications (Laravel, Django, Go) and against more than 300 failure scenarios. See [What's supported](#whats-supported), [Limits](docs/limits.md) and [the roadmap](ROADMAP.md).
 
 ---
 
@@ -84,10 +84,10 @@ The application only changes its connection string to point at the proxy (`host`
 
 ## What's supported
 
-- **Applications:** any application over the Postgres protocol, simple and extended (prepared statements, binary parameters), whatever the language or ORM. Tested end to end with unmodified **Laravel** (Eloquent, artisan migrate), **Django** (ORM, migrate) and **Go** (GORM over pgx); drivers tested: pgx, psycopg, JDBC, PDO.
+- **Applications:** any application over the Postgres protocol, simple and extended (prepared statements, binary parameters), whatever the language or ORM. Tested end to end with unmodified **Laravel** (Eloquent, artisan migrate), **Django** (ORM, migrate) and **Go** (GORM over pgx); drivers tested: pgx, psycopg and PDO through these applications, and the wire pattern of JDBC (not the driver itself).
 - **Finding the organization:** equality, `IN` and `= ANY(array)` on the tenant column, the row key or a foreign key, in literals and in bound parameters (text and binary); `INSERT … VALUES` and `UNNEST` (Django `bulk_create`); joins through equal columns; subqueries that name the organization. Relations without a foreign key, cloud tables that know the organization, and unique keys can be declared.
 - **Statement forms:** upsert (`ON CONFLICT`), `MERGE` (one matched and one not-matched branch), `COPY FROM STDIN` and `COPY TO`, cursors including `WITH HOLD`, `LISTEN`/`NOTIFY`, prepared statements surviving `enable` and migrations.
-- **Schemas:** keys of type `smallint`, `integer`, `bigint`, `uuid`, `text`/`varchar` (deterministic collation) and composite keys; tenant column of integer or `uuid` type; tables in any schema; materialized views, views, rules, functions over the row type, row-level security of the application, identity columns, publications; extensions, enums, domains, collations and functions are created in the customer database when needed.
+- **Schemas:** keys of type `smallint`, `integer`, `bigint`, `uuid`, `text`/`varchar` (deterministic collation), `character(n)` (Laravel's `ulid()`) and composite keys; tenant column of integer, `uuid` or text type (`text`, `varchar`, `character(n)`); tables in any schema; materialized views, views, rules, functions over the row type, row-level security of the application, identity columns, publications; extensions, enums, domains, collations and functions are created in the customer database when needed.
 - **Migrations:** column changes, `RENAME COLUMN`, `CREATE INDEX` (including `CONCURRENTLY`) are replayed in every customer database before the cloud commits; `lokadb schema-diff` / `schema-sync` reconcile a schema that drifted.
 - **Moving:** online move without logical replication (trigger-based capture, works on managed Postgres) or with it; move back; change of the customer database (`repoint`); `disable`.
 - **Tunnel:** one-time enrolment tokens, automatic certificate renewal, revocation in two seconds, several relays and several agents per organization, CA key in a separate issuing service, end-to-end TLS to the customer database.
@@ -97,7 +97,7 @@ The application only changes its connection string to point at the proxy (`host`
 ### Not yet
 
 - Child tables that get the organization through a **composite** foreign key, and polymorphic references (`<x>_type` + `<x>_id`); declared relations with a condition on the type.
-- Tenant columns of `text` type; row keys of other types (`numeric`, `char(n)`, `citext`, dates, enums, non-deterministic collations).
+- Row keys of other types (`numeric`, `citext`, `bytea`, dates, enums, domains, non-deterministic collations).
 - Constraint triggers and triggers with transition tables on the moved tables.
 - Atomic commit across the cloud and a customer database: they are two commits, as with any `postgres_fdw` write.
 - `TRUNCATE`, `DROP TABLE`, table renames and new constraints on the moved tables through the proxy (refused with an explanation).
@@ -148,7 +148,7 @@ Report vulnerabilities as described in the [security policy](SECURITY.md).
 
 ## Status
 
-LokaDB is under active development by a small team. The core — `check`, `enable`, the proxy, `move-org`, the way back, migrations, the tunnel — is complete for the supported scope and is covered by an end-to-end stand and a suite of regression checks for every defect found so far. It runs in production at [KeepPlain](https://keepplain.com), a Laravel SaaS on Postgres and our first pilot. What is next is in the [Roadmap](ROADMAP.md).
+LokaDB is under active development by a small team. The core — `check`, `enable`, the proxy, `move-org`, the way back, migrations, the tunnel — is complete for the supported scope and is covered by an end-to-end stand and a suite of regression checks for every defect found so far. It runs in production at [KeepPlain](https://keepplain.com), our own Laravel SaaS on Postgres, where it started. What is next is in the [Roadmap](ROADMAP.md).
 
 ## Documentation
 
@@ -175,7 +175,7 @@ LokaDB is under active development by a small team. The core — `check`, `enabl
 
 **[lokadb/check](https://github.com/lokadb/check)** has the GitHub Action that runs it on every pull request of your application, the report format (JSON Schema, finding codes, sample reports) and the check documentation.
 
-**[lokadb.com](https://lokadb.com)** adds, as a service: the report as an interface with fixes and ready-to-apply patches, an AI advisor over the findings, and comparison of reports over time.
+**[lokadb.com](https://lokadb.com)** is LokaDB Cloud, the paid part: a panel and an API that run `check`, `enable` and moves through the open runner inside your network (your database credentials stay there), the check reports readable in the panel, an installer and a portal for your customers, alerts, webhooks and billing. See [LokaDB Cloud](https://docs.lokadb.com/cloud/).
 
 ## Contributing
 
