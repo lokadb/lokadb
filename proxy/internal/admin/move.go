@@ -1206,6 +1206,9 @@ func finishSwitch(ctx context.Context, tx pgx.Tx, cust, snap *pgx.Conn, o MoveOp
 	// a user mapping for every role that may read the tables, also through a role it is a
 	// member of (mappedRoles has the roles granted directly)
 	steps = append(steps, "SELECT lokadb.sync_mappings()")
+	// the proxies read the organization's server with the metadata: told at COMMIT, not at their
+	// metaTTL (a session that read it just before would take the old routing for 30 s)
+	steps = append(steps, metaChanged)
 	if mode == ModeLogical {
 		steps = append(steps, "DROP PUBLICATION "+q(pub), fmt.Sprintf("DELETE FROM lokadb.move_marker WHERE org = %d", o.Org))
 	}

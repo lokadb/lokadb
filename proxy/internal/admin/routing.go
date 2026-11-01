@@ -381,6 +381,10 @@ func ApplyRouting(ctx context.Context, dsn string, spec Spec, log *slog.Logger) 
 	if err := applyRouting(r, spec); err != nil {
 		return err
 	}
+	// the proxies read the lookups with the metadata: told at COMMIT
+	if err := r.exec(metaChanged); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
