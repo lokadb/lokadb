@@ -29,8 +29,8 @@ Such a statement does not say which organization it is for, so it covers many or
 | `mode` | What it does |
 |---|---|
 | `reject` | **default** (no entry, or no `fanout` at all): refused |
-| `reject-writes` | `INSERT`, `UPDATE`, `DELETE` refused; reads run separately in each database and the answers are put together |
-| `log` | runs separately in each database, with a warning in the proxy log |
+| `reject-writes` | `INSERT`, `UPDATE`, `DELETE` refused, and so are `MERGE`, a call of a LokaDB function and `CALL` (what they do is not in the statement, so they count as writes); reads run separately in each database and the answers are put together |
+| `log` | runs separately in each database, with a warning in the proxy log, **until the first organization moves**; from then on it works like `reject` (the proxy log says so). Use it to see what would be refused, before any move |
 | `allow` | runs separately in each database |
 
 `allow` lists statements that were reviewed and allowed under any `mode` — an admin report across organizations, a background job. They are compared by pg_query fingerprint: constants, parameters, list lengths and quoting do not matter.
@@ -50,7 +50,7 @@ HINT:  Restrict it by the organization column, id or a parent id (= or IN), or a
 A statement that reads LokaDB tables in a way the analyzer did not recognize does **not** run under "all organizations". It runs:
 
 - under the organization the application named (`lokadb.tenant`, [cooperative mode](profiles-and-cooperative-mode.md#cooperative-mode));
-- under all organizations only where that is explicitly allowed (`lokadb.tenant = '*'` for a role in `all_roles`, policy `allow` or `log`, a statement in `allow`);
+- under all organizations only where that is explicitly allowed (`lokadb.tenant = '*'` for a role in `all_roles`, policy `allow`, or `log` before the first move, a statement in `allow`);
 - otherwise under "no organization": it sees no rows of LokaDB tables, and writes to them are refused.
 
 A gap in the analyzer therefore gives an empty answer, never another organization's rows. Known forms are recognized one by one: `EXECUTE` of an SQL `PREPARE`, functions over LokaDB tables in any schema, views through `search_path`, `REFRESH MATERIALIZED VIEW`, functions and views created through the proxy. Dynamic SQL inside functions and `DO` blocks is not recognized: it sees no rows unless the organization is named, and then only that organization's rows.
@@ -118,9 +118,9 @@ Where the referencing rows are searched:
 
 - the cloud table is declared in `routing.cloud_tables` — only in that row's organization;
 - the organizations table itself (`tenants`, `organizations`: the table that the organization columns of the spec's tables reference by foreign key onto its `id`) is a cloud table whose organization column is its `id`, with no declaration: deleting a tenant, or changing its key, concerns that one organization, so the action runs in its database only, under any fanout policy. `{"table": "tenants", "tenant_column": "id"}` in `routing.cloud_tables` says the same;
-- otherwise in every moved organization, as a statement without an organization: under `log` or `allow` the action runs in every organization database (if one is down, the delete is refused); under `reject-writes` only `RESTRICT` and `NO ACTION` pass; under `reject` (the default) the delete or key change is refused once any organization has moved.
+- otherwise in every moved organization, as a statement without an organization: under `log` or `allow` the action runs in every organization database, also after the first move (these triggers follow the configured mode; if one database is down, the delete is refused); under `reject-writes` only `RESTRICT` and `NO ACTION` pass; under `reject` (the default) the delete or key change is refused once any organization has moved.
 
-A table shared by organizations (`users`, linked to them through `tenant_users`) has no column that holds the organization of its rows, so it cannot be declared: deleting a user, or `SET NULL` on its key, touches every moved organization that references it. Either allow that statement to run in every organization (fanout policy `log` or `allow`, or an allow-list entry for the reviewed `DELETE` in the proxy config), or delete softly in the application.
+A table shared by organizations (`users`, linked to them through `tenant_users`) has no column that holds the organization of its rows, so it cannot be declared: deleting a user, or `SET NULL` on its key, touches every moved organization that references it. Either allow that statement to run in every organization (fanout policy `log` or `allow` for this database, or an allow-list entry for the reviewed `DELETE` in the proxy config), or delete softly in the application.
 
 `check` names such tables in advance (`fk_to_cloud_delete`). The check is not deferred to `COMMIT`, even for `DEFERRABLE` keys, and writes made directly in the customer database are not checked.
 

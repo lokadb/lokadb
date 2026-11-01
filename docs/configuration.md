@@ -53,7 +53,7 @@ The spec names the tables whose rows move with an organization, and how each tab
 |---|---|---|
 | `listen` | — | address the application connects to |
 | `upstream` | — | libpq connection string of the cloud Postgres (host, port, TLS); user, password and database come from the client |
-| `fanout` | `reject` for every database | policy for statements that name no organization, per database (`"*"` for the rest): `reject`, `reject-writes`, `log`, `allow`, plus an `allow` list of reviewed statements. See [Routing](routing.md#statements-without-an-organization) |
+| `fanout` | `reject` for every database | policy for statements that name no organization, per database (`"*"` for the rest): `reject`, `reject-writes`, `log` (works like `reject` once an organization has moved), `allow`, plus an `allow` list of reviewed statements. See [Routing](routing.md#statements-without-an-organization) |
 | `customers` | — | per database and organization, the address of the organization's database for DDL replay, when the proxy reaches it at a different address than the cloud does. Normally not needed: the proxy reads it from the cloud |
 | `customers_app` | — | per database and organization, the DSN of the **direct-path role** (DML only) for `fdw+direct` / `direct` |
 | `control_plane`, `credentials_key`, `credentials_key_old` | — | read organization credentials from the control-plane database, encrypted, instead of `customers` / `customers_app` (see [Credentials](#credentials-in-the-control-plane)) |
