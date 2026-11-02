@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lokadb/lokadb/proxy/internal/admin"
+	"github.com/lokadb/lokadb/proxy/internal/proxy"
 	"github.com/lokadb/lokadb/proxy/internal/tunnel"
 )
 
@@ -89,7 +90,7 @@ func runPin() error {
 	}
 	refused, err := store.RefusedSources(ctx, 7*24*time.Hour)
 	if err == nil && len(refused) > 0 {
-		fmt.Println("refused lately (not the SaaS database: a copy of it?):")
+		fmt.Println("refused lately (not the SaaS database: a copy of it, or a LokaDB command without the control plane?):")
 		for _, r := range refused {
 			fmt.Printf("  %-38s organization %s, %d time(s), last %s\n", r.Addr, r.Org, r.Count, r.Last.UTC().Format(time.RFC3339))
 		}
@@ -100,11 +101,30 @@ func runPin() error {
 // proveWith: this process proves its address to the relays before it connects to one of their
 // organizations' ports (tunnel/self.go); dsn is the control plane ("": it does not).
 func proveWith(dsn string) {
-	if dsn == "" {
+	if dsn == "" || dsn == proving {
 		return
 	}
 	if cp, err := tunnel.OpenRegistry(context.Background(), dsn); err == nil {
 		tunnel.ProveSelfWith(cp) // for the process's life
+		proving = dsn
+	}
+}
+
+// proving: the control plane this process proves itself with (proveWith).
+var proving string
+
+// proveFromConfig: a command given the proxy's config (-proxy-config) proves itself with its
+// control_plane, as the proxy does: without it the relays refuse it once an organization moved.
+func proveFromConfig(path string) {
+	if path == "" {
+		return
+	}
+	var cfg proxy.Config
+	if readJSON(path, &cfg) != nil {
+		return // the command reads the file again and says what is wrong with it
+	}
+	if dsn, err := resolveRef("control_plane", cfg.ControlPlane); err == nil {
+		proveWith(dsn)
 	}
 }
 

@@ -42,6 +42,8 @@ type Fanout struct {
 	tables  map[string]string
 	// strict: the same policy under reject, for log once an organization has moved (session.policy)
 	strict *Fanout
+	// fromLog: this is the strict twin of a log policy, so the refusal says log's name
+	fromLog bool
 }
 
 // FanoutFor compiles the policy of database db: its own entry, else "*", else reject.
@@ -74,7 +76,7 @@ func (c Config) FanoutFor(db string) (*Fanout, error) {
 		f.tables[t] = d
 	}
 	if f.Mode == FanoutLog {
-		f.strict = &Fanout{Mode: FanoutReject, Allowed: f.Allowed, allow: f.allow, tables: f.tables}
+		f.strict = &Fanout{Mode: FanoutReject, Allowed: f.Allowed, allow: f.allow, tables: f.tables, fromLog: true}
 	}
 	return f, nil
 }
@@ -199,14 +201,23 @@ func (f *Fanout) listed(sql string) bool {
 // error itself, so the transaction ends up exactly as after any error there (an implicit
 // transaction rolls back, an explicit one is aborted) and the rest of a pipeline is skipped.
 func (f *Fanout) raiseSQL(an *Analysis) string {
-	msg := fmt.Sprintf("lokadb: the statement does not name the organization of %s rows, so it covers many organizations at once and would run separately in each organization's database (fanout policy %q)",
-		fanoutTable(an), f.Mode)
+	msg := fmt.Sprintf("lokadb: the statement does not name the organization of %s rows, so it covers many organizations at once and would run separately in each organization's database (%s)",
+		fanoutTable(an), f.Name())
 	hint := `Restrict it by the organization column, id or a parent id (= or IN), or add it to "allow" of this database's fanout policy in the proxy config.`
 	detail := ""
 	if g := an.GapText(); g != "" {
 		detail = ", DETAIL = " + sqlString("why: "+g)
 	}
 	return ownsql.Tag(fmt.Sprintf("DO $lokadb$ BEGIN RAISE EXCEPTION USING ERRCODE = '0A000', MESSAGE = %s%s, HINT = %s; END $lokadb$", sqlString(msg), detail, sqlString(hint)))
+}
+
+// Name is the policy as an error or a log line says it: a log policy that refuses because an
+// organization has moved says "log" and why, not the "reject" it behaves as.
+func (f *Fanout) Name() string {
+	if f.fromLog {
+		return `fanout policy "log", which refuses once an organization has moved; "allow" runs it in every database`
+	}
+	return fmt.Sprintf("fanout policy %q", f.Mode)
 }
 
 // fanoutTable: the LokaDB table the statement fails to confine.

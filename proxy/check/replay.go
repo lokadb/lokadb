@@ -45,7 +45,7 @@ func (c *checker) replayReady() {
 		if err != nil {
 			cancel()
 			c.addFinding(Finding{Severity: Warning, Code: "replay_unreachable", Object: "organization " + org, Subject: orgSubject(org),
-				Message: fmt.Sprintf("organization %s: its database cannot be reached as the proxy reaches it: %s", org, firstLine(err.Error()))})
+				Message: unreachable(org, "its database cannot be reached as the proxy reaches it", err)})
 			continue
 		}
 		res, err := conn.Exec(ctx, fmt.Sprintf("SELECT current_user::text, has_schema_privilege(%s, 'CREATE')::text", sqlLit(schema))).ReadAll()
@@ -53,7 +53,7 @@ func (c *checker) replayReady() {
 		cancel()
 		if err != nil || len(res) == 0 || len(res[0].Rows) == 0 {
 			c.addFinding(Finding{Severity: Warning, Code: "replay_unreachable", Object: "organization " + org, Subject: orgSubject(org),
-				Message: fmt.Sprintf("organization %s: its database cannot be inspected: %v", org, err)})
+				Message: unreachable(org, "its database cannot be inspected", err)})
 			continue
 		}
 		role, may := string(res[0].Rows[0][0]), string(res[0].Rows[0][1])
@@ -63,6 +63,18 @@ func (c *checker) replayReady() {
 				Message: fmt.Sprintf("organization %s: role %s may not create in schema %s of its database: the proxy replays CREATE INDEX as that role, so every CREATE INDEX on a LokaDB table is refused. The organization grants it: GRANT CREATE ON SCHEMA %s TO %s", org, role, schema, q(schema), q(role))})
 		}
 	}
+}
+
+// unreachable: replay_unreachable's message. The relay's refusal of an address it does not take
+// for the SaaS database's names its usual cause first: check was not given the control plane.
+func unreachable(org, what string, err error) string {
+	e := fmt.Sprint(err)
+	if err != nil && strings.Contains(e, tunnel.NotTheSaaSDatabase) {
+		return fmt.Sprintf("organization %s: %s: the relay refused check's address. Either check is %s: "+
+			"run it with -proxy-config of the proxy (its control_plane) or with LOKADB_CONTROL_PLANE. "+
+			"Or it runs on a copy of the SaaS database: run lokadb defuse on the copy. The relay: %s", org, what, tunnel.NoControlPlane, firstLine(e))
+	}
+	return fmt.Sprintf("organization %s: %s: %s", org, what, firstLine(e))
 }
 
 func sqlLit(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }

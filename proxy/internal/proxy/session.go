@@ -2581,7 +2581,7 @@ func (s *session) refuse(sql string, an *Analysis, unknown bool) bool {
 	case FanoutRefused:
 		l := s.srv.unrouted.note(s.db, sql, s.fanout.openView(an), true)
 		if l.first || l.refused {
-			s.log.Warn("refused: the statement names no customer; decide it in the panel (setup, step 5)", "table", fanoutTable(an), "policy", s.policy().Mode,
+			s.log.Warn("refused: the statement names no customer; decide it in the panel (setup, step 5)", "table", fanoutTable(an), "policy", s.policy().Name(),
 				"gap", an.GapText(), "sql", brief(sql), "refused_since_last_line", l.since)
 		}
 		s.logUnroutedSummary(l)

@@ -181,6 +181,7 @@ func main() {
 			if err = readJSON(*proxyCfg, o.Proxy); err != nil {
 				break
 			}
+			proveFromConfig(*proxyCfg) // the moved organizations' databases through the relays (replay_unreachable)
 		}
 		for _, e := range check.Extensions() {
 			if c, ok := e.(check.Configurer); ok && err == nil {
@@ -506,6 +507,7 @@ func main() {
 		dropExtra := fs.Bool("drop-extra", false, "schema-sync: also drop the columns, indexes and constraints the organization has and the cloud has not")
 		asJSON := fs.Bool("json", false, "print the report as JSON")
 		parseArgs(fs)
+		proveFromConfig(*proxyCfg) // the organizations' FDW addresses are the relays' ports (R01)
 		o := migrate.Options{CloudDSN: *db, DSN: map[string]string{}, DropExtra: *dropExtra}
 		if o.Orgs, err = orgList(*orgs, os.Args[1] == "schema-sync", *all); err != nil {
 			break
@@ -769,6 +771,9 @@ func main() {
 		directRole := fs.String("direct-role", "", "the role the proxy's direct path uses in the organization's database (move-org, fdw+direct: it gets DML on the moved tables)")
 		parseArgs(fs)
 		proveWith(*cp) // the relays' ports: this command connects from a proven address (R01)
+		if *cp == "" {
+			proveFromConfig(*proxyCfg) // or the proxy's control_plane, as the proxy proves itself
+		}
 		var spec admin.Spec
 		if spec, err = readSpec(*specPath, *patchPath); err != nil {
 			break
@@ -838,6 +843,7 @@ func main() {
 		if err = readJSON(*proxyCfg, &pcfg); err != nil {
 			break
 		}
+		proveFromConfig(*proxyCfg) // the relays' ports: from a proven address, as the proxy (R01)
 		var dbName string
 		if dbName, err = pgconnConfig(*db); err != nil {
 			break

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lokadb/lokadb/proxy/internal/ownsql"
@@ -67,4 +68,37 @@ func TestOwnStatementsLeftOut(t *testing.T) {
 	if !c.proxyMade(`SELECT tenant, org::text FROM lokadb.tenants`) || !c.proxyMade(`SELECT (to_regclass('lokadb.tenants') IS NOT NULL)::text`) {
 		t.Error("an unmarked metadata read of an older proxy is taken for the application's")
 	}
+}
+
+// Under log, once an organization has moved, check judges a statement without the organization as
+// the proxy does (refused: query_refused), and its message names log and why, not the "reject" log
+// behaves as.
+func TestQueryRefusedNamesLog(t *testing.T) {
+	app := `SELECT count(*) FROM documents`
+	w := proxy.Workload{Version: 1, Databases: map[string]*proxy.WorkloadDB{"app": {
+		Statements:   []*proxy.RecordedStatement{{SQL: app, Count: 5}},
+		Transactions: []*proxy.RecordedTx{{Statements: []string{app}, Count: 5}},
+	}}}
+	b, _ := json.Marshal(w)
+	path := filepath.Join(t.TempDir(), "workload.json")
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := testChecker()
+	c.o.Workload = []string{path}
+	c.o.Proxy = &proxy.Config{Fanout: map[string]proxy.FanoutPolicy{"app": {Mode: proxy.FanoutLog}}}
+	c.rep.Database = "app"
+	c.meta.Foreign = map[string]map[string]string{"documents": {"1": "documents__o1"}}
+	if err := c.workload(); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range c.rep.Findings {
+		if f.Code == "query_refused" {
+			if !strings.Contains(f.Message, `fanout policy "log", which refuses once an organization has moved; "allow" runs it in every database`) || strings.Contains(f.Message, `"reject"`) {
+				t.Errorf("query_refused message: %s", f.Message)
+			}
+			return
+		}
+	}
+	t.Errorf("no query_refused finding: %+v", c.rep.Findings)
 }

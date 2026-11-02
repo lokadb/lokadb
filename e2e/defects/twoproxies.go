@@ -243,7 +243,8 @@ func (p *metaProbe) session(ctx context.Context) {
 				return
 			}
 			state = "other"
-			if strings.Contains(err.Error(), "does not name the organization") {
+			// the owner chose log: the refusal says log and why, not "reject"
+			if strings.Contains(err.Error(), "does not name the organization") && strings.Contains(err.Error(), `fanout policy "log", which refuses once an organization has moved; "allow" runs it in every database`) {
 				state = "refused"
 			} else {
 				p.mu.Lock()

@@ -28,6 +28,7 @@ var self struct {
 	cp    *PGStore
 	ports map[string]bool
 	read  time.Time
+	tried time.Time // the last read for a port not in ports
 }
 
 // OpenRegistry: the registry for ProveSelfWith, without applying its schema (the relays and the
@@ -44,7 +45,7 @@ func OpenRegistry(ctx context.Context, dsn string) (*PGStore, error) {
 func ProveSelfWith(cp *PGStore) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
-	self.cp, self.read = cp, time.Time{}
+	self.cp, self.read, self.tried = cp, time.Time{}, time.Time{}
 }
 
 // AdmitParam: the startup parameter of a component's admission (with database lokadb_probe and
@@ -81,12 +82,23 @@ func relayStore(ctx context.Context, addr string) *PGStore {
 	if self.cp == nil {
 		return nil
 	}
-	if time.Since(self.read) > 30*time.Second {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil
+	}
+	// a port the list has not got is read again (at most once a second): a relay publishes a new
+	// organization's port within seconds, and a process that read the list just before it (move-org
+	// right after org-add or org-endpoint) went to it without the code and was refused
+	miss := !self.ports[port] && time.Since(self.tried) > time.Second
+	if time.Since(self.read) > 30*time.Second || miss {
+		if miss {
+			self.tried = time.Now()
+		}
 		if ports, err := self.cp.relayPorts(ctx); err == nil {
 			self.ports, self.read = ports, time.Now()
 		}
 	}
-	if _, port, err := net.SplitHostPort(addr); err != nil || !self.ports[port] {
+	if !self.ports[port] {
 		return nil
 	}
 	return self.cp

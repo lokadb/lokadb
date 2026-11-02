@@ -6,6 +6,7 @@ What LokaDB does not do yet, and what we plan. Items are grouped by area, not by
 
 One line per version, newest first. Every version is the `lokadb` binary (Linux amd64 and arm64) and the container image `ghcr.io/lokadb/lokadb:<version>` ([Install on your database](docs/install.md)).
 
+- **0.1.18**: a statement refused under `log` after a move names `allow`, which runs it in every database; `check`, `schema-diff`/`schema-sync`, `move-org` and `repoint` given `-proxy-config` prove themselves to the relay with its `control_plane`; `move-org` right after a new organization was added no longer falls back to `fdw` because a process had read the relay's ports before.
 - **0.1.17**: `move-org` and `routing apply` tell every proxy at once (a proxy learned of a move only after up to 30 s, so `log` became `reject` that much later); a move under two proxies is tested.
 - **0.1.16**: fixes from the third code review: a statement without an organization after the first move (`log` now works like `reject`), a table with an RLS policy, rule or statement trigger of the application stays correct after a move, `move-back` after a failed `move-org` leaves the customer's own tables alone, the split copies from one snapshot, a copy left by an interrupted move is found, lost jobs end instead of blocking, long connections survive a tunnel renewal, `check` reports no row values. In production at KeepPlain, our own SaaS.
 - **0.1.15**: statements without a customer for a runner whose proxy runs outside it; a second job on the same database is refused while one runs.

@@ -302,8 +302,8 @@ func (c *checker) workload() error {
 	report(kForbidden, Blocker, "query_forbidden", "statement is", "statements are",
 		" refused by the proxy after enable whatever its fanout policy: they address LokaDB's own objects (an organization's partition, a refs table, schema lokadb), are foreign data wrapper commands, or find rows by ctid (query_ctid). The application has to use the LokaDB table itself, and its primary key")
 	report(kRefused, Blocker, "query_refused", "query pattern touches", "query patterns touch",
-		fmt.Sprintf(" LokaDB tables without naming the organization, and after enable the proxy refuses them (fanout policy %q of database %s): the application gets an error. Restrict them by the organization, or review them and add them to \"allow\" in the proxy config",
-			c.fan.Mode, c.rep.Database))
+		fmt.Sprintf(" LokaDB tables without naming the organization, and after enable the proxy refuses them (%s, database %s): the application gets an error. Restrict them by the organization, or review them and add them to \"allow\" in the proxy config",
+			c.fan.For(c.meta).Name(), c.rep.Database))
 	report(kFanout, Warning, "query_without_organization", "query pattern touches", "query patterns touch",
 		fmt.Sprintf(" LokaDB tables without naming the organization; the fanout policy %q lets them run separately in your database and in each moved organization's database (each looks at its own rows only, the answers of a read are put together for your server), so they are slower and fail while any of those databases is unreachable",
 			c.fan.Mode))

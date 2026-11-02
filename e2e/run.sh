@@ -288,6 +288,18 @@ docker exec "$P-staging" psql -U postgres -d staging -tAc "SELECT 1" >/dev/null 
 grep -q "defused: 1 organization server" defuse.log && [ "$(docker exec "$P-staging" psql -U postgres -d staging -tAc "SELECT count(*) FROM pg_user_mappings WHERE srvname LIKE 'lokadb_org%'")" = 0 ] \
   && echo "PASS  R01: lokadb defuse leaves the copy no customer's password and no way to the organization" || fail "R01: defuse: $(tail -2 defuse.log)"
 docker rm -f "$P-staging" >/dev/null 2>&1
+# R01: lokadb check after the move reaches the organization's database through the relay as the
+# proxy does (replay_unreachable). Without the control plane the relay refuses it and the report
+# names that cause, not only a copy of the database; with the proxy's config it proves itself.
+log "R01: lokadb check after the move: refused without the control plane, and says so; with -proxy-config it passes"
+sed '1a\  "control_plane": "'"$CP"'",' proxy.json >workload/r01_proxy.json
+$C run --rm -T -e LOKADB_CONTROL_PLANE= lokadb check -db "$rich" -spec /specs/richapp.json -json >check_r01_nocp.log 2>&1
+nocp='was not given the control plane (LOKADB_CONTROL_PLANE, -cp, or control_plane in its config)'
+grep -q '"code": "replay_unreachable"' check_r01_nocp.log && grep -qF "$nocp" check_r01_nocp.log   && echo "PASS  R01: check without the control plane: replay_unreachable names the command that was not given the control plane"   || fail "R01: check without the control plane: $(grep -A4 replay_unreachable check_r01_nocp.log | grep message | head -1 | cut -c1-300)"
+$C run --rm -T -e LOKADB_CONTROL_PLANE= lokadb check -db "$rich" -spec /specs/richapp.json -proxy-config /workload/r01_proxy.json -json >check_r01_cp.log 2>&1
+if grep -q '"verdict"' check_r01_cp.log && ! grep -q '"code": "replay_un' check_r01_cp.log; then
+  echo "PASS  R01: check with -proxy-config proves itself with its control_plane: no replay_unreachable"
+else fail "R01: check with -proxy-config: $(grep -A4 'replay_un' check_r01_cp.log | grep message | head -1 | cut -c1-300)$(grep -q '"verdict"' check_r01_cp.log || tail -3 check_r01_cp.log)"; fi
 bad=$(cloud_sql richapp "INSERT INTO documents (organization_id, title, body) VALUES (1, '', 'x')" 2>&1)
 grep -q documents_title_check <<<"$bad" && grep -q "remote SQL command" <<<"$bad" \
   && echo "PASS  richapp: the organization's database enforces the CHECK constraint" || fail "richapp: CHECK not enforced: '$bad'"

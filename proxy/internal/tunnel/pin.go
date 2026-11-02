@@ -45,6 +45,13 @@ type Source struct {
 	Valid     bool // proven or used in the last hour, or the latest proof (an address the database left lapses)
 }
 
+// NotTheSaaSDatabase: the relay's refusal of an address that is not proven; NoControlPlane: its
+// usual cause after a move, besides a copy of the database (lokadb check shows it so).
+const (
+	NotTheSaaSDatabase = "it is not the SaaS database"
+	NoControlPlane     = "a LokaDB command or component that was not given the control plane (LOKADB_CONTROL_PLANE, -cp, or control_plane in its config)"
+)
+
 // Refused: connections from an address that is not the SaaS database's.
 type Refused struct {
 	Addr, Org   string
@@ -409,9 +416,10 @@ func (r *Relay) pinAllows(org string, c net.Conn) bool {
 	ctx, cancel = context.WithTimeout(context.Background(), r.cfg.registryTimeout)
 	_ = ps.Refuse(ctx, ip, org, false)
 	cancel()
-	r.log.Warn("organization endpoint: connection refused, not from the SaaS database (a copy of it?)", "org", org, "remote", ip)
-	refuse(c, fmt.Sprintf("lokadb relay: connection from %s refused: it is not the SaaS database organization %s was moved from. "+
-		"A copy of that database (a restored dump) must not reach the customer's database: run lokadb defuse on the copy. "+
+	r.log.Warn("organization endpoint: connection refused, not from the SaaS database (a copy of it, or a LokaDB command without the control plane?)", "org", org, "remote", ip)
+	refuse(c, fmt.Sprintf("lokadb relay: connection from %s refused: "+NotTheSaaSDatabase+" organization %s was moved from. "+
+		"Either it is "+NoControlPlane+": give it the control plane, it proves its address with it. "+
+		"Or it is a copy of that database (a restored dump), which must not reach the customer's database: run lokadb defuse on the copy. "+
 		"If this is your SaaS database at a new address, run lokadb pin from it (the runner does by itself) or confirm the address in LokaDB's panel.", ip, org))
 	return false
 }

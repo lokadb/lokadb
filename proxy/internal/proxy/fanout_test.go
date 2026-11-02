@@ -263,3 +263,34 @@ func TestFanoutWriteOnlyTableUnderRejectWrites(t *testing.T) {
 		}
 	}
 }
+
+// A log policy that refuses because an organization has moved says "log" and why, not the
+// "reject" it behaves as: the owner chose log, and the error must not read as another policy.
+func TestFanoutLogRefusalNamesLog(t *testing.T) {
+	logP, err := (Config{Fanout: map[string]FanoutPolicy{"app": {Mode: FanoutLog}}}).FanoutFor("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := &Meta{Foreign: map[string]map[string]string{"documents": {"1": "documents__o1"}}}
+	got := logP.For(moved)
+	if got == logP {
+		t.Fatal("log did not turn strict once an organization moved")
+	}
+	an := &Analysis{UnhintedTable: "documents"}
+	msg := got.raiseSQL(an)
+	for _, want := range []string{`fanout policy "log", which refuses once an organization has moved; "allow" runs it in every database`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal %q lacks %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, `policy "reject"`) {
+		t.Errorf("refusal under log names reject: %q", msg)
+	}
+	rej, _ := (Config{}).FanoutFor("app")
+	if m := rej.raiseSQL(an); !strings.Contains(m, `(fanout policy "reject")`) {
+		t.Errorf("reject refusal changed: %q", m)
+	}
+	if n := got.Name(); !strings.Contains(n, `"log"`) {
+		t.Errorf("log line name %q", n)
+	}
+}
