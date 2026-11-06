@@ -53,6 +53,21 @@ CREATE TABLE documents (id bigserial PRIMARY KEY, organization_id bigint NOT NUL
 ALTER TABLE documents OWNER TO app;
 INSERT INTO documents (organization_id, title) VALUES (1, 'a'), (2, 'b');
 
+-- tunneldrop: an open transaction when the tunnel drops (see run.sh, part tunnel): documents of two
+-- organizations, a child table and a cloud table the transaction also writes
+\c postgres
+CREATE DATABASE tunneldrop OWNER app;
+\c tunneldrop
+CREATE EXTENSION postgres_fdw;
+CREATE TABLE documents (id bigserial PRIMARY KEY, organization_id bigint NOT NULL, title text NOT NULL);
+CREATE TABLE document_versions (id bigserial PRIMARY KEY, document_id bigint NOT NULL REFERENCES documents, content text);
+CREATE TABLE audit (id bigserial PRIMARY KEY, note text NOT NULL);
+ALTER TABLE documents OWNER TO app;
+ALTER TABLE document_versions OWNER TO app;
+ALTER TABLE audit OWNER TO app;
+INSERT INTO documents (organization_id, title) SELECT 1 + g % 2, 'start' FROM generate_series(1, 200) g;
+INSERT INTO document_versions (document_id, content) SELECT id, 'start' FROM documents;
+
 -- richapp: what enable and move-org must carry into the organization's database (see run.sh):
 -- extensions (citext, pg_trgm), an enum, a domain, a function index, an ICU collation, CHECK,
 -- stored and virtual generated columns, and a table without a primary key whose ids the

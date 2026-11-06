@@ -17,7 +17,7 @@ other=$(docker ps --format '{{.Label "com.docker.compose.project"}} {{.Label "co
 [ -n "$other" ] && { echo "!! the stand $other runs from this directory; run the second stand from another worktree"; exit 1; }
 C="docker compose"
 APPS="${*:-laravel django goapp}"
-# E2E_ONLY=core|laravel|django|goapp|uuidapp: one part of the run (e2e/vm/e2e-par.sh runs them at once,
+# E2E_ONLY=core|laravel|django|goapp|uuidapp|tunnel: one part of the run (e2e/vm/e2e-par.sh runs them at once,
 # each on a stand of its own); unset: everything, as before. The start (stand, agent, tunnel) is in every part.
 part() { [ -z "${E2E_ONLY:-}" ] || [ "$E2E_ONLY" = "$1" ]; }
 FAILED=0
@@ -1055,6 +1055,179 @@ if part uuidapp && [[ " $APPS " == *" goapp "* ]]; then
   [ "$before" = "$after" ] && [ -z "$diffs" ] \
     && echo "PASS  uuidapp: after disable the rows are as before ($after) and the schema is as before enable ($(wc -l <"catalog_after_$db.txt") catalog lines)" \
     || { fail "uuidapp: after disable: rows '$before' / '$after'"; echo "$diffs" | head -8; }
+fi
+
+# ---- an open transaction when the real mTLS tunnel drops (docs/tunnel.md, "When the tunnel drops") ----
+# Organization 1 is moved, its transaction has written through the tunnel, and the tunnel goes: the
+# agent stopped, the relay killed, or the network silent with no packet saying so. The next statement
+# or the COMMIT must fail, nothing may stay half done in the organization's database, and it must not
+# keep the transaction open once the tunnel is gone. Organization 2 goes on working all along.
+if part tunnel; then
+  db=tunneldrop
+  admin="host=cloud user=postgres password=pw dbname=$db sslmode=disable"
+  customer="host=relay port=15001 dbname=cust_$db user=postgres password=pw sslmode=disable"
+  customer_app="host=relay port=15001 dbname=cust_$db user=lokadb_app password=lokadb_app sslmode=disable"
+  publisher="host=agent port=5433 dbname=$db user=postgres password=pw sslmode=disable"
+  via_proxy="host=proxy port=6432 dbname=$db user=app password=app sslmode=disable"
+  lokadb enable -db "$admin" -spec /specs/$db.json -owner app >/dev/null 2>&1 || fail "$db enable"
+  lokadb move-org -db "$admin" -spec /specs/$db.json -owner app -org 1 -customer "$customer" \
+    -customer-app "$customer_app" -publisher "$publisher" -cp "$CP" -mode trigger >"move_$db.log" 2>&1 \
+    || { fail "$db move-org"; tail -3 "move_$db.log"; }
+  agent_c=$($C ps -q agent)
+
+  # cut_tunnel / heal_tunnel <how>: stop (the agent goes, its sockets close), relay (the relay is
+  # killed), silent (the agent's network is cut: no packet says the tunnel is gone)
+  cut_tunnel() {
+    case $1 in
+      stop) $C stop -t 3 agent ;;
+      relay) $C kill relay ;;
+      silent) docker network disconnect "${P}_internet" "$agent_c" ;;
+    esac >/dev/null 2>&1
+  }
+  heal_tunnel() {
+    case $1 in
+      stop) $C start agent ;;
+      relay) $C start relay ;;
+      silent) docker network connect "${P}_internet" "$agent_c" ;;
+    esac >/dev/null 2>&1
+    wait_tunnel || fail "the tunnel did not come back after $1"
+  }
+  # cust_open: transactions still open in the organization's database
+  cust_open() { cust_sql "cust_$db" "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND backend_type = 'client backend' AND xact_start IS NOT NULL AND pid <> pg_backend_pid()"; }
+  title_of() { cust_sql "cust_$db" "SELECT title FROM documents WHERE id = $1"; }
+  upd() { echo "UPDATE documents SET title = 'dropped' WHERE organization_id = 1 AND id = $1;"; }
+  # codes: the SQLSTATEs of a psql output in verbosity verbose
+  codes() { grep -oE '(ERROR|FATAL): +[0-9A-Z]{5}' <<<"$1" | awk '{print $2}' | paste -sd, -; }
+  said() { echo "  codes: $(codes "$1")"; grep -E 'TOOK|^(ERROR|FATAL)|lost|closed' <<<"$1" | cut -c1-220 | sed 's/^/  /'; }
+  # learn_tx <statements>: on fdw+direct a transaction goes direct once its shape is learnt: two
+  # committed transactions of the same shape through the cloud (docs/profiles-and-cooperative-mode.md)
+  learn_tx() {
+    [ "$profile" = fdw+direct ] || return 0
+    for _ in 1 2; do printf 'BEGIN;\n%s\nCOMMIT;\n' "$1" | $C exec -T cloud psql "$via_proxy" -q >/dev/null 2>&1; done
+    sleep 1
+    direct_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  }
+  # went_direct <what>: on fdw+direct the transaction just run must have taken the direct path, or
+  # the check says nothing about it
+  went_direct() {
+    [ "$profile" = fdw+direct ] || return 0
+    local n
+    n=$($C logs --no-color --since "$direct_since" proxy 2>&1 | grep 'msg=route' | grep "db=$db" | grep -c 'path=direct')
+    [ "${n:-0}" -gt 0 ] && echo "PASS  fdw+direct: $1: the transaction took the direct path" || fail "fdw+direct: $1: the transaction did not take the direct path"
+  }
+  # drop_tx <how> <statements before the cut> <statements after it, one a line>: one psql session
+  # through the proxy. TOOK: the seconds from the cut until the first statement after it was answered.
+  drop_tx() {
+    local how=$1 before=$2 after=$3 t0
+    {
+      printf '\\set VERBOSITY verbose\nBEGIN;\n%s\n' "$before"
+      sleep 2
+      t0=$(date +%s)
+      cut_tunnel "$how"
+      printf '%s\n' "${after%%$'\n'*}"
+      printf '\\! echo TOOK $(( $(date +%%s) - %s ))\n' "$t0"
+      [[ $after == *$'\n'* ]] && printf '%s\n' "${after#*$'\n'}"
+      sleep 1
+    } | $C exec -T cloud psql "$via_proxy" 2>&1
+  }
+
+  for profile in fdw fdw+direct; do
+    if [ "$profile" = fdw+direct ]; then
+      out=$(lokadb org-profile -db "$admin" -org 1 -customer-app "$customer_app" -direct-role lokadb_dml fdw+direct 2>&1) || fail "$db org-profile: $(tail -2 <<<"$out")"
+    fi
+    ids=($(cust_sql "cust_$db" "SELECT id FROM documents ORDER BY id LIMIT 12 OFFSET $([ "$profile" = fdw ] && echo 0 || echo 12)"))
+    # the shape of most transactions below: an UPDATE of the organization, then a read or COMMIT
+    read_of() { echo "SELECT title FROM documents WHERE organization_id = 1 AND id = $1;"; }
+    spare=${ids[6]}
+
+    log "$db on $profile: the agent stops inside a transaction, the next statement"
+    learn_tx "$(upd "$spare")
+$(read_of "$spare")"
+    out=$(drop_tx stop "$(upd "${ids[0]}")" "SELECT title FROM documents WHERE organization_id = 1 AND id = ${ids[0]};
+ROLLBACK;")
+    heal_tunnel stop
+    said "$out"; went_direct "the agent stopped, the next statement"
+    [ -n "$(codes "$out")" ] && [ "$(title_of "${ids[0]}")" = start ] && [ "$(cust_open)" = 0 ] \
+      && echo "PASS  $profile: the statement after the agent stopped fails ($(codes "$out")), ROLLBACK ends it, the write is not in the organization's database" \
+      || fail "$profile, the next statement: codes '$(codes "$out")', title '$(title_of "${ids[0]}")', open $(cust_open): $out"
+
+    log "$db on $profile: the agent stops inside a transaction, COMMIT"
+    learn_tx "$(upd "$spare")"
+    out=$(drop_tx stop "$(upd "${ids[1]}")" "COMMIT;")
+    heal_tunnel stop
+    said "$out"; went_direct "the agent stopped, COMMIT"
+    [ -n "$(codes "$out")" ] && [ "$(title_of "${ids[1]}")" = start ] && [ "$(cust_open)" = 0 ] \
+      && echo "PASS  $profile: COMMIT after the agent stopped fails ($(codes "$out")), the write is not in the organization's database" \
+      || fail "$profile, COMMIT: codes '$(codes "$out")', title '$(title_of "${ids[1]}")', open $(cust_open): $out"
+
+    log "$db on $profile: a transaction that also writes a cloud table, the agent stops, COMMIT"
+    note="mixed-$profile"
+    learn_tx "$(upd "$spare")
+INSERT INTO audit (note) VALUES ('learn');"
+    out=$(drop_tx stop "$(upd "${ids[2]}")
+INSERT INTO audit (note) VALUES ('$note');" "COMMIT;")
+    heal_tunnel stop
+    in_cloud=$(cloud_sql "$db" "SELECT count(*) FROM audit WHERE note = '$note'")
+    said "$out"; echo "  the cloud table's row: $in_cloud"; went_direct "a mixed transaction"
+    [ -n "$(codes "$out")" ] && [ "$(title_of "${ids[2]}")" = start ] && [ "$in_cloud" = 0 ] \
+      && echo "PASS  $profile: COMMIT of a mixed transaction fails ($(codes "$out")): neither the organization's write nor the cloud's row stays" \
+      || fail "$profile, mixed COMMIT: codes '$(codes "$out")', title '$(title_of "${ids[2]}")', the cloud table's rows $in_cloud: $out"
+
+    log "$db on $profile: an INSERT, the agent stops, COMMIT: refs-diff after it"
+    learn_tx "INSERT INTO documents (organization_id, title) VALUES (1, 'learn');"
+    out=$(drop_tx stop "INSERT INTO documents (organization_id, title) VALUES (1, 'inserted-$profile');" "COMMIT;")
+    heal_tunnel stop
+    at_org=$(cust_sql "cust_$db" "SELECT count(*) FROM documents WHERE title = 'inserted-$profile'")
+    diff=$(lokadb refs-diff -db "$admin" -org 1 2>&1); diff_rc=$?
+    said "$out"; went_direct "an INSERT"; echo "  rows at the organization: $at_org, refs-diff exit $diff_rc"; grep -vE '^ Container|^time=' <<<"$diff" | tail -3 | cut -c1-200 | sed 's/^/  /'
+    [ -n "$(codes "$out")" ] && [ "$at_org" = 0 ] \
+      && echo "PASS  $profile: COMMIT of an INSERT fails ($(codes "$out")), the row is not in the organization's database (refs-diff exit $diff_rc)" \
+      || fail "$profile, INSERT: codes '$(codes "$out")', rows at the organization $at_org: $out"
+    if [ "$diff_rc" != 0 ]; then
+      lokadb refs-sync -db "$admin" -org 1 -delete-stale >/dev/null 2>&1
+      lokadb refs-diff -db "$admin" -org 1 >/dev/null 2>&1 && echo "PASS  $profile: refs-sync -delete-stale leaves refs-diff clean" || fail "$profile: refs-diff after refs-sync"
+    fi
+
+    log "$db on $profile: the relay is killed inside a transaction"
+    learn_tx "$(upd "$spare")
+$(read_of "$spare")"
+    out=$(drop_tx relay "$(upd "${ids[3]}")" "SELECT title FROM documents WHERE organization_id = 1 AND id = ${ids[3]};
+ROLLBACK;")
+    heal_tunnel relay
+    said "$out"; went_direct "the relay killed"
+    [ -n "$(codes "$out")" ] && [ "$(title_of "${ids[3]}")" = start ] \
+      && echo "PASS  $profile: the statement after the relay was killed fails ($(codes "$out")), the write is not in the organization's database" \
+      || fail "$profile, relay: codes '$(codes "$out")', title '$(title_of "${ids[3]}")': $out"
+
+    log "$db on $profile: the network goes silent inside a transaction (no packet says the tunnel is gone)"
+    silent_log="silent_$profile.log"
+    learn_tx "$(upd "$spare")
+$(read_of "$spare")"
+    drop_tx silent "$(upd "${ids[4]}")" "SELECT title FROM documents WHERE organization_id = 1 AND id = ${ids[4]};
+ROLLBACK;" >"$silent_log" 2>&1 &
+    silent=$!
+    # the transaction's row lock in the organization's database, while nothing tells it yet
+    freed=""
+    t0=$(date +%s)
+    for _ in $(seq 1 180); do
+      sleep 1
+      [ $(($(date +%s) - t0)) -lt 4 ] && continue # the cut comes 2 s after the UPDATE
+      [ "$(cust_open)" = 0 ] && { freed=$(($(date +%s) - t0 - 2)); break; }
+    done
+    org2=$($C exec -T cloud psql "$via_proxy" -tAc "UPDATE documents SET title = 'org2 works' WHERE organization_id = 2 AND id = (SELECT min(id) FROM documents WHERE organization_id = 2) RETURNING organization_id" 2>&1 | head -1)
+    wait $silent
+    out=$(cat "$silent_log")
+    heal_tunnel silent
+    said "$out"; went_direct "a silent network"
+    [ -n "$(codes "$out")" ] && [ -n "$freed" ] && [ "$org2" = 2 ] && [ "$(title_of "${ids[4]}")" = start ] \
+      && echo "PASS  $profile: a silent network: the statement fails ($(codes "$out"), $(grep -o 'TOOK [0-9]*' <<<"$out" | cut -d' ' -f2) s after the cut), the organization's database rolled the transaction back about $freed s after it, organization 2 kept working" \
+      || fail "$profile, silent: codes '$(codes "$out")', open until ${freed:-never}, organization 2 '$org2', title '$(title_of "${ids[4]}")': $out"
+
+    log "$db on $profile: the same connection string works when the tunnel is back"
+    now=$($C exec -T cloud psql "$via_proxy" -tAc "UPDATE documents SET title = 'after' WHERE organization_id = 1 AND id = ${ids[5]} RETURNING title" 2>&1 | head -1)
+    [ "$now" = after ] && [ "$(title_of "${ids[5]}")" = after ] \
+      && echo "PASS  $profile: after the tunnel came back the next write goes through" || fail "$profile: after the tunnel came back: '$now'"
+  done
 fi
 
 $C logs --no-color proxy >proxy.log 2>&1

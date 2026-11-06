@@ -7,13 +7,15 @@
     "laravel": {"1": "host=relay port=15001 dbname=cust_laravel user=lokadb_app password=lokadb_app sslmode=disable"},
     "django":  {"1": "host=relay port=15001 dbname=cust_django user=lokadb_app password=lokadb_app sslmode=disable"},
     "goapp":   {"1": "host=relay port=15001 dbname=cust_goapp user=lokadb_app password=lokadb_app sslmode=disable"},
-    "uuidapp": {"1": "host=relay port=15001 dbname=cust_uuidapp user=lokadb_app password=lokadb_app sslmode=disable"}
+    "uuidapp": {"1": "host=relay port=15001 dbname=cust_uuidapp user=lokadb_app password=lokadb_app sslmode=disable"},
+    "tunneldrop": {"1": "host=relay port=15001 dbname=cust_tunneldrop user=lokadb_app password=lokadb_app sslmode=disable"}
   },
   "customers_app": {
     "laravel": {"1": "host=relay port=15001 dbname=cust_laravel user=lokadb_dml password=lokadb_dml sslmode=disable"},
     "django":  {"1": "host=relay port=15001 dbname=cust_django user=lokadb_dml password=lokadb_dml sslmode=disable"},
     "goapp":   {"1": "host=relay port=15001 dbname=cust_goapp user=lokadb_dml password=lokadb_dml sslmode=disable"},
-    "uuidapp": {"1": "host=relay port=15001 dbname=cust_uuidapp user=lokadb_dml password=lokadb_dml sslmode=disable"}
+    "uuidapp": {"1": "host=relay port=15001 dbname=cust_uuidapp user=lokadb_dml password=lokadb_dml sslmode=disable"},
+    "tunneldrop": {"1": "host=relay port=15001 dbname=cust_tunneldrop user=lokadb_dml password=lokadb_dml sslmode=disable"}
   },
   "fanout": {
     "laravel": {"mode": "reject", "allow": [
@@ -38,6 +40,7 @@
       "DELETE FROM documents WHERE slug LIKE $1"
     ]},
     "guardapp": {"mode": "log"},
-    "uuidapp": {"mode": "reject"}
+    "uuidapp": {"mode": "reject"},
+    "tunneldrop": {"mode": "reject"}
   }
 }

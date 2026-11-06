@@ -13,6 +13,7 @@ CREATE DATABASE cust_badapp;
 CREATE DATABASE cust_guardapp;
 -- an empty database: move-org creates the extensions, types and functions richapp needs
 CREATE DATABASE cust_richapp;
+CREATE DATABASE cust_tunneldrop;
 -- The organizations of the stand allow a logical move: the role creates in public, where
 -- logical replication writes (and the proxy replays CREATE INDEX as it). Without this grant
 -- move-org puts the tables in schema lokadb and moves by triggers (defects M7).
@@ -25,6 +26,8 @@ GRANT CREATE ON SCHEMA public TO lokadb_app;
 \c cust_uuidapp
 GRANT CREATE ON SCHEMA public TO lokadb_app;
 \c cust_richapp
+GRANT CREATE ON SCHEMA public TO lokadb_app;
+\c cust_tunneldrop
 GRANT CREATE ON SCHEMA public TO lokadb_app;
 \c cust_badapp
 CREATE TABLE documents (id int PRIMARY KEY, note text);

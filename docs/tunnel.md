@@ -132,6 +132,32 @@ lokadb defuse -db "host=staging dbname=app user=postgres" -this-is-a-copy app
 ```
 
 Run it on the copy only: on the SaaS database itself it cuts every moved customer off (it asks for the database's name to be typed again). Without a relay (an organization's database reached directly) the address cannot be pinned: defuse every copy.
+## When the tunnel drops
+
+Organization 1 has an open transaction with a write in it, and the tunnel goes. `E2E_ONLY=tunnel bash e2e/run.sh` runs this on the real mTLS tunnel, on both profiles, and these are its results:
+
+| The tunnel goes, and then | `fdw` | `fdw+direct` |
+|---|---|---|
+| the next statement in the transaction | `08006` | `08006`, "the connection to organization 1's database was lost" |
+| `COMMIT` | `08006` | `08006` "lost before the `COMMIT`: rolled back on both sides", or `08007` "lost with the `COMMIT` on its way: whether the transaction committed there is unknown" |
+| what is left in the organization's database | nothing: the write was not committed | the same in every run |
+| a cloud table written in the same transaction | not kept | not kept where the answer was `08006` |
+
+How long it takes depends on how the tunnel went:
+
+- **The agent stops or the relay is killed:** sockets close, so the next statement fails at once.
+- **The network goes silent, with no packet saying so:** the tunnel's keepalive (every 10 s, with a 10 s write timeout) finds out. The statement failed 16 to 18 s after the cut, and the organization's database rolled the transaction back and released its locks 16 to 19 s after it, because the agent closes its connections there when its session ends.
+- **The agent's machine disappears with its network:** nothing is left to close the connection, so the organization's Postgres keeps the transaction and its locks until its own TCP keepalive gives up, by default after hours. We have not run this case. Set `idle_in_transaction_session_timeout` or `tcp_keepalives_idle` in the organization's database.
+
+Other organizations keep working all along, and when the tunnel is back the next statement goes through on the same connection string.
+
+What the application should do:
+
+- **`08006`:** the transaction did not happen. Open a new one and repeat it.
+- **`08007`:** the outcome is not known, so do not repeat it blindly. Read back what it wrote. The proxy commits the cloud's side in this case, including any cloud table the transaction wrote, and a new row's `__refs` entry stays even if the organization did not commit it. `refs-diff` finds such an entry and `refs-sync -delete-stale` removes it.
+
+**What these runs do not cover.** The cut comes before the `COMMIT` is answered, not at the exact moment it is in flight. If the connection breaks just after the organization committed, `fdw+direct` asks the organization for the transaction's status on a new connection and follows it, or answers `08007` if it cannot ask; that is tested against a fake server (`TestDirectCommitLost`), not on the tunnel. On `fdw` the organization commits first, so the same moment can leave the organization committed while the client gets an error and the cloud rolls back: see [transactions](limits.md#known-limitations) and `refs-diff`.
+
 ## Limits
 
 | Setting | Default | Limits |
