@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"maps"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -359,6 +360,9 @@ func (s *session) prepareCustomers(stmts []string, query func(string) ([][]strin
 	if err != nil {
 		return nil, err
 	}
+	if len(targets) > 0 && slices.ContainsFunc(stmts, addsColumn) {
+		_, _ = query(noStatValuesSQL)
+	}
 	for _, t := range targets {
 		org := t.org
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -396,6 +400,33 @@ func (s *session) prepareCustomers(stmts []string, query func(string) ([][]strin
 		ct.conns[org] = conn
 	}
 	return ct, nil
+}
+
+// noStatValuesSQL: a column added after a move would otherwise have values of the moved
+// organizations in the cloud's statistics at the next ANALYZE (admin.statsSQL). In the DDL's own
+// transaction, and never its failure or a long wait: this table is locked by the DDL already,
+// another one may be held by someone else and is left; a database enabled by an older version has
+// no such function. lokadb stats-sync makes up for both.
+const noStatValuesSQL = `DO $lokadb$ BEGIN PERFORM set_config('lock_timeout', '1000', true); PERFORM lokadb.stats_no_values(); EXCEPTION WHEN OTHERS THEN NULL; END $lokadb$`
+
+// addsColumn: st is an ALTER TABLE that adds a column.
+func addsColumn(st string) bool {
+	tree, err := pg.Parse(st)
+	if err != nil {
+		return false
+	}
+	for _, raw := range tree.Stmts {
+		at := raw.Stmt.GetAlterTableStmt()
+		if at == nil {
+			continue
+		}
+		for _, c := range at.Cmds {
+			if c.GetAlterTableCmd().GetSubtype() == pg.AlterTableType_AT_AddColumn {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // replayIn runs stmts in an organization's database, in the transaction begin opens. A plain

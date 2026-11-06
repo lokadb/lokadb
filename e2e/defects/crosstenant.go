@@ -44,6 +44,9 @@ func init() {
 	stress := func(both, direct bool) func(*env) (bool, string, error) {
 		return func(e *env) (bool, string, error) { return xtRun(e, both, direct, true, (*xtStand).stress) }
 	}
+	statistics := func(both, direct bool) func(*env) (bool, string, error) {
+		return func(e *env) (bool, string, error) { return xtRun(e, both, direct, false, (*xtStand).statistics) }
+	}
 	checks = append(checks,
 		check{id: "XT1", name: "cross-tenant, organization named, fdw, B in the cloud: every read shape, write and tampering under A never reaches B's rows, in both directions", run: named(false, false)},
 		check{id: "XT2", name: "cross-tenant, organization named, fdw+direct, B in the cloud: the same", run: named(false, true)},
@@ -57,6 +60,9 @@ func init() {
 		check{id: "XT10", name: "cross-tenant, pooled connections on the cloud and the direct path, fdw+direct, both moved", run: pooled(true, true)},
 		check{id: "XT11", name: "cross-tenant under load: clients of two organizations on the pool, connecting and disconnecting, each sees its own rows alone, fdw, B in the cloud", run: stress(false, false)},
 		check{id: "XT12", name: "cross-tenant under load, fdw+direct, both moved", run: stress(true, true)},
+		check{id: "XT13", name: "cross-tenant, Postgres's own views: statistics and running statements are refused through the proxy, and the cloud's statistics hold no value of a moved organization, whatever analyzes it; stats-sync cleans an older install, fdw, B in the cloud", run: statistics(false, false)},
+		check{id: "XT14", name: "cross-tenant, Postgres's own views, fdw+direct, both moved: the same", run: statistics(true, true)},
+		check{id: "XT15", cloudHost: "cloud17", name: "cross-tenant, Postgres's own views, a Postgres 17 cloud (no functions to write statistics: a superuser clears them, the planner has the row count alone): the same", run: statistics(false, false)},
 	)
 }
 
@@ -97,7 +103,9 @@ func xtRun(e *env, both, direct, pools bool, part func(*xtStand) error) (bool, s
 		"UPDATE documents SET title = 'SECRET-O' || organization_id || '-' || id",
 		"UPDATE document_versions v SET content = 'SECRET-O' || d.organization_id || '-v' || v.id FROM documents d WHERE d.id = v.document_id",
 		// users has no organization column: user 1 owns a document of each organization
-		"UPDATE documents SET user_id = 1 WHERE id IN (SELECT min(id) FROM documents GROUP BY organization_id)"); err != nil {
+		"UPDATE documents SET user_id = 1 WHERE id IN (SELECT min(id) FROM documents GROUP BY organization_id)",
+		// the cloud's statistics hold these rows before the move, as a real database's do (XT13)
+		"ANALYZE documents", "ANALYZE document_versions"); err != nil {
 		return false, "", err
 	}
 	extra := map[string]string(nil)
@@ -952,4 +960,201 @@ func xtCells(rows [][][]byte) string {
 		}
 	}
 	return b.String()
+}
+
+// xtStatReads: Postgres's own views of what it sampled from rows, and of the statements running
+// (with their literals). Each must be refused by the proxy under any organization and under none.
+var xtStatReads = []string{
+	"SELECT most_common_vals::text, histogram_bounds::text FROM pg_stats WHERE tablename LIKE 'document%'",
+	"SELECT * FROM pg_catalog.pg_stats WHERE tablename LIKE 'document%'",
+	"SELECT s.* FROM pg_stats s",
+	"SELECT to_jsonb(s)::text FROM pg_stats s",
+	"WITH x AS (SELECT * FROM pg_stats) SELECT histogram_bounds::text FROM x",
+	"COPY (SELECT histogram_bounds FROM pg_stats) TO STDOUT",
+	"SELECT most_common_vals::text FROM pg_stats_ext",
+	"SELECT most_common_vals::text FROM pg_stats_ext_exprs",
+	"SELECT query_to_xml('SELECT histogram_bounds FROM pg_stats', true, false, '')::text",
+	"SELECT table_to_xml('pg_stats', true, false, '')::text",
+	"DO $$ DECLARE r text; BEGIN SELECT string_agg(histogram_bounds::text, ',') INTO r FROM pg_stats; RAISE EXCEPTION '%', r; END $$",
+	"SELECT query FROM pg_stat_activity",
+	"SELECT * FROM pg_stat_activity",
+	"SELECT a FROM pg_stat_activity a",
+	"SELECT to_jsonb(a)::text FROM pg_stat_activity a",
+	"SELECT (a).query FROM pg_stat_activity a",
+	"SELECT count(*) FROM pg_stat_activity WHERE query LIKE 'SECRET%'",
+	"SELECT pg_stat_get_backend_activity(pg_backend_pid())",
+	"SELECT * FROM pg_stat_get_activity(NULL)",
+	"SELECT query_to_xml('SELECT query FROM pg_stat_activity', true, false, '')::text",
+}
+
+// statistics: what Postgres keeps of the rows by itself. Through the proxy its views are refused;
+// in the cloud the statistics hold no value of a moved organization, whatever analyzes it.
+func (s *xtStand) statistics() error {
+	e := s.e
+	var c *pgconn.PgConn
+	defer func() {
+		if c != nil {
+			c.Close(e.ctx)
+		}
+	}()
+	moved := []string{"1"}
+	if s.db2 != "" {
+		moved = append(moved, "2")
+	}
+	sessions := []struct{ tenant, what string }{{"1", "under organization 1"}, {"2", "under organization 2"}, {"", "under no organization"}}
+	for _, u := range sessions {
+		for _, sql := range xtStatReads {
+			for _, extended := range []bool{false, true} {
+				if strings.HasPrefix(sql, "COPY ") && extended {
+					continue
+				}
+				if err := s.session(&c); err != nil {
+					return err
+				}
+				a := s.exec(c, u.tenant, extended, sql)
+				s.tried++
+				s.trace(fmt.Sprintf("%s, %s", sql, u.what), a)
+				if a.code == "" || !strings.Contains(a.text, "lokadb:") {
+					s.wrong("%s: %s was not refused by the proxy: %s %q", u.what, sql, a.code, xtShort(a.text))
+				}
+			}
+		}
+		// what monitoring asks is left alone
+		for _, sql := range []string{"SELECT count(*) FROM pg_stat_activity", "SELECT pid, state FROM pg_stat_activity WHERE pid = pg_backend_pid()"} {
+			if err := s.session(&c); err != nil {
+				return err
+			}
+			a := s.exec(c, u.tenant, false, sql)
+			s.tried++
+			if a.code != "" {
+				s.wrong("%s: %s was refused: %q", u.what, sql, xtShort(a.text))
+			}
+		}
+		// a partition named in a string a function runs, as named in the statement itself
+		rels, err := s.relations()
+		if err != nil {
+			return err
+		}
+		for _, r := range rels {
+			if !strings.Contains(r, "__") {
+				continue
+			}
+			sql := "SELECT query_to_xml('SELECT * FROM " + r + "', true, false, '')::text"
+			if err := s.session(&c); err != nil {
+				return err
+			}
+			a := s.exec(c, u.tenant, false, sql)
+			s.tried++
+			if a.code == "" {
+				s.wrong("%s: %s was not refused: %q", u.what, sql, xtShort(a.text))
+			}
+		}
+	}
+
+	valuesOf := func(org string) (string, error) {
+		return one(e.ctx, e.cloud(), "SELECT count(*) FROM pg_stats WHERE concat(most_common_vals::text, histogram_bounds::text, most_common_elems::text) LIKE '%"+xtMark(org)+"%'")
+	}
+	atRest := func(after string) error {
+		for _, org := range moved {
+			n, err := valuesOf(org)
+			if err != nil {
+				return err
+			}
+			s.tried++
+			if n != "0" {
+				s.wrong("%s the cloud's statistics hold values of the moved organization %s in %s columns", after, org, n)
+			}
+		}
+		return nil
+	}
+	viaProxy := func(sqls ...string) error {
+		if err := s.session(&c); err != nil {
+			return err
+		}
+		for _, sql := range sqls {
+			if _, err := simple(e.ctx, c, sql); err != nil {
+				return fmt.Errorf("%s: %w", sql, err)
+			}
+		}
+		return nil
+	}
+	if err := atRest("after the move"); err != nil {
+		return err
+	}
+	if err := viaProxy("ANALYZE documents", "ANALYZE document_versions"); err != nil {
+		return err
+	}
+	if err := atRest("after ANALYZE of the parent through the proxy"); err != nil {
+		return err
+	}
+	if err := execSQL(e.ctx, e.cloud(), "ANALYZE"); err != nil {
+		return err
+	}
+	if err := atRest("after a database-wide ANALYZE"); err != nil {
+		return err
+	}
+	if err := execSQL(e.ctx, e.cloud(), "ANALYZE documents__org1", "ANALYZE document_versions__org1"); err != nil {
+		return err
+	}
+	if err := atRest("after ANALYZE of the foreign partitions by name"); err != nil {
+		return err
+	}
+	// a column added after the move has no setting of its own yet
+	if err := viaProxy("ALTER TABLE documents ADD COLUMN xt_note text", "UPDATE documents SET xt_note = title WHERE organization_id = 1"); err != nil {
+		return err
+	}
+	if err := viaProxy("ANALYZE documents"); err != nil {
+		return err
+	}
+	if err := execSQL(e.ctx, e.cloud(), "ANALYZE documents__org1", "ANALYZE"); err != nil {
+		return err
+	}
+	if err := atRest("after a column was added and analyzed"); err != nil {
+		return err
+	}
+	// the planner still has the row count and, on Postgres 18, numbers without values
+	numbers := func(after string) error {
+		v, err := one(e.ctx, e.cloud(), `SELECT (SELECT reltuples > 0 FROM pg_class WHERE oid = 'documents__org1'::regclass)::text || ' '
+			|| (current_setting('server_version_num')::int < 180000 OR EXISTS (SELECT FROM pg_stats WHERE tablename = 'documents__org1' AND attname = 'id' AND n_distinct <> 0))::text`)
+		if err != nil {
+			return err
+		}
+		s.tried++
+		if v != "true true" {
+			s.wrong("%s the planner lost what it needs of documents__org1 (row count, numbers): %s", after, v)
+		}
+		return nil
+	}
+	if err := numbers("after the move"); err != nil {
+		return err
+	}
+	// an install from before this fix: values in the statistics of a partition and of the parent
+	if err := execSQL(e.ctx, e.cloud(),
+		"ALTER FOREIGN TABLE documents__org1 ALTER COLUMN title SET STATISTICS 100",
+		"ALTER TABLE ONLY documents ALTER COLUMN title SET STATISTICS 100",
+		"ANALYZE documents__org1", "ANALYZE documents"); err != nil {
+		return err
+	}
+	if n, err := valuesOf("1"); err != nil {
+		return err
+	} else if n == "0" {
+		s.wrong("the stand of an older install has no values in its statistics: this check proves nothing")
+	}
+	args := []string{"stats-sync", "-db", e.cloud(), "-customer", "1=" + e.customer()}
+	if s.db2 != "" {
+		args = append(args, "-customer", "2="+dsn(e.customerHost, s.db2, "postgres"))
+	}
+	if out, err := e.lokadb(args...); err != nil {
+		s.wrong("stats-sync: %s", lastErr(out))
+	}
+	if err := atRest("after stats-sync on an older install"); err != nil {
+		return err
+	}
+	if err := execSQL(e.ctx, e.cloud(), "ANALYZE documents__org1", "ANALYZE documents"); err != nil {
+		return err
+	}
+	if err := atRest("after stats-sync and ANALYZE again"); err != nil {
+		return err
+	}
+	return numbers("after stats-sync")
 }

@@ -42,7 +42,7 @@ Each check runs on fresh databases and reproduces one defect found earlier — d
 bash e2e/defects/crosstenant.sh
 ```
 
-A session of organization A tries to reach organization B's rows, on real Postgres through the real proxy (`e2e/defects/crosstenant.go`, checks XT1 to XT12). It runs in both directions, on `fdw` and `fdw+direct`, with B in the cloud and with B moved to a database of its own. Every row carries a mark, and a check fails if A's session gets B's mark anywhere: a result, `COPY` data or an error message. So that refusing everything could not pass, each read shape also runs under the organization that owns the row and must return its mark there.
+A session of organization A tries to reach organization B's rows, on real Postgres through the real proxy (`e2e/defects/crosstenant.go`, checks XT1 to XT15). It runs in both directions, on `fdw` and `fdw+direct`, with B in the cloud and with B moved to a database of its own. Every row carries a mark, and a check fails if A's session gets B's mark anywhere: a result, `COPY` data or an error message. So that refusing everything could not pass, each read shape also runs under the organization that owns the row and must return its mark there.
 
 | What it tries | What comes back |
 |---|---|
@@ -58,12 +58,15 @@ A session of organization A tries to reach organization B's rows, on real Postgr
 | One prepared statement reused across organizations on one connection, past the point where Postgres switches to a generic plan, and with `force_generic_plan` | each organization's own rows |
 | A pooled connection passing from a client of A to the next client: settings, temp tables, prepared statements, `lokadb.tenant`; a client gone inside a transaction | nothing left; that connection is closed, not reused |
 | Clients of both organizations at once for 20 s, connecting and disconnecting on the pools | tens of thousands of reads, none of the other's |
+| Postgres's own views: `pg_stats`, `pg_stats_ext`, `pg_stat_activity` and its text by `*`, a whole row, a string for `query_to_xml`, a `DO` block | refused; a count of connections still answers |
+| `ANALYZE` of the parent through the proxy, of the whole database, of a foreign partition by name, after a column was added | no value of a moved organization in the cloud's statistics; the row count stays, and on Postgres 18 the numbers |
+| An older install with values in its statistics, then `lokadb stats-sync` | the values are gone and stay gone after `ANALYZE` |
 
 **What it does not promise:**
 
 - **LokaDB is not an authorization layer, and it has no per-tenant credentials.** All sessions use the application's role; the organization comes from the application or from the statement. With no organization named, a statement that asks for B's row by its id gets it, and XT5 and XT6 check exactly that. So an attacker who controls the application's SQL can name B. Who may ask for what stays the application's job.
 - **Tables you did not choose are shared.** A table without an organization, such as `users` in these checks, is the same for everyone, as it was before LokaDB.
-- **Postgres's own views are outside it, and they do show other organizations' values:** [statistics and running statements](limits.md#what-lokadb-does-not-isolate).
+- **The refusals of Postgres's own views read the statement's text.** A function made past the proxy, or a name put together inside dynamic SQL, is not seen: [statistics and running statements](limits.md#what-lokadb-does-not-isolate).
 - **A connection to the cloud database past the proxy** sees every organization's rows, as the [security model](../README.md#security-model) says.
 - The tunnel's own isolation (one organization's agent cannot serve another's port, `org_allow`) is checked in `e2e/run.sh`, not here.
 

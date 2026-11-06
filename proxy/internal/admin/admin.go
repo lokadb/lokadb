@@ -592,6 +592,7 @@ DO $$ DECLARE r record; BEGIN
     PERFORM lokadb.key_stats(r.table_name, r.tenant_column, r.cloud_partition);
   END LOOP;
 END $$;
+` + statsSQL + `
 -- sync_grants(parent): each foreign partition of parent gets the privileges the parent has
 -- (SELECT, INSERT, UPDATE, DELETE, of the table and of its columns) and no others. The proxy
 -- sends a statement of one organization in its own database straight to its partition (the

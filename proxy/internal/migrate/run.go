@@ -28,7 +28,17 @@ func DiffSchemas(ctx context.Context, o Options) ([]*Org, error) { return run(ct
 
 // Sync brings every moved organization's copy up to the cloud's: one transaction per
 // organization, all of its fixes or none. What it cannot fix stays in Diffs.
-func Sync(ctx context.Context, o Options) ([]*Org, error) { return run(ctx, o, true) }
+func Sync(ctx context.Context, o Options) ([]*Org, error) {
+	orgs, err := run(ctx, o, true)
+	if err == nil {
+		// a migration run past the proxy may have added columns (stats.go): not the sync's failure
+		if cloud, cerr := connect(ctx, o.CloudDSN); cerr == nil {
+			_, _ = admin.StatsNoValues(ctx, cloud)
+			cloud.Close(ctx)
+		}
+	}
+	return orgs, err
+}
 
 func run(ctx context.Context, o Options, sync bool) ([]*Org, error) {
 	cloud, err := connect(ctx, o.CloudDSN)

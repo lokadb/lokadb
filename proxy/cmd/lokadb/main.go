@@ -553,6 +553,51 @@ func main() {
 		if !migrate.Clean(res) {
 			os.Exit(2)
 		}
+	case "stats-sync":
+		fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
+		db := fs.String("db", "", "admin DSN of the cloud database")
+		var customers multiFlag
+		fs.Var(&customers, "customer", "N=DSN: organization N's database at this DSN instead of its FDW server's address and user mapping (repeatable)")
+		proxyCfg := fs.String("proxy-config", "", "the proxy's config: its customers of this database, as -customer")
+		asJSON := fs.Bool("json", false, "print the report as JSON")
+		parseArgs(fs)
+		proveFromConfig(*proxyCfg) // the organizations' FDW addresses are the relays' ports (R01)
+		o := migrate.Options{CloudDSN: *db, DSN: map[string]string{}}
+		if *proxyCfg != "" {
+			var cfg proxy.Config
+			if err = readJSON(*proxyCfg, &cfg); err != nil {
+				break
+			}
+			if c, perr := pgconnConfig(*db); perr == nil {
+				for org, dsn := range cfg.Customers[c] {
+					o.DSN[org] = dsn
+				}
+			}
+		}
+		for _, c := range customers {
+			org, dsn, ok := strings.Cut(c, "=")
+			if !ok {
+				err = fmt.Errorf("-customer %q: want N=DSN", c)
+				break
+			}
+			o.DSN[org] = dsn
+		}
+		if err != nil {
+			break
+		}
+		var res []migrate.StatsRel
+		if res, err = migrate.StatsSync(context.Background(), o); err != nil {
+			break
+		}
+		if *asJSON {
+			b, _ := json.MarshalIndent(res, "", "  ")
+			fmt.Println(string(b))
+		} else {
+			fmt.Print(migrate.StatsText(res))
+		}
+		if !migrate.StatsClean(res) {
+			os.Exit(2)
+		}
 	case "refs-diff", "refs-sync": // block 7
 		fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 		db := fs.String("db", "", "admin DSN of the cloud database")
@@ -1042,6 +1087,8 @@ usage:
   lokadb schema-diff -db DSN [-org N[,N]] [-customer N=DSN]... [-proxy-config F] [-json]
   lokadb schema-sync -db DSN (-org N[,N] | -all) [-customer N=DSN]... [-proxy-config F] [-drop-extra] [-json]
               the organizations' copies of the LokaDB tables against the cloud's; exit code 0 same, 2 differences left, 1 failed
+  lokadb stats-sync -db DSN [-customer N=DSN]... [-proxy-config F] [-json]
+              no value of a moved organization in the cloud's statistics, and fresh numbers for the planner; exit code 0 none, 2 some left, 1 failed
   lokadb refs-diff -db DSN [-org N[,N]] [-cloud] [-json]
   lokadb refs-sync -db DSN (-org N[,N] | -all [-cloud]) [-delete-stale] [-max-sequence-jump 100000] [-json]
               the refs tables against the rows the organizations have (rows written there past the cloud); exit code 0 same, 2 differences left, 1 failed

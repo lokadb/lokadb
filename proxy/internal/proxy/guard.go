@@ -89,7 +89,7 @@ func forbidden(n *pg.Node, m *Meta) string {
 	if msg := ownInBody(n, m); msg != "" {
 		return msg
 	}
-	msg := ""
+	msg, textView := "", false
 	walk(n.ProtoReflect(), func(msgp proto.Message) {
 		if msg != "" {
 			return
@@ -109,6 +109,9 @@ func forbidden(n *pg.Node, m *Meta) string {
 		case *pg.FuncCall:
 			if n := x.Funcname; len(n) > 0 && ownTempName(n[len(n)-1].GetString_().GetSval(), n[:len(n)-1]) {
 				msg = ownTempMsg(n[len(n)-1].GetString_().GetSval())
+				return
+			}
+			if msg = catalogFunc(x, m); msg != "" {
 				return
 			}
 		case *pg.CreateTrigStmt:
@@ -136,12 +139,17 @@ func forbidden(n *pg.Node, m *Meta) string {
 		if !ok {
 			return
 		}
+		textView = textView || statementTextViews[rv.Relname]
 		if (rv.Schemaname == "" || rv.Schemaname == "pg_temp") && strings.HasPrefix(rv.Relname, ownTempPrefix) {
 			msg = ownTempMsg(rv.Relname)
 			return
 		}
 		if fdwCatalog[rv.Relname] && (rv.Schemaname == "" || rv.Schemaname == "pg_catalog" || rv.Schemaname == "information_schema") {
 			msg = fmt.Sprintf("lokadb: %s describes the organizations' databases (addresses, credentials): not accessible through the proxy", rv.Relname)
+			return
+		}
+		if sampledViews[rv.Relname] && (rv.Schemaname == "" || rv.Schemaname == "pg_catalog") {
+			msg = fmt.Sprintf(sampledMsg, rv.Relname)
 			return
 		}
 		if rv.Schemaname == "lokadb" {
@@ -152,6 +160,12 @@ func forbidden(n *pg.Node, m *Meta) string {
 			msg = fmt.Sprintf("lokadb: %s is a partition or helper table of %s: use %s", rv.Relname, t, t)
 		}
 	})
+	// its own walk only for a statement that names such a view: this runs on every statement (TestAnalyzeAllocs)
+	if msg == "" && textView {
+		if view := readsStatementText(n); view != "" {
+			return fmt.Sprintf(statementTextMsg, view)
+		}
+	}
 	return msg
 }
 
@@ -195,6 +209,139 @@ var fdwCatalog = map[string]bool{
 	"pg_foreign_server": true, "pg_user_mapping": true, "pg_user_mappings": true,
 	"foreign_servers": true, "foreign_server_options": true, "user_mappings": true, "user_mapping_options": true,
 	"_pg_foreign_servers": true, "_pg_user_mappings": true,
+}
+
+// What Postgres keeps of the rows by itself, whoever's they are: a session under one organization
+// read another's values there (XT13). Only the views' readers are refused: tools that need them
+// connect past the proxy. pg_stat_activity stays open without its statement text (a count of
+// connections, a pid to cancel: monitoring, migrations).
+const (
+	sampledMsg       = "lokadb: %s shows values sampled from every organization's rows: not accessible through the proxy; connect to the cloud database directly"
+	statementTextMsg = "lokadb: %s shows other sessions' statements with their values: not accessible through the proxy; name its other columns, or connect to the cloud database directly"
+)
+
+var (
+	// sampledViews: the statistics, and the catalogs under them.
+	sampledViews = map[string]bool{
+		"pg_stats": true, "pg_stats_ext": true, "pg_stats_ext_exprs": true,
+		"pg_statistic": true, "pg_statistic_ext_data": true,
+	}
+	// statementTextViews have a column query with the text of other sessions' statements.
+	statementTextViews = map[string]bool{"pg_stat_activity": true, "pg_stat_statements": true}
+	// statementTextFuncs return that text.
+	statementTextFuncs = map[string]bool{"pg_stat_get_activity": true, "pg_stat_get_backend_activity": true, "pg_stat_statements": true}
+	// stringQueryFuncs run a query, or read a relation, named in a string argument: the parser
+	// sees no relation in it. The first argument is that string.
+	stringQueryFuncs = map[string]bool{
+		"query_to_xml": true, "query_to_xmlschema": true, "query_to_xml_and_xmlschema": true,
+		"table_to_xml": true, "table_to_xmlschema": true, "table_to_xml_and_xmlschema": true,
+		"ts_stat": true,
+	}
+	// wholeSchemaFuncs read every relation of a schema or of the database.
+	wholeSchemaFuncs = map[string]bool{
+		"schema_to_xml": true, "schema_to_xmlschema": true, "schema_to_xml_and_xmlschema": true,
+		"database_to_xml": true, "database_to_xmlschema": true, "database_to_xml_and_xmlschema": true,
+	}
+)
+
+// readsStatementText: the view whose statement text the statement reads, "" if none. A statement
+// that names such a view reads the text with the column query, with * or with a whole row of the
+// view (to_jsonb(a), (a).query), or under names it gave the columns itself.
+func readsStatementText(n *pg.Node) string {
+	view, names, renamed := "", map[string]bool{}, false
+	walk(n.ProtoReflect(), func(msgp proto.Message) {
+		rv, ok := msgp.(*pg.RangeVar)
+		if !ok || !statementTextViews[rv.Relname] {
+			return
+		}
+		view = rv.Relname
+		names[rv.Relname] = true
+		if rv.Alias != nil {
+			names[rv.Alias.Aliasname] = true
+			renamed = renamed || len(rv.Alias.Colnames) > 0
+		}
+	})
+	if view == "" {
+		return ""
+	}
+	reads := renamed
+	walk(n.ProtoReflect(), func(msgp proto.Message) {
+		cr, ok := msgp.(*pg.ColumnRef)
+		if !ok || len(cr.Fields) == 0 {
+			return
+		}
+		last := cr.Fields[len(cr.Fields)-1]
+		name := last.GetString_().GetSval()
+		if last.GetAStar() != nil || name == "query" || len(cr.Fields) == 1 && names[name] {
+			reads = true
+		}
+	})
+	if !reads {
+		return ""
+	}
+	return view
+}
+
+// catalogFunc: why a call must not run: it returns the statements of other sessions, or reads
+// through a string what the statement itself could not name.
+func catalogFunc(fc *pg.FuncCall, m *Meta) string {
+	if len(fc.Funcname) == 0 || len(fc.Funcname) > 1 && fc.Funcname[len(fc.Funcname)-2].GetString_().GetSval() != "pg_catalog" {
+		// pg_stat_statements() is in the schema its extension was installed in
+		if l := len(fc.Funcname); l == 0 || fc.Funcname[l-1].GetString_().GetSval() != "pg_stat_statements" {
+			return ""
+		}
+	}
+	name := fc.Funcname[len(fc.Funcname)-1].GetString_().GetSval()
+	switch {
+	case statementTextFuncs[name]:
+		return fmt.Sprintf(statementTextMsg, name+"()")
+	case wholeSchemaFuncs[name]:
+		return fmt.Sprintf("lokadb: %s() reads every relation of a schema, the partitions of the organizations with them: not accessible through the proxy", name)
+	case !stringQueryFuncs[name]:
+		return ""
+	}
+	if len(fc.Args) == 0 {
+		return ""
+	}
+	s := fc.Args[0].GetAConst().GetSval()
+	if s == nil {
+		return fmt.Sprintf("lokadb: %s() with a query that is not a constant cannot be checked: not accessible through the proxy", name)
+	}
+	if msg := namedInText(s.Sval, m); msg != "" {
+		return fmt.Sprintf("lokadb: the query of %s() names %s", name, msg)
+	}
+	return ""
+}
+
+// namedInText: what a text the parser does not read (a DO block's body, a function's, a query in
+// a string) names of what no statement may name, "" if nothing: said so that it follows "names".
+// It looks at the words: a name put together while the text runs is not seen.
+func namedInText(text string, m *Meta) string {
+	running, reads := "", strings.Contains(text, "*")
+	for _, w := range identRe.FindAllString(text, -1) {
+		lw := strings.ToLower(w)
+		switch {
+		case sampledViews[lw]:
+			return lw + ", which shows values sampled from every organization's rows"
+		case statementTextFuncs[lw]:
+			return lw + ", which shows other sessions' statements"
+		case fdwCatalog[lw]:
+			return lw + ", which describes the organizations' databases"
+		case statementTextViews[lw]:
+			running = lw
+		case lw == "query":
+			reads = true
+		}
+		for _, x := range []string{w, lw} {
+			if t := m.ownRelationIn("", x); t != "" {
+				return fmt.Sprintf("%s, a partition or helper table of %s: use %s", x, t, t)
+			}
+		}
+	}
+	if running != "" && reads {
+		return running + ", with other sessions' statements"
+	}
+	return ""
 }
 
 // ownRelationIn: the LokaDB table whose partition or helper schema.name is, "" if it is not
@@ -248,12 +395,8 @@ func ownInBody(n *pg.Node, m *Meta) string {
 			bodies = append(bodies, de.Arg.GetString_().GetSval()) // DO
 		}
 		for _, b := range bodies {
-			for _, w := range identRe.FindAllString(b, -1) {
-				for _, x := range []string{w, strings.ToLower(w)} {
-					if t := m.ownRelationIn("", x); t != "" {
-						return fmt.Sprintf("lokadb: %s names %s, a partition or helper table of %s: use %s", what, x, t, t)
-					}
-				}
+			if msg := namedInText(b, m); msg != "" {
+				return fmt.Sprintf("lokadb: %s names %s", what, msg)
 			}
 		}
 	}

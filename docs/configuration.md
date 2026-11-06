@@ -1,6 +1,6 @@
 # Configuration
 
-LokaDB is one binary, `lokadb`, with subcommands: `proxy`, `relay`, `agent`, `issuer`, and the administrative commands (`check`, `enable`, `move-org`, `move-back`, `repoint`, `disable`, `org-profile`, `org-credentials`, `org-add`, `routing`, `schema-diff`, `schema-sync`, `refs-diff`, `refs-sync`, `move-cleanup`, `token`, `revoke`, `agents`, `org-endpoint`, `certs`). `lokadb <command> -h` lists the flags of each.
+LokaDB is one binary, `lokadb`, with subcommands: `proxy`, `relay`, `agent`, `issuer`, and the administrative commands (`check`, `enable`, `move-org`, `move-back`, `repoint`, `disable`, `org-profile`, `org-credentials`, `org-add`, `routing`, `schema-diff`, `schema-sync`, `stats-sync`, `refs-diff`, `refs-sync`, `move-cleanup`, `token`, `revoke`, `agents`, `org-endpoint`, `certs`). `lokadb <command> -h` lists the flags of each.
 
 ## The spec file
 

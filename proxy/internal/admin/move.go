@@ -153,6 +153,8 @@ func foreignTableDDL(t moveTable, key, server, custSchema string) []string {
 			qr(t.foreign()), qr(t.likeParent()), t.val, q(server), lit(custSchema), lit(nameOf(t.name))),
 		fmt.Sprintf("ALTER TABLE %s DETACH PARTITION %s", qr(t.likeParent()), qr(t.foreign())),
 		"DROP TABLE " + qr(t.likeParent()),
+		// from its first moment: no ANALYZE ever writes the organization's values in the cloud (stats.go)
+		fmt.Sprintf("SELECT lokadb.no_stat_values(%s::regclass)", lit(qr(t.foreign()))),
 	}
 }
 
@@ -398,6 +400,7 @@ func MoveOrg(ctx context.Context, o MoveOptions) (err error) {
 	if err := execAll(ctx, cloud, []string{baseSQL, routingSQL, "SELECT lokadb.fk_cloud_sync()", "SELECT lokadb.fk_cascade_sync()"}); err != nil {
 		return err
 	}
+	noStatValuesForMove(ctx, cloud, o.LockTimeout, log)
 	moved, err := rowsOf(ctx, cloud, `SELECT count(*)::text FROM lokadb.orgs WHERE org = $1`, o.Org)
 	if err != nil {
 		return err
@@ -731,7 +734,7 @@ func finishMove(ctx context.Context, cloud, marker, cust *pgx.Conn, o MoveOption
 		return fmt.Errorf("verify after switch: the customer copy differs from the detached source; source kept as *_source tables")
 	}
 	log.Info("verified: customer copy equals the detached source partitions")
-	analyzeForeign(ctx, cloud, tables, log)
+	analyzeForeign(ctx, cloud, cust, o, tables, log)
 	if o.ControlPlaneDSN != "" {
 		pinAfterMove(ctx, cloud, o, log)
 	}
@@ -794,23 +797,6 @@ func finishInterrupted(ctx context.Context, cloud, cust *pgx.Conn, o MoveOptions
 	}
 	log.Info("the rows the interrupted move left in the cloud equal the organization's database: dropped from the cloud database")
 	return true, nil
-}
-
-// analyzeForeign gives the organization's new foreign partitions their statistics. Postgres
-// keeps none for a foreign table until it is analyzed by name (autovacuum and a database-wide
-// ANALYZE skip it), and without them the planner takes the organization for a handful of rows:
-// postgres_fdw then sends neither ORDER BY nor LIMIT to the organization's database, and a feed
-// (ORDER BY id DESC LIMIT 20) fetched every row of the organization (Z2 of block 14's trial). A
-// failure is only logged: the move is done, the statistics can be made later (ANALYZE <table>).
-func analyzeForeign(ctx context.Context, cloud *pgx.Conn, tables []moveTable, log *slog.Logger) {
-	for _, t := range tables {
-		t0 := time.Now()
-		if _, err := cloud.Exec(ctx, "ANALYZE "+qr(t.foreign())); err != nil {
-			log.Warn("ANALYZE of the foreign partition failed: the planner has no statistics of it until ANALYZE "+t.name, "table", t.foreign(), "err", err)
-			continue
-		}
-		log.Info("statistics of the foreign partition", "table", t.foreign(), "took", time.Since(t0).Round(time.Millisecond))
-	}
 }
 
 // waitDDL waits for the DDL running on the spec's tables to commit (ACCESS SHARE waits only

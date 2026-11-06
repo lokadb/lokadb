@@ -39,6 +39,16 @@ lokadb schema-sync -db env:CLOUD_DSN (-org N[,N] | -all) [-drop-extra]
 
 Run them after the proxy error "ddl committed in the cloud but not in the organization's database", after manual changes in an organization, after DDL that bypassed the proxy, and in CI after migrations (`schema-diff`, by exit code).
 
+## Statistics: `stats-sync`
+
+```bash
+lokadb stats-sync -db env:CLOUD_DSN [-customer N=DSN]... [-proxy-config F] [-json]
+```
+
+It brings the cloud's statistics to what a move of this version leaves ([limits](limits.md#what-lokadb-does-not-isolate)): no column of a LokaDB table or of its foreign partitions keeps values, what is there is removed, each foreign partition gets a fresh row count and, on Postgres 18, the organization's numbers without values. `<table>__cloud` is analyzed; when it is empty its old statistics are removed. Run it once after upgrading a database whose organizations were moved by an older version, and from time to time as organizations grow. It changes statistics only and takes no lock that stops reads or writes.
+
+Removing what is there needs Postgres 18 and the tables' owner, or a superuser. The exit code is 0 when no values are left, 2 when some are (the report names them), 1 on failure. An organization it cannot reach is named in the report and gets no fresh numbers.
+
 ## Data reconciliation: `refs-diff`, `refs-sync`
 
 `<table>__refs` holds the organization of every key; the proxy finds organizations by it and foreign keys of other tables point at it. The cloud keeps it by trigger for every write that goes through the cloud. Rows written directly in an organization's database are not in it; rows deleted there leave their key behind.
